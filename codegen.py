@@ -611,7 +611,29 @@ class Codegen:
         elif op == '<<':
             self._emit(f'    shl {dst}, {right_r}')
         elif op == '>>':
-            self._emit(f'    shr {dst}, {right_r}')
+            if self._is_unsigned(expr.left.ctype):
+                # unsigned: 논리 시프트 (0 채움)
+                self._emit(f'    shr {dst}, {right_r}')
+            else:
+                # signed: 산술 시프트 (부호 채움)
+                # shr은 항상 논리이므로 인라인으로 부호 확장
+                sign_r = self._regs.alloc()   # 원래 부호 비트 저장
+                mask_r = self._regs.alloc()   # 채울 마스크
+                self._emit(f'    mov {sign_r}, {dst}')
+                self._emit(f'    shr {sign_r}, 15')          # sign_r = 0 or 1
+                self._emit(f'    shr {dst}, {right_r}')      # 논리 시프트
+                sar_lbl = self._new_label('sar')
+                self._emit(f'    test {sign_r}, {sign_r}')
+                self._emit(f'    jz {sar_lbl}')              # 양수였으면 끝
+                # 음수였으면 상위 N비트를 1로 채움
+                # mask = ~(0xFFFF >> N) → 상위 N비트가 1인 마스크
+                self._emit(f'    mov {mask_r}, 0xFFFF')
+                self._emit(f'    shr {mask_r}, {right_r}')   # 하위 (16-N)비트만 1
+                self._emit(f'    xor {mask_r}, 0xFFFF')      # 반전 → 상위 N비트가 1
+                self._emit(f'    or  {dst}, {mask_r}')       # 상위 N비트를 1로
+                self._label(sar_lbl)
+                self._regs.free()   # mask_r
+                self._regs.free()   # sign_r
         elif op in ('==', '!=', '<', '>', '<=', '>='):
             dst = self._gen_compare(op, left_r, right_r)
         else:
