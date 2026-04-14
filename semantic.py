@@ -82,7 +82,8 @@ class Analyzer:
         for decl in prog.decls:
             if isinstance(decl, FuncDecl):
                 ftype = CFunction(decl.ret_type,
-                                  [p.ctype for p in decl.params])
+                                  [p.ctype for p in decl.params],
+                                  decl.variadic)
                 self._define(decl.name, ftype, is_global=True, is_func=True)
             elif isinstance(decl, VarDecl):
                 self._define(decl.name, decl.ctype, is_global=True)
@@ -224,9 +225,13 @@ class Analyzer:
             for arg in expr.args:
                 self._analyze_expr(arg)
             if isinstance(ft, CFunction):
-                expr.ctype = ft.ret
+                expr.ctype    = ft.ret
+                expr._variadic = ft.variadic
+                expr._n_fixed  = len(ft.params)
             else:
-                expr.ctype = CInt()   # 함수 포인터 등 단순화
+                expr.ctype    = CInt()
+                expr._variadic = False
+                expr._n_fixed  = len(expr.args)
             return expr.ctype
 
         if isinstance(expr, Index):

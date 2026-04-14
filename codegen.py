@@ -179,6 +179,8 @@ class Codegen:
         if not is_leaf:
             frame_size += 1  # lr 저장 공간
 
+        self._frame_size = frame_size   # va_start intrinsic에서 사용
+
         if frame_size > 0:
             self._emit(f'    sub {SP}, {frame_size}')
 
@@ -697,23 +699,71 @@ class Codegen:
         return cur_r
 
     def _gen_call(self, expr: Call) -> str:
-        # 인자를 r1..r4에 배치
-        arg_regs_used = []
-        for i, arg in enumerate(expr.args):
-            r = self._gen_expr(arg)
-            if i < len(ARG_REGS):
-                if r != ARG_REGS[i]:
-                    self._emit(f'    mov {ARG_REGS[i]}, {r}')
-                arg_regs_used.append(ARG_REGS[i])
+        # ── va 내장 함수 처리 ────────────────────────────────────────────────
+        if isinstance(expr.func, Ident):
+            name = expr.func.name
 
-        # 함수 이름 직접 호출 또는 포인터 호출
+            if name == 'va_start':
+                # va_start(ap[, last]) : ap = SP + frame_size
+                ap_addr = self._gen_addr(expr.args[0])
+                va_r = self._regs.alloc()
+                fs = getattr(self, '_frame_size', 0)
+                if fs:
+                    self._emit(f'    add {va_r}, {SP}, {fs}')
+                else:
+                    self._emit(f'    mov {va_r}, {SP}')
+                self._emit(f'    st {va_r}, {ap_addr}')
+                self._regs.free()   # va_r
+                self._regs.free()   # ap_addr
+                return self._regs.alloc()   # 버려지는 반환값
+
+            if name == 'va_arg':
+                # va_arg(ap[, type]) : val = *ap; ap++
+                ap_addr = self._gen_addr(expr.args[0])
+                ptr_r = self._regs.alloc()
+                self._emit(f'    ld {ptr_r}, {ap_addr}')   # ptr = *(&ap) = ap
+                val_r = self._regs.alloc()
+                self._emit(f'    ld {val_r}, {ptr_r}')      # val = *ptr
+                self._emit(f'    add {ptr_r}, 1')
+                self._emit(f'    st {ptr_r}, {ap_addr}')    # ap++
+                self._regs.free()   # ptr_r
+                self._regs.free()   # ap_addr
+                return val_r
+
+            if name == 'va_end':
+                return self._regs.alloc()   # no-op
+
+        # ── 가변 인자 함수 호출 ─────────────────────────────────────────────
+        is_variadic = getattr(expr, '_variadic', False)
+        n_fixed     = getattr(expr, '_n_fixed',  len(expr.args))
+        extra_args  = expr.args[n_fixed:]   # 가변 인자 부분
+        fixed_args  = expr.args[:n_fixed]
+
+        # 모든 인자를 먼저 임시 레지스터에 평가
+        fixed_regs = [self._gen_expr(a) for a in fixed_args]
+        extra_regs = [self._gen_expr(a) for a in extra_args]
+
+        # 가변 인자를 역순으로 스택에 push (첫 번째가 낮은 주소)
+        for r in reversed(extra_regs):
+            self._emit(f'    sub {SP}, 1')
+            self._emit(f'    st {r}, {SP}, 0')
+
+        # 고정 인자를 r1..r4에 배치
+        for i, r in enumerate(fixed_regs):
+            if i < len(ARG_REGS) and r != ARG_REGS[i]:
+                self._emit(f'    mov {ARG_REGS[i]}, {r}')
+
+        # 호출
         if isinstance(expr.func, Ident):
             self._emit(f'    jmp {LR}, {expr.func.name}')
         else:
             fptr = self._gen_expr(expr.func)
             self._emit(f'    jmp {LR}, {fptr}')
 
-        # 반환값은 r1에 있음
+        # caller가 가변 인자 스택 정리
+        if extra_args:
+            self._emit(f'    add {SP}, {len(extra_args)}')
+
         dst = self._regs.alloc()
         if dst != RET_REG:
             self._emit(f'    mov {dst}, {RET_REG}')

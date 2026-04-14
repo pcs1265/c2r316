@@ -170,7 +170,9 @@ return expr;
 
 ### Functions
 
-- Up to 4 arguments (passed in `r1`–`r4`)
+- Up to 4 fixed arguments (passed in `r1`–`r4`)
+- Variadic functions (`...`) supported — extra arguments are pushed to the stack
+- `va_start` / `va_arg` / `va_end` available as compiler intrinsics
 - Recursion supported
 - Forward declarations required for external/runtime functions
 
@@ -191,12 +193,13 @@ A small core (`runtime_core.asm`) stays in assembly for things C cannot express:
 ### Output
 
 ```c
-void putchar(int c);        // Print a single character
-void puts(char *s);         // Print a string followed by newline
-void print_str(char *s);    // Print a string (no newline)
-void print_int(int n);      // Print a signed integer
-void print_uint(int n);     // Print an unsigned integer
-void print_hex(int n);      // Print a 4-digit hex value
+void putchar(int c);                // Print a single character
+void puts(char *s);                 // Print a string followed by newline
+void print_str(char *s);            // Print a string (no newline)
+void print_int(int n);              // Print a signed integer
+void print_uint(unsigned int n);    // Print an unsigned integer
+void print_hex(unsigned int n);     // Print a 4-digit hex value (uppercase)
+void printf(char *fmt, ...);        // Formatted output: %d %u %x %s %c %%
 ```
 
 ### Input
@@ -279,13 +282,11 @@ result = add(3, 4);
 
 ## Known Limitations
 
-- Maximum 4 function arguments (`r1`–`r4`); 5th and beyond are not passed
+- Maximum 4 fixed arguments in `r1`–`r4`; extra variadic args go to the stack
 - No `struct` support
 - No `float` / `double`
-- No `printf` / variadic functions (`...`)
 - No preprocessor (`#define`, `#include`)
 - Division (`/`, `%`) uses repeated subtraction — slow for large values
-- Ternary operator (`? :`) not yet supported
 - No register spilling — deep expression trees may exhaust temporaries (`r5`–`r13`)
 
 ---
@@ -293,9 +294,7 @@ result = add(3, 4);
 ## Example
 
 ```c
-void puts(char *s);
-void print_int(int n);
-void putchar(int c);
+void printf(char *fmt, ...);
 
 int factorial(int n) {
     if (n <= 1) return 1;
@@ -303,11 +302,10 @@ int factorial(int n) {
 }
 
 int main(void) {
-    puts("Hello, R316!");
     int i;
+    printf("Hello, R316!\n");
     for (i = 1; i <= 7; i++) {
-        print_int(factorial(i));
-        putchar('\n');
+        printf("%d! = %d\n", i, factorial(i));
     }
     return 0;
 }

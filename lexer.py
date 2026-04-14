@@ -76,6 +76,7 @@ class TK(Enum):
     COLON      = auto()   # :
     COMMA      = auto()   # ,
     DOT        = auto()   # .
+    ELLIPSIS   = auto()   # ...
 
     EOF        = auto()
 
@@ -275,6 +276,12 @@ class Lexer:
             if two in two_map:
                 self._advance(); self._advance()
                 self.tokens.append(Token(two_map[two], two, line, col))
+                continue
+
+            # '...' — 가변 인자 표시
+            if ch == '.' and self._peek() == '.' and self._peek(2) == '.':
+                self._advance(); self._advance(); self._advance()
+                self.tokens.append(Token(TK.ELLIPSIS, '...', line, col))
                 continue
 
             # 한 글자 연산자
