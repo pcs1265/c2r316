@@ -138,12 +138,24 @@ class Codegen:
 
     def _gen_global_var(self, v: VarDecl):
         if isinstance(v.ctype, CArray):
-            size = v.ctype.size()
-            if v.init is None:
-                self._emit(f'{v.name}: dw {", ".join(["0"] * size)}')
+            size = v.ctype.size() or 0
+            if isinstance(v.init, InitList):
+                vals = []
+                for item in v.init.items:
+                    if isinstance(item, IntLit):
+                        vals.append(item.value & 0xFFFF)
+                    elif isinstance(item, CharLit):
+                        vals.append(item.value & 0xFF)
+                    else:
+                        vals.append(0)
+                # 배열 크기보다 초기화 항목이 적으면 0으로 채움
+                if size == 0:
+                    size = len(vals)
+                while len(vals) < size:
+                    vals.append(0)
+                self._emit(f'{v.name}: dw {", ".join(str(x) for x in vals)}')
             else:
-                # 배열 초기화 지원 불완전: 0으로 채움
-                self._emit(f'{v.name}: dw {", ".join(["0"] * size)}')
+                self._emit(f'{v.name}: dw {", ".join(["0"] * max(size, 1))}')
         else:
             val = 0
             if isinstance(v.init, IntLit):
@@ -453,6 +465,9 @@ class Codegen:
                 self._emit(f'    mov {r}, {sz}')
             return r
 
+        if isinstance(expr, Ternary):
+            return self._gen_ternary(expr)
+
         raise CodegenError(f"Unhandled expression: {type(expr)}")
 
     def _gen_load_ident(self, expr: Ident) -> str:
@@ -524,6 +539,36 @@ class Codegen:
             return
         raise CodegenError(f"Cannot store into {type(target)}")
 
+    @staticmethod
+    def _is_unsigned(*ctypes: CType) -> bool:
+        """어느 한 쪽이라도 unsigned/pointer면 unsigned 연산 사용"""
+        for t in ctypes:
+            if isinstance(t, (CPointer, CArray)):
+                return True
+            if isinstance(t, (CInt, CChar)) and t.unsigned:
+                return True
+        return False
+
+    def _gen_ternary(self, expr: Ternary) -> str:
+        else_lbl = self._new_label('telse')
+        end_lbl  = self._new_label('tend')
+        cond_r   = self._gen_expr(expr.cond)
+        self._emit(f'    test {cond_r}, {cond_r}')
+        self._regs.free()
+        self._emit(f'    jz {else_lbl}')
+        then_r = self._gen_expr(expr.then)
+        dst    = self._regs.alloc()
+        if dst != then_r:
+            self._emit(f'    mov {dst}, {then_r}')
+        self._emit(f'    jmp {end_lbl}')
+        self._label(else_lbl)
+        self._regs.restore(self._regs.checkpoint() - 1)   # dst 반납 후 else 평가
+        else_r = self._gen_expr(expr.else_)
+        if else_r != dst:
+            self._emit(f'    mov {dst}, {else_r}')
+        self._label(end_lbl)
+        return dst
+
     def _gen_binop(self, expr: BinOp) -> str:
         op = expr.op
 
@@ -544,16 +589,17 @@ class Codegen:
         elif op == '*':
             self._emit(f'    mul {dst}, {dst}, {right_r}')
         elif op == '/':
-            # 나눗셈: 런타임 __udiv 호출
+            div_fn = '__udiv' if self._is_unsigned(expr.left.ctype, expr.right.ctype) else '__sdiv'
             self._emit(f'    mov r1, {dst}')
             self._emit(f'    mov r2, {right_r}')
-            self._emit(f'    jmp r31, __udiv')
+            self._emit(f'    jmp r31, {div_fn}')
             dst = self._regs.alloc()
             self._emit(f'    mov {dst}, r1')
         elif op == '%':
+            mod_fn = '__umod' if self._is_unsigned(expr.left.ctype, expr.right.ctype) else '__smod'
             self._emit(f'    mov r1, {dst}')
             self._emit(f'    mov r2, {right_r}')
-            self._emit(f'    jmp r31, __umod')
+            self._emit(f'    jmp r31, {mod_fn}')
             dst = self._regs.alloc()
             self._emit(f'    mov {dst}, r1')
         elif op == '&':

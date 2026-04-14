@@ -151,7 +151,7 @@ class Parser:
 
             init = None
             if self._try_eat(TK.ASSIGN):
-                init = self._parse_expr()
+                init = self._parse_init()
             results.append(VarDecl(name, vtype, init, is_global=True, is_static=is_static))
 
             while self._try_eat(TK.COMMA):
@@ -304,9 +304,22 @@ class Parser:
                 vtype = CPointer(vtype)
         init = None
         if self._try_eat(TK.ASSIGN):
-            init = self._parse_expr()
+            init = self._parse_init()
         self._eat(TK.SEMICOLON)
         return DeclStmt(VarDecl(name, vtype, init, is_global=False))
+
+    def _parse_init(self) -> Expr:
+        """= 뒤에 올 수 있는 초기화 식. {1,2,3} 형태도 허용."""
+        if self._at(TK.LBRACE):
+            self._eat(TK.LBRACE)
+            items = []
+            while not self._at(TK.RBRACE):
+                items.append(self._parse_assign())
+                if not self._try_eat(TK.COMMA):
+                    break
+            self._eat(TK.RBRACE)
+            return InitList(items)
+        return self._parse_expr()
 
     # ── 표현식 파싱 (연산자 우선순위) ─────────────────────────────────────────
 
@@ -333,24 +346,12 @@ class Parser:
 
     def _parse_ternary(self) -> Expr:
         cond = self._parse_or()
-        if self._try_eat(TK.COLON if False else TK.ASSIGN if False else None.__class__ if False else TK.COLON if False else None.__class__ if False else None.__class__):
-            pass
-        # 실제 삼항
-        if self._cur().kind == TK.COLON:
-            return cond  # 단순화: 삼항 미지원시 그냥 cond
-        # 진짜 삼항 처리
-        tok = self._cur()
-        if tok.value == '?' if tok.kind == TK.COLON else False:
-            pass
-        return cond
-
-    def _parse_ternary(self) -> Expr:
-        cond = self._parse_or()
-        # '?' 처리 — COLON을 재활용하지 않고 직접 체크
-        if self._cur().value == '?' and self._cur().kind not in (TK.EOF,):
-            # 렉서에 '?'가 없으므로 건너뜀 (C 삼항은 추후 지원)
-            pass
-        return cond
+        if not self._try_eat(TK.QUESTION):
+            return cond
+        then = self._parse_assign()
+        self._eat(TK.COLON)
+        else_ = self._parse_ternary()   # 우결합
+        return Ternary(cond, then, else_)
 
     def _parse_or(self) -> Expr:
         left = self._parse_and()

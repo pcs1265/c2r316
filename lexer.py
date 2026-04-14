@@ -64,6 +64,7 @@ class TK(Enum):
     INC        = auto()   # ++
     DEC        = auto()   # --
     ARROW      = auto()   # ->
+    QUESTION   = auto()   # ?
 
     # 구분자
     LPAREN     = auto()   # (
@@ -294,6 +295,7 @@ class Lexer:
                 '{': TK.LBRACE,  '}': TK.RBRACE,   '[': TK.LBRACKET,
                 ']': TK.RBRACKET, ';': TK.SEMICOLON, ':': TK.COLON,
                 ',': TK.COMMA,   '.': TK.DOT,
+                '?': TK.QUESTION,
             }
             if ch in one_map:
                 self._advance()

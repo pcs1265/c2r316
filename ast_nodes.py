@@ -241,3 +241,9 @@ class Ternary(Expr):
 class SizeOf(Expr):
     target: Any               # CType 또는 Expr
     ctype: CType = field(default_factory=CInt)
+
+@dataclass
+class InitList(Expr):
+    """배열/구조체 초기화 리스트 {1, 2, 3}"""
+    items: List[Expr]
+    ctype: CType = None

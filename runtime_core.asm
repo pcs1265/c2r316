@@ -101,10 +101,62 @@ __udiv:
 ; 입력: r1 = 피제수, r2 = 제수
 ; 출력: r1 = 나머지
 __umod:
-    st r31, r30, 0xFFFF
     sub r30, 1
+    st r31, r30, 0
     jmp r31, __udiv
-    mov r1, r2             ; 나머지를 r1에
+    mov r1, r2
+    ld r31, r30, 0
     add r30, 1
-    ld r31, r30, 0xFFFF
+    jmp r31
+
+; ── __sdiv: 부호 있는 16비트 나눗셈 (C 표준: 0을 향해 절단) ──────────────────
+; 입력: r1 = 피제수 (signed), r2 = 제수 (signed)
+; 출력: r1 = 몫, r2 = 나머지
+__sdiv:
+    sub r30, 3
+    st r31, r30, 2          ; LR 저장
+    st r0, r30, 0           ; q_neg = 0  (몫이 음수인가?)
+    st r0, r30, 1           ; r_neg = 0  (나머지가 음수인가? 피제수와 같은 부호)
+    ; 피제수가 음수이면 절댓값으로 변환
+    sub r0, r1, r0          ; flags = r1 - 0 (r0 is always 0)
+    jnl .__sdiv_d_pos
+    sub r1, r0, r1          ; r1 = -r1
+    mov r3, 1
+    st r3, r30, 0           ; q_neg = 1
+    st r3, r30, 1           ; r_neg = 1
+.__sdiv_d_pos:
+    ; 제수가 음수이면 절댓값으로 변환
+    sub r0, r2, r0          ; flags = r2 - 0
+    jnl .__sdiv_v_pos
+    sub r2, r0, r2          ; r2 = -r2
+    ld r3, r30, 0
+    xor r3, 1
+    st r3, r30, 0           ; q_neg ^= 1
+.__sdiv_v_pos:
+    jmp r31, __udiv         ; r1 = |a|/|b|, r2 = |a|%|b|
+    ; 몫에 부호 적용
+    ld r3, r30, 0
+    test r3, r3
+    jz .__sdiv_q_ok
+    sub r1, r0, r1          ; r1 = -r1
+.__sdiv_q_ok:
+    ; 나머지에 부호 적용 (피제수와 같은 부호)
+    ld r3, r30, 1
+    test r3, r3
+    jz .__sdiv_done
+    sub r2, r0, r2          ; r2 = -r2
+.__sdiv_done:
+    ld r31, r30, 2
+    add r30, 3
+    jmp r31
+
+; ── __smod: 부호 있는 16비트 나머지 ──────────────────────────────────────────
+; 입력: r1 = 피제수, r2 = 제수 / 출력: r1 = 나머지
+__smod:
+    sub r30, 1
+    st r31, r30, 0
+    jmp r31, __sdiv
+    mov r1, r2
+    ld r31, r30, 0
+    add r30, 1
     jmp r31
