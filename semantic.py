@@ -248,6 +248,12 @@ class Analyzer:
             expr.ctype = expr.to_type
             return expr.ctype
 
+        if isinstance(expr, InitList):
+            for item in expr.items:
+                self._analyze_expr(item)
+            expr.ctype = CArray(CInt(), len(expr.items))
+            return expr.ctype
+
         if isinstance(expr, SizeOf):
             expr.ctype = CInt()
             return expr.ctype
