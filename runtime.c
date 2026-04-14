@@ -9,6 +9,11 @@
 int putchar(int c);
 int getchar(void);
 
+/* 가변 인자 컴파일러 인트린직 선언 */
+void va_start(int* ap, int last);
+int  va_arg(int* ap, int type);
+void va_end(int* ap);
+
 /* ── _print_digits ───────────────────────────────────────────────────────────
  * n > 0 인 정수의 10진 자릿수를 재귀적으로 출력
  * 배열 없이 재귀를 이용해 자릿수 순서를 맞춤
@@ -116,4 +121,45 @@ void memcpy(char* dst, char* src, int n) {
         src++;
         n--;
     }
+}
+
+/* ── printf(char *fmt, ...) ─────────────────────────────────────────────────
+ * 지원 형식 지정자: %d %u %x %s %c %%
+ */
+void printf(char* fmt, ...) {
+    int* ap;
+    int ch;
+    int val;
+    char* str;
+    va_start(ap, fmt);
+    ch = *fmt;
+    while (ch) {
+        if (ch == '%') {
+            fmt = fmt + 1;
+            ch = *fmt;
+            if (ch == 'd') {
+                val = va_arg(ap, int);
+                print_int(val);
+            } else if (ch == 'u') {
+                val = va_arg(ap, int);
+                print_uint(val);
+            } else if (ch == 'x') {
+                val = va_arg(ap, int);
+                print_hex(val);
+            } else if (ch == 's') {
+                str = (char*)va_arg(ap, int);
+                print_str(str);
+            } else if (ch == 'c') {
+                val = va_arg(ap, int);
+                putchar(val);
+            } else if (ch == '%') {
+                putchar('%');
+            }
+        } else {
+            putchar(ch);
+        }
+        fmt = fmt + 1;
+        ch = *fmt;
+    }
+    va_end(ap);
 }

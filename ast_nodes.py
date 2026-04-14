@@ -54,7 +54,8 @@ class CArray(CType):
 class CFunction(CType):
     ret: CType
     params: List[CType]
-    def __repr__(self): return f"{self.ret}({', '.join(map(str, self.params))})"
+    variadic: bool = False
+    def __repr__(self): return f"{self.ret}({', '.join(map(str, self.params))}{',...' if self.variadic else ''})"
     def size(self): return 0
 
 
@@ -91,6 +92,7 @@ class FuncDecl(Node):
     params: List['ParamDecl']
     body: Optional['Block']    # None이면 선언만 (extern)
     is_static: bool = False
+    variadic: bool = False
 
 @dataclass
 class ParamDecl(Node):

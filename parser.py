@@ -129,12 +129,12 @@ class Parser:
 
         if self._at(TK.LPAREN):
             # 함수 선언 또는 정의
-            params = self._parse_params()
+            params, variadic = self._parse_params()
             if self._try_eat(TK.SEMICOLON):
                 body = None
             else:
                 body = self._parse_block()
-            return [FuncDecl(name, ret_type, params, body, is_static)]
+            return [FuncDecl(name, ret_type, params, body, is_static, variadic)]
         else:
             # 전역 변수
             results = []
@@ -164,14 +164,20 @@ class Parser:
             self._eat(TK.SEMICOLON)
             return results
 
-    def _parse_params(self) -> list[ParamDecl]:
+    def _parse_params(self) -> tuple[list[ParamDecl], bool]:
+        """파라미터 목록 파싱. 반환: (params, is_variadic)"""
         self._eat(TK.LPAREN)
         params = []
+        variadic = False
         if self._try_eat(TK.VOID) and self._at(TK.RPAREN):
             self._eat(TK.RPAREN)
-            return params
+            return params, False
         if not self._at(TK.RPAREN):
             while True:
+                if self._at(TK.ELLIPSIS):
+                    self._eat(TK.ELLIPSIS)
+                    variadic = True
+                    break
                 if self._at(*self.TYPE_STARTS):
                     ptype, pname = self._parse_type_and_name()
                     params.append(ParamDecl(pname or f'_p{len(params)}', ptype))
@@ -180,7 +186,7 @@ class Parser:
                 else:
                     break
         self._eat(TK.RPAREN)
-        return params
+        return params, variadic
 
     # ── 문장 파싱 ─────────────────────────────────────────────────────────────
 
@@ -474,10 +480,15 @@ class Parser:
                 # 함수 호출
                 self._eat(TK.LPAREN)
                 args = []
+                # va_arg(ap, type) — 두 번째 인자가 타입 표현식일 수 있음
+                is_va_arg = isinstance(node, Ident) and node.name == 'va_arg'
                 if not self._at(TK.RPAREN):
                     args.append(self._parse_assign())
                     while self._try_eat(TK.COMMA):
-                        args.append(self._parse_assign())
+                        if is_va_arg and self._at(*self.TYPE_STARTS):
+                            self._parse_type()  # 타입 인자 소비 후 버림
+                        else:
+                            args.append(self._parse_assign())
                 self._eat(TK.RPAREN)
                 node = Call(node, args)
             elif self._at(TK.LBRACKET):
