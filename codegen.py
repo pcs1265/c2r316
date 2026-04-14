@@ -166,34 +166,49 @@ class Codegen:
 
         is_leaf = self._is_leaf(func.body)
 
-        # 파라미터 스택 슬롯: 지역 변수 영역 바로 다음에 배치
-        # 레이아웃: [0..local_size-1]=지역변수, [local_size..]=파라미터, [끝]=lr
+        # 파라미터 스택 슬롯 할당
+        # 레이아웃: [0..local_size-1]=지역변수,
+        #           [local_size..]=파라미터1..4 spill, [끝]=lr
+        #           [frame_size+0..]=파라미터5+ (caller가 push한 영역)
         param_offset = self._local_size
-        for param in func.params:
+        for i, param in enumerate(func.params):
+            if i >= 4:
+                break   # 5번째~는 caller 스택 영역에 있음
             sz = max(param.ctype.size(), 1)
             self._local_vars[param.name] = (param_offset, param.ctype)
             param_offset += sz
-        param_size = param_offset - self._local_size
+        param_spill_size = param_offset - self._local_size
 
-        frame_size = self._local_size + param_size
+        frame_size = self._local_size + param_spill_size
         if not is_leaf:
             frame_size += 1  # lr 저장 공간
 
-        self._frame_size = frame_size   # va_start intrinsic에서 사용
+        self._frame_size = frame_size
+
+        # 파라미터5+: caller가 push해 둔 위치 (frame_size 위)
+        for i, param in enumerate(func.params):
+            if i < 4:
+                continue
+            stack_off = frame_size + (i - 4)
+            self._local_vars[param.name] = (stack_off, param.ctype)
+
+        # va_start가 가리켜야 할 오프셋: frame + 스택 파라미터 수
+        n_stack_params = max(0, len(func.params) - 4)
+        self._va_offset = frame_size + n_stack_params
 
         if frame_size > 0:
             self._emit(f'    sub {SP}, {frame_size}')
 
-        lr_slot = self._local_size + param_size
+        lr_slot = self._local_size + param_spill_size
         if not is_leaf:
             self._emit(f'    st {LR}, {SP}, {lr_slot}')
 
-        # 파라미터를 r1..r4에서 스택 슬롯으로 spill
-        # → 이후 모든 읽기/쓰기가 스택 경유로 일관성 있게 처리됨
+        # 파라미터1..4를 r1..r4에서 스택 슬롯으로 spill
         for i, param in enumerate(func.params):
-            if i < len(ARG_REGS):
-                slot, _ = self._local_vars[param.name]
-                self._emit(f'    st {ARG_REGS[i]}, {SP}, {slot}')
+            if i >= len(ARG_REGS):
+                break
+            slot, _ = self._local_vars[param.name]
+            self._emit(f'    st {ARG_REGS[i]}, {SP}, {slot}')
 
         # 지역 변수 오프셋 수집
         offset = 0
@@ -704,10 +719,11 @@ class Codegen:
             name = expr.func.name
 
             if name == 'va_start':
-                # va_start(ap[, last]) : ap = SP + frame_size
+                # va_start(ap[, last]) : ap = SP + va_offset
+                # va_offset = frame_size + n_stack_params (파라미터5+ 건너뜀)
                 ap_addr = self._gen_addr(expr.args[0])
                 va_r = self._regs.alloc()
-                fs = getattr(self, '_frame_size', 0)
+                fs = getattr(self, '_va_offset', 0)
                 if fs:
                     self._emit(f'    add {va_r}, {SP}, {fs}')
                 else:
@@ -733,24 +749,32 @@ class Codegen:
             if name == 'va_end':
                 return self._regs.alloc()   # no-op
 
-        # ── 가변 인자 함수 호출 ─────────────────────────────────────────────
+        # ── 일반/가변 인자 함수 호출 ────────────────────────────────────────
         is_variadic = getattr(expr, '_variadic', False)
         n_fixed     = getattr(expr, '_n_fixed',  len(expr.args))
-        extra_args  = expr.args[n_fixed:]   # 가변 인자 부분
-        fixed_args  = expr.args[:n_fixed]
 
-        # 모든 인자를 먼저 임시 레지스터에 평가
-        fixed_regs = [self._gen_expr(a) for a in fixed_args]
-        extra_regs = [self._gen_expr(a) for a in extra_args]
+        all_fixed     = expr.args[:n_fixed]    # 고정 파라미터 전체
+        variadic_extra = expr.args[n_fixed:]   # 가변 인자 (... 이후)
 
-        # 가변 인자를 역순으로 스택에 push (첫 번째가 낮은 주소)
-        for r in reversed(extra_regs):
+        reg_args     = all_fixed[:4]           # r1..r4 로 전달
+        stack_fixed  = all_fixed[4:]           # 5번째~ 고정 파라미터 → 스택
+
+        # 인자 평가 (순서 유지)
+        reg_regs         = [self._gen_expr(a) for a in reg_args]
+        stack_fixed_regs = [self._gen_expr(a) for a in stack_fixed]
+        variadic_regs    = [self._gen_expr(a) for a in variadic_extra]
+
+        # 스택 인자를 역순으로 push:
+        #   variadic_extra 먼저(높은 주소), stack_fixed 나중(낮은 주소)
+        #   → callee에서 param5 = sp+frame_size+0, param6 = sp+frame_size+1, ...
+        all_stack_regs = stack_fixed_regs + variadic_regs
+        for r in reversed(all_stack_regs):
             self._emit(f'    sub {SP}, 1')
             self._emit(f'    st {r}, {SP}, 0')
 
-        # 고정 인자를 r1..r4에 배치
-        for i, r in enumerate(fixed_regs):
-            if i < len(ARG_REGS) and r != ARG_REGS[i]:
+        # r1..r4에 고정 인자 배치
+        for i, r in enumerate(reg_regs):
+            if r != ARG_REGS[i]:
                 self._emit(f'    mov {ARG_REGS[i]}, {r}')
 
         # 호출
@@ -760,9 +784,10 @@ class Codegen:
             fptr = self._gen_expr(expr.func)
             self._emit(f'    jmp {LR}, {fptr}')
 
-        # caller가 가변 인자 스택 정리
-        if extra_args:
-            self._emit(f'    add {SP}, {len(extra_args)}')
+        # caller가 스택 인자 정리
+        total_stack = len(stack_fixed) + len(variadic_extra)
+        if total_stack:
+            self._emit(f'    add {SP}, {total_stack}')
 
         dst = self._regs.alloc()
         if dst != RET_REG:
