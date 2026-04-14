@@ -16,13 +16,14 @@ Assemble the resulting `output.asm` with TPTASM and load it into the R316.
 
 ```
 c2r316/
-├── compiler.py    Entry point (assembles the pipeline)
-├── lexer.py       Lexer
-├── ast_nodes.py   AST node definitions
-├── parser.py      Parser
-├── semantic.py    Semantic analyzer
-├── codegen.py     Code generator
-└── runtime.asm    C runtime library (R316 assembly)
+├── compiler.py        Entry point (assembles the pipeline)
+├── lexer.py           Lexer
+├── ast_nodes.py       AST node definitions
+├── parser.py          Parser
+├── semantic.py        Semantic analyzer
+├── codegen.py         Code generator
+├── runtime.c          Runtime library (C) — compiled automatically
+└── runtime_core.asm   Runtime core (R316 assembly) — hardware primitives only
 ```
 
 ---
@@ -58,8 +59,11 @@ C source (.c)
     │
     ▼
 [Stage 5: Runtime Linking]
-    │  Append runtime.asm to the generated assembly
-    │  Provides putchar, print_int, strlen, etc.
+    │  1. Compile runtime.c (library mode, no entry point)
+    │     → puts, print_int, strlen, strcmp, memcpy, etc.
+    │  2. Append runtime_core.asm
+    │     → putchar/getchar (memory-mapped I/O), __udiv/__umod,
+    │        __term_init (TPTASM macros)
     │
     ▼
 R316 assembly (.asm)
@@ -88,13 +92,20 @@ The calling convention used by all generated code.
 sp before call  → ┌──────────────┐
                   │  ...         │  caller's area
                   ├──────────────┤
-after prologue    │  saved lr    │  ← sp + local_size  (non-leaf only)
+after prologue    │  saved lr    │  ← sp + local_size + param_size  (non-leaf only)
+                  ├──────────────┤
+                  │  param 0     │  ← sp + local_size
+                  │  param 1     │  ← sp + local_size + 1
+                  │  ...         │
                   ├──────────────┤
                   │  local var 0 │  ← sp + 0
                   │  local var 1 │  ← sp + 1
                   │  ...         │
                   └──────────────┘  ← sp  (during execution)
 ```
+
+Parameters are always spilled to stack slots at function entry.
+This makes reads, writes, and pointer arithmetic on parameters safe.
 
 ### Function Call Example
 
@@ -106,9 +117,17 @@ int add(int a, int b) {
 
 ```asm
 add:
-    ; a = r1, b = r2  (argument registers)
-    add r1, r2         ; r1 = a + b
-    jmp r31            ; return (jump to lr)
+    sub r30, 2          ; frame: 2 param slots (leaf → no lr save)
+    st  r1, r30, 0      ; spill a → sp+0
+    st  r2, r30, 1      ; spill b → sp+1
+    ld  r5, r30, 0      ; load a
+    ld  r6, r30, 1      ; load b
+    add r5, r6          ; a + b
+    mov r1, r5          ; return value
+    jmp add._ret
+add._ret:
+    add r30, 2          ; restore frame
+    jmp r31
 ```
 
 ---
@@ -159,7 +178,15 @@ return expr;
 
 ## Runtime Library
 
-All functions in `runtime.asm` are implemented directly in R316 assembly.
+Most functions are written in C (`runtime.c`) and compiled automatically.
+A small core (`runtime_core.asm`) stays in assembly for things C cannot express:
+
+| Function | Location | Reason |
+|----------|----------|--------|
+| `putchar`, `getchar` | `runtime_core.asm` | Memory-mapped I/O at fixed hardware addresses |
+| `__udiv`, `__umod` | `runtime_core.asm` | `/` operator itself calls these — C impl would recurse infinitely |
+| `__term_init` | `runtime_core.asm` | Uses TPTASM `%eval`/`%define` macros |
+| Everything else | `runtime.c` | Plain C |
 
 ### Output
 
@@ -252,13 +279,14 @@ result = add(3, 4);
 
 ## Known Limitations
 
-- Maximum 4 function arguments (`r1`–`r4`)
+- Maximum 4 function arguments (`r1`–`r4`); 5th and beyond are not passed
 - No `struct` support
-- No `float` / `double` (software FP from quadratic.asm planned)
-- No `printf` (planned)
-- Division (`/`, `%`) uses repeated subtraction — slow for large values
-- Arguments beyond the 4th are not yet passed via the stack
+- No `float` / `double`
+- No `printf` / variadic functions (`...`)
 - No preprocessor (`#define`, `#include`)
+- Division (`/`, `%`) uses repeated subtraction — slow for large values
+- Ternary operator (`? :`) not yet supported
+- No register spilling — deep expression trees may exhaust temporaries (`r5`–`r13`)
 
 ---
 
