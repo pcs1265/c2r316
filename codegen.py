@@ -164,30 +164,36 @@ class Codegen:
         self._local_size  = getattr(func, '_local_size', 0)
         self._current_ret_type = func.ret_type
 
-        # 파라미터: r1..r4에 들어온 것을 스택에 저장
-        param_count = len(func.params)
-        # 비리프 함수이면 lr도 저장
         is_leaf = self._is_leaf(func.body)
 
-        frame_size = self._local_size
+        # 파라미터 스택 슬롯: 지역 변수 영역 바로 다음에 배치
+        # 레이아웃: [0..local_size-1]=지역변수, [local_size..]=파라미터, [끝]=lr
+        param_offset = self._local_size
+        for param in func.params:
+            sz = max(param.ctype.size(), 1)
+            self._local_vars[param.name] = (param_offset, param.ctype)
+            param_offset += sz
+        param_size = param_offset - self._local_size
+
+        frame_size = self._local_size + param_size
         if not is_leaf:
             frame_size += 1  # lr 저장 공간
 
         if frame_size > 0:
             self._emit(f'    sub {SP}, {frame_size}')
 
+        lr_slot = self._local_size + param_size
         if not is_leaf:
-            lr_slot = self._local_size  # sp + local_size
             self._emit(f'    st {LR}, {SP}, {lr_slot}')
 
-        # 파라미터를 스택 또는 레지스터로
-        # 간단히: 파라미터는 r1..r4에 그대로 유지, 이름 매핑
+        # 파라미터를 r1..r4에서 스택 슬롯으로 spill
+        # → 이후 모든 읽기/쓰기가 스택 경유로 일관성 있게 처리됨
         for i, param in enumerate(func.params):
             if i < len(ARG_REGS):
-                self._param_regs[param.name] = ARG_REGS[i]
-            # TODO: 5번째 이상 파라미터는 스택 경유
+                slot, _ = self._local_vars[param.name]
+                self._emit(f'    st {ARG_REGS[i]}, {SP}, {slot}')
 
-        # 지역 변수 오프셋 재구성 (semantic이 이미 offset 채워놨지만 여기서도 관리)
+        # 지역 변수 오프셋 수집
         offset = 0
         for stmt in func.body.stmts:
             offset = self._collect_locals(stmt, offset)
@@ -561,8 +567,8 @@ class Codegen:
 
         jmp_map = {
             '==': 'jz',  '!=': 'jnz',
-            '<':  'jl',  '>':  'jnl',   # signed
-            '<=': 'jle', '>=': 'jnle',
+            '<':  'jl',  '>':  'jnle',  # signed: jnle = NOT(<=) = >
+            '<=': 'jle', '>=': 'jnl',   # signed: jnl  = NOT(<)  = >=
         }
         j = jmp_map[op]
         self._emit(f'    {j} {true_lbl}')
