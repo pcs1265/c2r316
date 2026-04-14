@@ -20,43 +20,59 @@ from semantic import Analyzer, SemanticError
 from codegen  import Codegen, CodegenError
 
 
-def compile_c(src: str, src_name: str = '<stdin>') -> str:
-    """C 소스 문자열 → R316 어셈블리 문자열"""
+def _compile_pipeline(src: str, label: str, library_mode: bool = False) -> str:
+    """공통 컴파일 파이프라인. label은 오류 메시지 접두어."""
 
-    # 1. 렉싱
     try:
         lexer = Lexer(src)
     except LexError as e:
-        raise SystemExit(f"Lex error: {e}")
+        raise SystemExit(f"{label} lex error: {e}")
 
-    # 2. 파싱
     try:
         parser = Parser(lexer.tokens)
         ast    = parser.parse()
     except ParseError as e:
-        raise SystemExit(f"Parse error: {e}")
+        raise SystemExit(f"{label} parse error: {e}")
 
-    # 3. 시맨틱 분석
     try:
         analyzer = Analyzer()
         analyzer.analyze(ast)
-        # 문자열 리터럴 레이블을 AST에 반영
         for i, sl in enumerate(analyzer.string_lits):
             sl.label = f'_str_{i}'
     except SemanticError as e:
-        raise SystemExit(f"Semantic error: {e}")
+        raise SystemExit(f"{label} semantic error: {e}")
 
-    # 4. 코드 생성
     try:
-        gen = Codegen()
-        asm = gen.generate(ast)
+        gen = Codegen(library_mode=library_mode)
+        return gen.generate(ast)
     except CodegenError as e:
-        raise SystemExit(f"Codegen error: {e}")
+        raise SystemExit(f"{label} codegen error: {e}")
 
-    # 5. 런타임 라이브러리 포함
-    runtime_path = os.path.join(os.path.dirname(__file__), 'runtime.asm')
-    asm += '\n\n; ── runtime library ──\n'
-    asm += f'%include "{runtime_path}"\n'
+
+def compile_library(src: str) -> str:
+    """runtime.c 등 라이브러리용 컴파일 (entry point 없음)"""
+    return _compile_pipeline(src, label='[runtime.c]', library_mode=True)
+
+
+def compile_c(src: str, src_name: str = '<stdin>') -> str:
+    """C 소스 문자열 → R316 어셈블리 문자열"""
+
+    asm = _compile_pipeline(src, label=src_name, library_mode=False)
+
+    base = os.path.dirname(__file__)
+
+    # runtime.c 컴파일하여 삽입
+    runtime_c_path = os.path.join(base, 'runtime.c')
+    if os.path.exists(runtime_c_path):
+        with open(runtime_c_path, 'r', encoding='utf-8') as f:
+            runtime_c_src = f.read()
+        asm += '\n\n; ── runtime library (compiled from runtime.c) ──\n'
+        asm += compile_library(runtime_c_src)
+
+    # 하드웨어 프리미티브 (어셈블리 필수)
+    core_path = os.path.join(base, 'runtime_core.asm')
+    asm += '\n\n; ── runtime core (asm) ──\n'
+    asm += f'%include "{core_path}"\n'
 
     return asm
 
