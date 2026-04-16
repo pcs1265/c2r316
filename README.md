@@ -25,6 +25,7 @@ c2r316/
 │   ├── semantic.py        Semantic analyzer
 │   └── codegen.py         Code generator
 ├── runtime/
+│   ├── r316.h             Standard header — include this in your programs
 │   ├── runtime.c          Runtime library (C) — compiled automatically
 │   └── runtime_core.asm   Hardware primitives (I/O, division, terminal)
 ├── tests/

@@ -1,22 +1,22 @@
 /*
- * C→R316 런타임 라이브러리 (C 구현)
+ * C→R316 Runtime Library (C implementation)
  *
- * 하드웨어 프리미티브(putchar, getchar, __udiv, __umod)는
- * runtime_core.asm에 있으므로 여기서는 선언만 합니다.
+ * Hardware primitives (putchar, getchar, __udiv, __umod) live in
+ * runtime_core.asm — only their declarations appear here.
  */
 
-/* 하드웨어 프리미티브 선언 (runtime_core.asm에서 제공) */
+/* Hardware primitives — provided by runtime_core.asm */
 int putchar(int c);
 int getchar(void);
 
-/* 가변 인자 컴파일러 인트린직 선언 */
+/* Variadic compiler intrinsic declarations */
 void va_start(int* ap, int last);
 int  va_arg(int* ap, int type);
 void va_end(int* ap);
 
-/* ── _print_digits ───────────────────────────────────────────────────────────
- * n > 0 인 정수의 10진 자릿수를 재귀적으로 출력
- * 배열 없이 재귀를 이용해 자릿수 순서를 맞춤
+/* -- _print_digits ----------------------------------------------------------
+ * Recursively prints the decimal digits of n (n > 0).
+ * Uses recursion instead of an array to get the digit order right.
  */
 void _print_digits(unsigned int n) {
     unsigned int q;
@@ -29,7 +29,7 @@ void _print_digits(unsigned int n) {
     putchar('0' + r);
 }
 
-/* ── print_uint(unsigned int n) ─────────────────────────────────────────────*/
+/* -- print_uint(unsigned int n) -----------------------------------------*/
 void print_uint(unsigned int n) {
     if (n == 0) {
         putchar('0');
@@ -38,7 +38,7 @@ void print_uint(unsigned int n) {
     _print_digits(n);
 }
 
-/* ── print_int(int n) ────────────────────────────────────────────────────────*/
+/* -- print_int(int n) ---------------------------------------------------*/
 void print_int(int n) {
     if (n < 0) {
         putchar('-');
@@ -47,8 +47,8 @@ void print_int(int n) {
     print_uint(n);
 }
 
-/* ── print_hex(unsigned int n) ───────────────────────────────────────────────
- * 4자리 16진수 출력 (대문자)
+/* -- print_hex(unsigned int n) ------------------------------------------
+ * Prints a 4-digit uppercase hex value.
  */
 void print_hex(unsigned int n) {
     int i;
@@ -64,8 +64,8 @@ void print_hex(unsigned int n) {
     }
 }
 
-/* ── print_str(char *s) ──────────────────────────────────────────────────────
- * 문자열 출력 (개행 없음)
+/* -- print_str(char *s) -------------------------------------------------
+ * Prints a string (no newline).
  */
 void print_str(char* s) {
     while (*s) {
@@ -74,15 +74,15 @@ void print_str(char* s) {
     }
 }
 
-/* ── puts(char *s) ───────────────────────────────────────────────────────────
- * 문자열 출력 후 개행
+/* -- puts(char *s) ------------------------------------------------------
+ * Prints a string followed by a newline.
  */
 void puts(char* s) {
     print_str(s);
     putchar('\n');
 }
 
-/* ── strlen(char *s) → int ───────────────────────────────────────────────────*/
+/* -- strlen(char *s) -> int ---------------------------------------------*/
 int strlen(char* s) {
     int n;
     n = 0;
@@ -93,8 +93,8 @@ int strlen(char* s) {
     return n;
 }
 
-/* ── strcmp(char *a, char *b) → int ─────────────────────────────────────────
- * 출력: 0(같음), 양수(a>b), 음수(a<b)
+/* -- strcmp(char *a, char *b) -> int ------------------------------------
+ * Returns 0 if equal, positive if a > b, negative if a < b.
  */
 int strcmp(char* a, char* b) {
     while (*a && *a == *b) {
@@ -104,7 +104,7 @@ int strcmp(char* a, char* b) {
     return *a - *b;
 }
 
-/* ── memset(void *dst, int val, int n) ───────────────────────────────────────*/
+/* -- memset(void *dst, int val, int n) ----------------------------------*/
 void memset(char* dst, int val, int n) {
     while (n > 0) {
         *dst = val;
@@ -113,7 +113,7 @@ void memset(char* dst, int val, int n) {
     }
 }
 
-/* ── memcpy(void *dst, void *src, int n) ────────────────────────────────────*/
+/* -- memcpy(void *dst, void *src, int n) --------------------------------*/
 void memcpy(char* dst, char* src, int n) {
     while (n > 0) {
         *dst = *src;
@@ -123,8 +123,8 @@ void memcpy(char* dst, char* src, int n) {
     }
 }
 
-/* ── printf(char *fmt, ...) ─────────────────────────────────────────────────
- * 지원 형식 지정자: %d %u %x %s %c %%
+/* -- printf(char *fmt, ...) ---------------------------------------------
+ * Supported format specifiers: %d %u %x %s %c %%
  */
 void printf(char* fmt, ...) {
     int* ap;
