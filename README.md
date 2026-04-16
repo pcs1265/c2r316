@@ -18,6 +18,7 @@ Assemble the resulting `output.asm` with TPTASM and load it into the R316.
 c2r316/
 ├── compiler/
 │   ├── compiler.py        Entry point (assembles the pipeline)
+│   ├── preprocessor.py    Preprocessor (#include, #define, #ifdef, ...)
 │   ├── lexer.py           Lexer
 │   ├── ast_nodes.py       AST node definitions
 │   ├── parser.py          Parser
@@ -41,6 +42,12 @@ c2r316/
 
 ```
 C source (.c)
+    │
+    ▼
+[Stage 0: Preprocessor]
+    │  #include "file" → inline file contents
+    │  #define NAME val → macro substitution
+    │  #ifdef / #ifndef / #if / #else / #endif → conditional compilation
     │
     ▼
 [Stage 1: Lexer]
@@ -294,7 +301,7 @@ result = add(3, 4);
 - Maximum 4 fixed arguments in `r1`–`r4`; extra variadic args go to the stack
 - No `struct` support
 - No `float` / `double`
-- No preprocessor (`#define`, `#include`)
+- No `#include <...>` (system/angle-bracket headers are silently ignored)
 - Division (`/`, `%`) uses repeated subtraction — slow for large values
 - No register spilling — deep expression trees may exhaust temporaries (`r5`–`r13`)
 

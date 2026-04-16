@@ -26,7 +26,7 @@
 - [ ] `float` / `double` (software floating point)
 
 ### Other Language Features
-- [ ] Preprocessor (`#define`, `#include`, `#ifdef`, etc.)
+- [x] Preprocessor (`#include "file"`, `#define`, `#ifdef`/`#ifndef`/`#if`/`#else`/`#elif`/`#endif`, `#undef`)
 - [x] Compound literal initialization (local array `int a[] = {1, 2, 3}`)
 - [ ] Function pointer type checking (currently passes without type info)
 - [x] `typedef` support (scalar/pointer aliases registered; struct typedef treated as `int`)

@@ -14,14 +14,21 @@ import argparse
 # load modules from the same directory
 sys.path.insert(0, os.path.dirname(__file__))
 
-from lexer    import Lexer,  LexError
-from parser   import Parser, ParseError
-from semantic import Analyzer, SemanticError
-from codegen  import Codegen, CodegenError
+from lexer         import Lexer,  LexError
+from parser        import Parser, ParseError
+from semantic      import Analyzer, SemanticError
+from codegen       import Codegen, CodegenError
+from preprocessor  import preprocess, PreprocError
 
 
-def _compile_pipeline(src: str, label: str, library_mode: bool = False) -> str:
+def _compile_pipeline(src: str, label: str, filepath: str = '<string>',
+                      library_mode: bool = False) -> str:
     """Shared compilation pipeline. label is the error message prefix."""
+
+    try:
+        src = preprocess(src, filepath)
+    except PreprocError as e:
+        raise SystemExit(f"{label} preprocessor error: {e}")
 
     try:
         lexer = Lexer(src)
@@ -49,15 +56,17 @@ def _compile_pipeline(src: str, label: str, library_mode: bool = False) -> str:
         raise SystemExit(f"{label} codegen error: {e}")
 
 
-def compile_library(src: str) -> str:
+def compile_library(src: str, filepath: str = '<runtime>') -> str:
     """Compile a library (e.g. runtime.c) with no entry point"""
-    return _compile_pipeline(src, label='[runtime.c]', library_mode=True)
+    return _compile_pipeline(src, label='[runtime.c]', filepath=filepath,
+                             library_mode=True)
 
 
 def compile_c(src: str, src_name: str = '<stdin>') -> str:
     """Compile a C source string to an R316 assembly string"""
 
-    asm = _compile_pipeline(src, label=src_name, library_mode=False)
+    asm = _compile_pipeline(src, label=src_name, filepath=src_name,
+                            library_mode=False)
 
     runtime_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'runtime'))
 
@@ -67,7 +76,7 @@ def compile_c(src: str, src_name: str = '<stdin>') -> str:
         with open(runtime_c_path, 'r', encoding='utf-8') as f:
             runtime_c_src = f.read()
         asm += '\n\n; -- runtime library (compiled from runtime.c) --\n'
-        asm += compile_library(runtime_c_src)
+        asm += compile_library(runtime_c_src, filepath=runtime_c_path)
 
     # hardware primitives (must be in assembly)
     # Path is relative to the output .asm file (assumed to be at repo root)
