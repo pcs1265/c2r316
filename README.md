@@ -5,7 +5,7 @@ A compiler that lets you write C programs and run them on the R316 CPU inside Th
 ## Usage
 
 ```bash
-python3 compiler.py input.c -o output.asm
+python3 compiler/compiler.py input.c -o output.asm
 ```
 
 Assemble the resulting `output.asm` with TPTASM and load it into the R316.
@@ -16,14 +16,23 @@ Assemble the resulting `output.asm` with TPTASM and load it into the R316.
 
 ```
 c2r316/
-├── compiler.py        Entry point (assembles the pipeline)
-├── lexer.py           Lexer
-├── ast_nodes.py       AST node definitions
-├── parser.py          Parser
-├── semantic.py        Semantic analyzer
-├── codegen.py         Code generator
-├── runtime.c          Runtime library (C) — compiled automatically
-└── runtime_core.asm   Runtime core (R316 assembly) — hardware primitives only
+├── compiler/
+│   ├── compiler.py        Entry point (assembles the pipeline)
+│   ├── lexer.py           Lexer
+│   ├── ast_nodes.py       AST node definitions
+│   ├── parser.py          Parser
+│   ├── semantic.py        Semantic analyzer
+│   └── codegen.py         Code generator
+├── runtime/
+│   ├── runtime.c          Runtime library (C) — compiled automatically
+│   └── runtime_core.asm   Hardware primitives (I/O, division, terminal)
+├── tests/
+│   ├── hello.c / hello.asm
+│   ├── test_all.c / test_all.asm
+│   └── test_new_features.c
+├── README.md
+├── TODO.md
+└── CLAUDE.md
 ```
 
 ---
@@ -312,6 +321,6 @@ int main(void) {
 ```
 
 ```bash
-python3 compiler.py hello.c -o hello.asm
+python3 compiler/compiler.py hello.c -o hello.asm
 # Assemble with TPTASM, then load into The Powder Toy R316
 ```

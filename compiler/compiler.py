@@ -1,17 +1,17 @@
 """
-C → R316 컴파일러 메인 진입점
+C -> R316 Compiler entry point
 
-사용법:
-    python compiler.py input.c [-o output.asm]
+Usage:
+    python compiler/compiler.py input.c [-o output.asm]
 
-출력 파일은 TPTASM으로 어셈블 가능한 R316 어셈블리입니다.
+Output file is R316 assembly that can be assembled with TPTASM.
 """
 
 import sys
 import os
 import argparse
 
-# 같은 디렉터리에서 모듈 로드
+# load modules from the same directory
 sys.path.insert(0, os.path.dirname(__file__))
 
 from lexer    import Lexer,  LexError
@@ -21,7 +21,7 @@ from codegen  import Codegen, CodegenError
 
 
 def _compile_pipeline(src: str, label: str, library_mode: bool = False) -> str:
-    """공통 컴파일 파이프라인. label은 오류 메시지 접두어."""
+    """Shared compilation pipeline. label is the error message prefix."""
 
     try:
         lexer = Lexer(src)
@@ -50,28 +50,28 @@ def _compile_pipeline(src: str, label: str, library_mode: bool = False) -> str:
 
 
 def compile_library(src: str) -> str:
-    """runtime.c 등 라이브러리용 컴파일 (entry point 없음)"""
+    """Compile a library (e.g. runtime.c) with no entry point"""
     return _compile_pipeline(src, label='[runtime.c]', library_mode=True)
 
 
 def compile_c(src: str, src_name: str = '<stdin>') -> str:
-    """C 소스 문자열 → R316 어셈블리 문자열"""
+    """Compile a C source string to an R316 assembly string"""
 
     asm = _compile_pipeline(src, label=src_name, library_mode=False)
 
-    base = os.path.dirname(__file__)
+    runtime_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'runtime'))
 
-    # runtime.c 컴파일하여 삽입
-    runtime_c_path = os.path.join(base, 'runtime.c')
+    # compile and append runtime.c
+    runtime_c_path = os.path.join(runtime_dir, 'runtime.c')
     if os.path.exists(runtime_c_path):
         with open(runtime_c_path, 'r', encoding='utf-8') as f:
             runtime_c_src = f.read()
-        asm += '\n\n; ── runtime library (compiled from runtime.c) ──\n'
+        asm += '\n\n; -- runtime library (compiled from runtime.c) --\n'
         asm += compile_library(runtime_c_src)
 
-    # 하드웨어 프리미티브 (어셈블리 필수)
-    core_path = os.path.join(base, 'runtime_core.asm')
-    asm += '\n\n; ── runtime core (asm) ──\n'
+    # hardware primitives (must be in assembly)
+    core_path = os.path.join(runtime_dir, 'runtime_core.asm')
+    asm += '\n\n; -- runtime core (asm) --\n'
     asm += f'%include "{core_path}"\n'
 
     return asm
@@ -85,7 +85,7 @@ def main():
                     help='Print compilation steps')
     args = ap.parse_args()
 
-    # 입력 파일 읽기
+    # read input file
     try:
         with open(args.input, 'r', encoding='utf-8') as f:
             src = f.read()
@@ -97,7 +97,7 @@ def main():
 
     asm = compile_c(src, args.input)
 
-    # 출력
+    # write output
     if args.output:
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write(asm)

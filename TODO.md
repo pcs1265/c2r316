@@ -1,52 +1,52 @@
-# C→R316 컴파일러 TODO
+# C→R316 Compiler TODO
 
-## 버그 (수정 완료)
+## Bugs (Fixed)
 
-- [x] 삼항 연산자 `?:` 파싱 불완전 — 이중 정의, 실제 동작 안 함
-- [x] 부호 있는 나눗셈 `int / int`가 `__udiv` 호출 → 음수에서 틀린 결과
-- [x] 전역 배열 초기화 `= {1, 2, 3}` 무시되고 0으로 채워짐
-- [x] `__umod` 스택 저장에 고정 주소 `0xFFFF` 사용 (잘못된 패턴)
-- [x] `int >> n` 논리 시프트(0 채움) 사용 → 음수에서 틀린 결과
-  - R316 `shr`는 항상 논리 시프트임 (매뉴얼 확인)
-  - 산술 오른쪽 시프트로 수정 (인라인 마스크 채움)
-
----
-
-## 미지원 C 기능
-
-### 구문/문장
-- [ ] `do { } while (cond)` 루프
-- [ ] `switch` / `case` / `default`
-- [ ] `goto` / 레이블
-
-### 타입
-- [ ] `struct` / `union` (필드 타입·오프셋 추적)
-- [ ] `long` 32비트 산술 (2-word 연산, 상위 16비트 carry 처리)
-- [ ] `enum`
-- [ ] `float` / `double` (소프트웨어 부동소수점)
-
-### 기타 언어 기능
-- [ ] 전처리기 (`#define`, `#include`, `#ifdef` 등)
-- [ ] 복합 리터럴 초기화 (지역 배열 `int a[] = {1, 2, 3}`)
-- [ ] 함수 포인터 타입 검사 (현재 타입 없이 통과)
-- [ ] `typedef`의 실질적 지원 (파싱은 되지만 심볼 등록 안 됨)
+- [x] Ternary operator `?:` parsing incomplete — defined twice, not actually working
+- [x] Signed division `int / int` calls `__udiv` → wrong result for negative numbers
+- [x] Global array initializer `= {1, 2, 3}` ignored, filled with zeros instead
+- [x] `__umod` uses hardcoded address `0xFFFF` for stack storage (wrong pattern)
+- [x] `int >> n` uses logical shift (zero-fill) → wrong result for negative numbers
+  - R316 `shr` is always a logical shift (confirmed in manual)
+  - Fixed to arithmetic right shift (inline mask fill)
 
 ---
 
-## 코드 품질 / 안정성
+## Unsupported C Features
 
-- [ ] **레지스터 spill** — 임시 레지스터 r5–r13 (9개) 소진 시 예외로 크래시
-  - 넘치면 스택에 spill하고 복원하는 로직 필요
-- [ ] **`_gen_ternary` 레지스터 관리** — `restore(checkpoint - 1)` 방식이 암묵적 가정에 의존
-  - then/else 분기가 같은 결과 레지스터를 쓴다는 보장이 명시적이지 않음
-- [ ] **복합 대입 `+=` 등에서 포인터 스케일링 누락**
-  - `ptr += 1`이 원소 크기가 아닌 1만큼 증가 (현재 int 전용으로 우연히 맞음)
+### Syntax / Statements
+- [x] `do { } while (cond)` loop
+- [x] `switch` / `case` / `default`
+- [x] `goto` / labels
+
+### Types
+- [ ] `struct` / `union` (field type and offset tracking)
+- [ ] `long` 32-bit arithmetic (2-word operations, upper 16-bit carry handling)
+- [x] `enum` (top-level and local; constants folded to `IntLit` at parse time)
+- [ ] `float` / `double` (software floating point)
+
+### Other Language Features
+- [ ] Preprocessor (`#define`, `#include`, `#ifdef`, etc.)
+- [x] Compound literal initialization (local array `int a[] = {1, 2, 3}`)
+- [ ] Function pointer type checking (currently passes without type info)
+- [x] `typedef` support (scalar/pointer aliases registered; struct typedef treated as `int`)
 
 ---
 
-## 성능 최적화
+## Code Quality / Stability
 
-- [ ] **상수 폴딩** — `1 + 2` 같은 컴파일 타임 상수를 런타임에 계산하지 않도록
-- [ ] **불필요한 `mov` 제거** — 인자가 이미 r1에 있는데 `mov r1, r1` 생성
-- [ ] **파라미터 무조건 spill 제거** — 덮어쓸 위험 없는 경우 레지스터 그대로 사용
-- [ ] **리프 함수 판정 개선** — 현재 함수 호출 여부만 보고, 실제로 LR을 보존해야 하는지 정밀하게 판단
+- [ ] **Register spill** — crashes with exception when temporary registers r5–r13 (9 total) are exhausted
+  - Need logic to spill to stack and restore when overflow occurs
+- [ ] **`_gen_ternary` register management** — `restore(checkpoint - 1)` approach relies on implicit assumptions
+  - No explicit guarantee that then/else branches use the same result register
+- [ ] **Missing pointer scaling in compound assignment `+=` etc.**
+  - `ptr += 1` increments by 1 instead of element size (currently works by coincidence for int-only)
+
+---
+
+## Performance Optimizations
+
+- [ ] **Constant folding** — avoid computing compile-time constants like `1 + 2` at runtime
+- [ ] **Eliminate unnecessary `mov`** — generates `mov r1, r1` when argument is already in r1
+- [ ] **Remove unconditional parameter spill** — use register as-is when there is no risk of overwriting
+- [ ] **Improve leaf function detection** — currently only checks for function calls; should precisely determine whether LR actually needs to be preserved

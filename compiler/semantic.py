@@ -1,6 +1,6 @@
 """
 C to R316 Compiler - Semantic Analysis
-심볼 테이블 구축 + 타입 검사
+Symbol table construction + type checking
 """
 
 from ast_nodes import *
@@ -17,7 +17,7 @@ class Symbol:
         self.ctype     = ctype
         self.is_global = is_global
         self.is_func   = is_func
-        self.offset    = offset   # 지역 변수: sp 기준 오프셋
+        self.offset    = offset   # local variable: offset relative to sp
 
 
 class Scope:
@@ -37,7 +37,7 @@ class Scope:
 
 
 def common_type(a: CType, b: CType) -> CType:
-    """두 타입의 공통(더 넓은) 타입 반환"""
+    """Return the wider of two types"""
     if isinstance(a, CLong) or isinstance(b, CLong):
         return CLong()
     if isinstance(a, (CPointer, CArray)):
@@ -52,10 +52,10 @@ class Analyzer:
         self.global_scope = Scope()
         self.scope        = self.global_scope
         self.current_func: Optional[FuncDecl] = None
-        self.local_offset = 0      # 현재 함수 스택 크기 (words)
+        self.local_offset = 0      # current function stack size (words)
         self.string_lits: list[StringLit] = []
 
-    # ── 스코프 관리 ───────────────────────────────────────────────────────────
+    # ── Scope management ──────────────────────────────────────────────────────
 
     def _push_scope(self):
         self.scope = Scope(self.scope)
@@ -75,10 +75,10 @@ class Analyzer:
             raise SemanticError(f"Undefined symbol: {name!r}")
         return sym
 
-    # ── 최상위 ───────────────────────────────────────────────────────────────
+    # ── Top-level ─────────────────────────────────────────────────────────────
 
     def analyze(self, prog: Program):
-        # 1패스: 함수/전역 변수 선언 등록
+        # pass 1: register function/global variable declarations
         for decl in prog.decls:
             if isinstance(decl, FuncDecl):
                 ftype = CFunction(decl.ret_type,
@@ -88,7 +88,7 @@ class Analyzer:
             elif isinstance(decl, VarDecl):
                 self._define(decl.name, decl.ctype, is_global=True)
 
-        # 2패스: 함수 몸체 분석
+        # pass 2: analyze function bodies
         for decl in prog.decls:
             if isinstance(decl, FuncDecl) and decl.body is not None:
                 self._analyze_func(decl)
@@ -98,20 +98,20 @@ class Analyzer:
         self.local_offset = 0
         self._push_scope()
 
-        # 파라미터 등록
+        # register parameters
         for i, param in enumerate(func.params):
             sym = self._define(param.name, param.ctype)
-            # 파라미터는 음수 오프셋 (caller가 넣어줌)
-            # 실제 레이아웃은 codegen이 결정; 여기서는 표시만
+            # parameters have negative offsets (pushed by caller)
+            # actual layout is determined by codegen; mark here only
             sym.is_global = False
 
         self._analyze_block(func.body)
-        func._local_size = self.local_offset   # codegen에 전달
+        func._local_size = self.local_offset   # passed to codegen
 
         self._pop_scope()
         self.current_func = None
 
-    # ── 문장 ─────────────────────────────────────────────────────────────────
+    # ── Statements ────────────────────────────────────────────────────────────
 
     def _analyze_block(self, block: Block):
         self._push_scope()
@@ -125,7 +125,10 @@ class Analyzer:
 
         elif isinstance(stmt, DeclStmt):
             d = stmt.decl
-            size = d.ctype.size() if not isinstance(d.ctype, CArray) else d.ctype.size()
+            # infer array length from InitList when size is unspecified
+            if isinstance(d.ctype, CArray) and d.ctype.length is None and isinstance(d.init, InitList):
+                d.ctype = CArray(d.ctype.base, len(d.init.items))
+            size = d.ctype.size()
             size = max(size, 1)
             sym = self._define(d.name, d.ctype, offset=self.local_offset)
             self.local_offset += size
@@ -163,10 +166,26 @@ class Analyzer:
         elif isinstance(stmt, (BreakStmt, ContinueStmt)):
             pass
 
+        elif isinstance(stmt, DoWhileStmt):
+            self._analyze_stmt(stmt.body)
+            self._analyze_expr(stmt.cond)
+
+        elif isinstance(stmt, SwitchStmt):
+            self._analyze_expr(stmt.expr)
+            for case in stmt.cases:
+                for s in case.stmts:
+                    self._analyze_stmt(s)
+
+        elif isinstance(stmt, GotoStmt):
+            pass  # label resolution at codegen time
+
+        elif isinstance(stmt, LabelStmt):
+            self._analyze_stmt(stmt.stmt)
+
         else:
             raise SemanticError(f"Unknown statement type: {type(stmt)}")
 
-    # ── 표현식 ───────────────────────────────────────────────────────────────
+    # ── Expressions ───────────────────────────────────────────────────────────
 
     def _analyze_expr(self, expr: Expr) -> CType:
         if isinstance(expr, IntLit):
@@ -260,7 +279,7 @@ class Analyzer:
 
         if isinstance(expr, Member):
             self._analyze_expr(expr.obj)
-            expr.ctype = CInt()   # struct 미지원 시 단순화
+            expr.ctype = CInt()   # struct not yet supported; simplified
             return expr.ctype
 
         if isinstance(expr, Ternary):

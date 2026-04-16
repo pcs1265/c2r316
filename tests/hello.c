@@ -3,14 +3,14 @@
 void putchar(int c);
 void print_int(int n);
 void puts(char *s);
+void printf(char *fmt, ...);        // Formatted output: %d %u %x %s %c %%
 
 int main() {
-    puts("Hello, R316!");
+    printf("Hello, R316!");
 
     int i;
     for (i = 1; i <= 10; i++) {
-        print_int(i);
-        putchar('\n');
+        printf("Value:%d\n", i);
     }
 
     return 0;

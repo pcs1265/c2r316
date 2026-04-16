@@ -1,10 +1,16 @@
 """
 C to R316 Compiler - Parser
-토큰 스트림 → AST
+Token stream -> AST
 """
 
 from lexer import TK, Token
 from ast_nodes import *
+
+# Enum constants registry: name -> int value (populated during parsing)
+_enum_consts: dict[str, int] = {}
+
+# Typedef registry: alias name -> CType
+_typedefs: dict[str, 'CType'] = {}
 
 
 class ParseError(Exception):
@@ -16,7 +22,7 @@ class Parser:
         self.tokens = tokens
         self.pos    = 0
 
-    # ── 기본 유틸 ──────────────────────────────────────────────────────────────
+    # ── Utilities ─────────────────────────────────────────────────────────────
 
     def _cur(self) -> Token:
         return self.tokens[self.pos]
@@ -45,9 +51,15 @@ class Parser:
             return self._eat(*kinds)
         return None
 
-    # ── 타입 파싱 ─────────────────────────────────────────────────────────────
+    # ── Type parsing ──────────────────────────────────────────────────────────
 
-    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED}
+    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT}
+
+    def _at_type_start(self) -> bool:
+        """Returns True if the current token can start a type (including typedef aliases)"""
+        if self._at(*self.TYPE_STARTS):
+            return True
+        return self._at(TK.IDENT) and self._cur().value in _typedefs
 
     def _parse_base_type(self) -> CType:
         unsigned = bool(self._try_eat(TK.UNSIGNED))
@@ -61,7 +73,30 @@ class Parser:
             if unsigned:
                 raise ParseError("unsigned void is invalid")
             return CVoid()
-        # unsigned 단독 → unsigned int
+        if self._at(TK.STRUCT):
+            self._eat(TK.STRUCT)
+            # optional tag name
+            if self._at(TK.IDENT):
+                self.pos += 1
+            # optional body — skip
+            if self._at(TK.LBRACE):
+                depth = 0
+                while not self._at(TK.EOF):
+                    if self._at(TK.LBRACE):
+                        depth += 1
+                    elif self._at(TK.RBRACE):
+                        depth -= 1
+                        self.pos += 1
+                        if depth == 0:
+                            break
+                        continue
+                    self.pos += 1
+            return CInt()  # struct -> treated as int (pointer-sized) for now
+        # typedef alias
+        if not unsigned and self._at(TK.IDENT) and self._cur().value in _typedefs:
+            tok = self._eat(TK.IDENT)
+            return _typedefs[tok.value]
+        # bare 'unsigned' -> unsigned int
         if unsigned:
             return CInt(unsigned=True)
         raise ParseError(f"Line {self._cur().line}: Expected type specifier")
@@ -73,16 +108,16 @@ class Parser:
         return base
 
     def _parse_type_and_name(self) -> tuple[CType, str]:
-        """타입 + 선택적 식별자. 배열 대괄호도 처리."""
+        """Parse a type followed by an optional name. Handles array brackets."""
         base = self._parse_base_type()
-        # 포인터 수식어
+        # pointer modifiers
         stars = 0
         while self._try_eat(TK.STAR):
             stars += 1
         name = ''
         if self._at(TK.IDENT):
             name = self._eat(TK.IDENT).value
-        # 배열 수식어
+        # array modifiers
         if self._try_eat(TK.LBRACKET):
             if self._at(TK.INT_LIT):
                 length = self._eat(TK.INT_LIT).value
@@ -96,9 +131,9 @@ class Parser:
             t = CPointer(t) if not isinstance(t, CArray) else t
         if stars and not isinstance(t, (CPointer, CArray)):
             t = CPointer(t)
-        # 별표를 타입에 적용 (배열이 아닌 경우)
+        # apply stars to type (array takes precedence)
         if stars and isinstance(t, CArray):
-            pass  # 배열 우선
+            pass  # array wins
         elif stars:
             inner = base
             for _ in range(stars):
@@ -106,7 +141,7 @@ class Parser:
             t = inner
         return t, name
 
-    # ── 최상위 파싱 ───────────────────────────────────────────────────────────
+    # ── Top-level parsing ─────────────────────────────────────────────────────
 
     def parse(self) -> Program:
         decls = []
@@ -115,6 +150,16 @@ class Parser:
         return Program(decls)
 
     def _parse_top_decl(self) -> list:
+        # typedef
+        if self._at(TK.TYPEDEF):
+            self._parse_typedef()
+            return []
+
+        # enum definition at top level: enum Name { ... };
+        if self._at(TK.ENUM):
+            self._parse_enum_def()
+            return []
+
         is_static = bool(self._try_eat(TK.STATIC))
         is_extern = bool(self._try_eat(TK.EXTERN))
 
@@ -128,7 +173,7 @@ class Parser:
         name = self._eat(TK.IDENT).value
 
         if self._at(TK.LPAREN):
-            # 함수 선언 또는 정의
+            # function declaration or definition
             params, variadic = self._parse_params()
             if self._try_eat(TK.SEMICOLON):
                 body = None
@@ -136,9 +181,9 @@ class Parser:
                 body = self._parse_block()
             return [FuncDecl(name, ret_type, params, body, is_static, variadic)]
         else:
-            # 전역 변수
+            # global variable
             results = []
-            # 배열 처리
+            # array handling
             if self._try_eat(TK.LBRACKET):
                 if self._at(TK.INT_LIT):
                     length = self._eat(TK.INT_LIT).value
@@ -164,8 +209,62 @@ class Parser:
             self._eat(TK.SEMICOLON)
             return results
 
+    def _parse_typedef(self):
+        """typedef <type> <name>; — registers alias in _typedefs"""
+        self._eat(TK.TYPEDEF)
+        # Parse the underlying type (struct body is skipped for now)
+        if self._at(TK.STRUCT):
+            # struct typedef: consume until '}' then grab alias name
+            depth = 0
+            while not self._at(TK.EOF):
+                if self._at(TK.LBRACE):
+                    depth += 1
+                    self.pos += 1
+                elif self._at(TK.RBRACE):
+                    depth -= 1
+                    self.pos += 1
+                    if depth == 0:
+                        break
+                elif self._at(TK.SEMICOLON) and depth == 0:
+                    break
+                else:
+                    self.pos += 1
+            # alias name before semicolon
+            if self._at(TK.IDENT):
+                alias = self._eat(TK.IDENT).value
+                _typedefs[alias] = CInt()  # struct -> treated as int for now
+        elif self._at(*self.TYPE_STARTS):
+            ctype, alias = self._parse_type_and_name()
+            if alias:
+                _typedefs[alias] = ctype
+        else:
+            # unknown form — skip to semicolon
+            while not self._at(TK.SEMICOLON, TK.EOF):
+                self.pos += 1
+        self._eat(TK.SEMICOLON)
+
+    def _parse_enum_def(self):
+        """enum [Name] { A=0, B, ... }; — registers constants in _enum_consts"""
+        self._eat(TK.ENUM)
+        # optional tag name
+        if self._at(TK.IDENT):
+            self.pos += 1
+        self._eat(TK.LBRACE)
+        val = 0
+        while not self._at(TK.RBRACE, TK.EOF):
+            name = self._eat(TK.IDENT).value
+            if self._try_eat(TK.ASSIGN):
+                tok = self._eat(TK.INT_LIT)
+                val = tok.value
+            _enum_consts[name] = val
+            val += 1
+            if not self._try_eat(TK.COMMA):
+                break
+        self._eat(TK.RBRACE)
+        self._eat(TK.SEMICOLON)
+
     def _parse_params(self) -> tuple[list[ParamDecl], bool]:
-        """파라미터 목록 파싱. 반환: (params, is_variadic)"""
+        """Parse parameter list. Returns (params, is_variadic)."""
         self._eat(TK.LPAREN)
         params = []
         variadic = False
@@ -178,7 +277,7 @@ class Parser:
                     self._eat(TK.ELLIPSIS)
                     variadic = True
                     break
-                if self._at(*self.TYPE_STARTS):
+                if self._at_type_start():
                     ptype, pname = self._parse_type_and_name()
                     params.append(ParamDecl(pname or f'_p{len(params)}', ptype))
                     if not self._try_eat(TK.COMMA):
@@ -188,7 +287,7 @@ class Parser:
         self._eat(TK.RPAREN)
         return params, variadic
 
-    # ── 문장 파싱 ─────────────────────────────────────────────────────────────
+    # ── Statement parsing ─────────────────────────────────────────────────────
 
     def _parse_block(self) -> Block:
         self._eat(TK.LBRACE)
@@ -213,6 +312,25 @@ class Parser:
         if self._at(TK.FOR):
             return self._parse_for()
 
+        if self._at(TK.DO):
+            return self._parse_do_while()
+
+        if self._at(TK.SWITCH):
+            return self._parse_switch()
+
+        if self._at(TK.GOTO):
+            self._eat(TK.GOTO)
+            lbl = self._eat(TK.IDENT).value
+            self._eat(TK.SEMICOLON)
+            return GotoStmt(lbl)
+
+        # label: IDENT ':'
+        if self._at(TK.IDENT) and self._peek().kind == TK.COLON:
+            lbl = self._eat(TK.IDENT).value
+            self._eat(TK.COLON)
+            inner = self._parse_stmt()
+            return LabelStmt(lbl, inner)
+
         if self._try_eat(TK.RETURN):
             expr = None
             if not self._at(TK.SEMICOLON):
@@ -228,11 +346,16 @@ class Parser:
             self._eat(TK.SEMICOLON)
             return ContinueStmt()
 
-        # 지역 변수 선언
-        if self._at(*self.TYPE_STARTS):
+        # enum definition inside a function
+        if self._at(TK.ENUM):
+            self._parse_enum_def()
+            return Block([])  # no-op
+
+        # local variable declaration
+        if self._at_type_start():
             return self._parse_local_decl()
 
-        # 표현식 문장
+        # expression statement
         expr = self._parse_expr()
         self._eat(TK.SEMICOLON)
         return ExprStmt(expr)
@@ -263,7 +386,7 @@ class Parser:
         if self._at(TK.SEMICOLON):
             self._eat(TK.SEMICOLON)
             init = None
-        elif self._at(*self.TYPE_STARTS):
+        elif self._at_type_start():
             init = self._parse_local_decl()
         else:
             init = ExprStmt(self._parse_expr())
@@ -283,6 +406,41 @@ class Parser:
         body = self._parse_stmt()
         return ForStmt(init, cond, step, body)
 
+    def _parse_do_while(self) -> DoWhileStmt:
+        self._eat(TK.DO)
+        body = self._parse_stmt()
+        self._eat(TK.WHILE)
+        self._eat(TK.LPAREN)
+        cond = self._parse_expr()
+        self._eat(TK.RPAREN)
+        self._eat(TK.SEMICOLON)
+        return DoWhileStmt(body, cond)
+
+    def _parse_switch(self) -> SwitchStmt:
+        self._eat(TK.SWITCH)
+        self._eat(TK.LPAREN)
+        expr = self._parse_expr()
+        self._eat(TK.RPAREN)
+        self._eat(TK.LBRACE)
+        cases = []
+        while not self._at(TK.RBRACE, TK.EOF):
+            # case N: or default:
+            if self._at(TK.CASE):
+                self._eat(TK.CASE)
+                val = self._eat(TK.INT_LIT).value
+                self._eat(TK.COLON)
+                cases.append(SwitchCase(val, []))
+            elif self._at(TK.DEFAULT):
+                self._eat(TK.DEFAULT)
+                self._eat(TK.COLON)
+                cases.append(SwitchCase(None, []))
+            else:
+                if not cases:
+                    raise ParseError(f"Line {self._cur().line}: Statement before first case in switch")
+                cases[-1].stmts.append(self._parse_stmt())
+        self._eat(TK.RBRACE)
+        return SwitchStmt(expr, cases)
+
     def _parse_local_decl(self) -> DeclStmt:
         base = self._parse_base_type()
         is_static = False
@@ -290,7 +448,7 @@ class Parser:
         while self._try_eat(TK.STAR):
             stars += 1
         name = self._eat(TK.IDENT).value
-        # 배열
+        # array
         if self._try_eat(TK.LBRACKET):
             if self._at(TK.INT_LIT):
                 length = self._eat(TK.INT_LIT).value
@@ -309,7 +467,7 @@ class Parser:
         return DeclStmt(VarDecl(name, vtype, init, is_global=False))
 
     def _parse_init(self) -> Expr:
-        """= 뒤에 올 수 있는 초기화 식. {1,2,3} 형태도 허용."""
+        """Parse an initializer (after '='). Accepts {1,2,3} brace lists."""
         if self._at(TK.LBRACE):
             self._eat(TK.LBRACE)
             items = []
@@ -321,7 +479,7 @@ class Parser:
             return InitList(items)
         return self._parse_expr()
 
-    # ── 표현식 파싱 (연산자 우선순위) ─────────────────────────────────────────
+    # ── Expression parsing (operator precedence) ──────────────────────────────
 
     def _parse_expr(self) -> Expr:
         return self._parse_assign()
@@ -350,7 +508,7 @@ class Parser:
             return cond
         then = self._parse_assign()
         self._eat(TK.COLON)
-        else_ = self._parse_ternary()   # 우결합
+        else_ = self._parse_ternary()   # right-associative
         return Ternary(cond, then, else_)
 
     def _parse_or(self) -> Expr:
@@ -391,14 +549,6 @@ class Parser:
             self._eat(TK.AMP)
             right = self._parse_eq()
             left = BinOp('&', left, right)
-        return left
-
-    def _parse_eq(self) -> Expr:
-        left = self._parse_rel()
-        while self._at(TK.EQ, TK.NEQ):
-            op = '==' if self._eat(TK.EQ, TK.NEQ).kind == TK.EQ else '!='
-            right = self._parse_rel()
-            left = BinOp(op, left, right)
         return left
 
     def _parse_eq(self) -> Expr:
@@ -467,7 +617,8 @@ class Parser:
             self._eat(TK.DEC)
             return UnaryOp('--pre', self._parse_unary())
         # cast: (type)expr
-        if self._at(TK.LPAREN) and self._peek().kind in self.TYPE_STARTS:
+        if self._at(TK.LPAREN) and (self._peek().kind in self.TYPE_STARTS or
+                (self._peek().kind == TK.IDENT and self._peek().value in _typedefs)):
             self._eat(TK.LPAREN)
             t = self._parse_type()
             self._eat(TK.RPAREN)
@@ -478,22 +629,22 @@ class Parser:
         node = self._parse_primary()
         while True:
             if self._at(TK.LPAREN):
-                # 함수 호출
+                # function call
                 self._eat(TK.LPAREN)
                 args = []
-                # va_arg(ap, type) — 두 번째 인자가 타입 표현식일 수 있음
+                # va_arg(ap, type) — second argument may be a type expression
                 is_va_arg = isinstance(node, Ident) and node.name == 'va_arg'
                 if not self._at(TK.RPAREN):
                     args.append(self._parse_assign())
                     while self._try_eat(TK.COMMA):
                         if is_va_arg and self._at(*self.TYPE_STARTS):
-                            self._parse_type()  # 타입 인자 소비 후 버림
+                            self._parse_type()  # consume type argument and discard
                         else:
                             args.append(self._parse_assign())
                 self._eat(TK.RPAREN)
                 node = Call(node, args)
             elif self._at(TK.LBRACKET):
-                # 배열 인덱스
+                # array index
                 self._eat(TK.LBRACKET)
                 idx = self._parse_expr()
                 self._eat(TK.RBRACKET)
@@ -533,6 +684,9 @@ class Parser:
 
         if tok.kind == TK.IDENT:
             self._eat(TK.IDENT)
+            # enum constant?
+            if tok.value in _enum_consts:
+                return IntLit(_enum_consts[tok.value])
             return Ident(tok.value)
 
         if tok.kind == TK.LPAREN:
