@@ -1,17 +1,17 @@
-/* R316에서 실행되는 첫 C 프로그램 */
+/* First C program running on the R316 */
 
-void putchar(int c);
-void print_int(int n);
-void puts(char *s);
-void printf(char *fmt, ...);        // Formatted output: %d %u %x %s %c %%
+#include "../runtime/r316.h"
 
-int main() {
-    printf("Hello, R316!");
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
 
+int main(void) {
     int i;
-    for (i = 1; i <= 10; i++) {
-        printf("Value:%d\n", i);
+    printf("Hello, R316!\n");
+    for (i = 1; i <= 7; i++) {
+        printf("%d! = %d\n", i, factorial(i));
     }
-
     return 0;
 }
