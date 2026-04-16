@@ -70,9 +70,9 @@ def compile_c(src: str, src_name: str = '<stdin>') -> str:
         asm += compile_library(runtime_c_src)
 
     # hardware primitives (must be in assembly)
-    core_path = os.path.join(runtime_dir, 'runtime_core.asm')
+    # Path is relative to the output .asm file (assumed to be at repo root)
     asm += '\n\n; -- runtime core (asm) --\n'
-    asm += f'%include "{core_path}"\n'
+    asm += '%include "runtime/runtime_core.asm"\n'
 
     return asm
 
