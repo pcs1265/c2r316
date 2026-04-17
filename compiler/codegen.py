@@ -9,26 +9,32 @@ ABI:
   r30 (sp): stack pointer (grows downward)
   r31 (lr): link register
 
-Stack frame:
-  [sp+0 .. sp+local_size-1] : local variables
-  [sp-1] : saved lr (non-leaf functions)
+Stack frame layout (non-leaf):
+  [sp+0 .. sp+local_size-1]        : local variables
+  [sp+local_size .. sp+callee_base-1] : param 1-4 spill slots
+  [sp+callee_base .. sp+lr_slot-1]  : callee-saved regs (r14-r17, if used)
+  [sp+lr_slot]                      : saved lr
 
 Register allocation strategy:
-  Simple linear allocator - temporaries assigned from r5..r13 in order
-  Overflow spills to stack (not yet implemented)
+  Linear allocator over r5..r13 (caller-saved) then r14..r17 (callee-saved).
+  Callee-saved regs are saved/restored per-function via two-pass body generation.
+  Caller saves r5..r13 around each function call when outer regs are live.
 """
 
 from ast_nodes import *
+import re as _re
 import sys
 
 
 # ABI constants
 SP = 'r30'
 LR = 'r31'
-ARG_REGS  = ['r1', 'r2', 'r3', 'r4']
-RET_REG   = 'r1'
-RET_REG_H = 'r2'
-TMP_REGS  = ['r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13']
+ARG_REGS        = ['r1', 'r2', 'r3', 'r4']
+RET_REG         = 'r1'
+RET_REG_H       = 'r2'
+CALLER_TMP_REGS = ['r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13']
+CALLEE_SAVED_REGS = ['r14', 'r15', 'r16', 'r17']
+TMP_REGS        = CALLER_TMP_REGS + CALLEE_SAVED_REGS   # 13 total
 
 
 class CodegenError(Exception):
@@ -36,17 +42,22 @@ class CodegenError(Exception):
 
 
 class RegAlloc:
-    """Simple linear temporary register allocator"""
+    """Linear temporary register allocator with callee-saved register tracking."""
     def __init__(self):
         self._used = 0
-        self._spill_offset = 0
+        self._callee_used: set = set()
 
     def alloc(self) -> str:
         if self._used < len(TMP_REGS):
             r = TMP_REGS[self._used]
             self._used += 1
+            if r in CALLEE_SAVED_REGS:
+                self._callee_used.add(r)
             return r
-        raise CodegenError("Ran out of temporary registers (spill not yet implemented)")
+        raise CodegenError(
+            f"Ran out of temporary registers ({len(TMP_REGS)} total). "
+            "Simplify the expression or split into sub-expressions."
+        )
 
     def free(self):
         if self._used > 0:
@@ -57,6 +68,21 @@ class RegAlloc:
 
     def restore(self, cp: int):
         self._used = cp
+
+    def reset_callee_tracking(self):
+        self._callee_used = set()
+
+    def callee_saved_used(self) -> list:
+        """Return sorted list of callee-saved registers actually used."""
+        return sorted(self._callee_used, key=lambda r: int(r[1:]))
+
+
+def _ptr_step(ctype) -> int:
+    """Return the address increment for one ++ or -- step on a value of ctype."""
+    if isinstance(ctype, (CPointer, CArray)):
+        base = getattr(ctype, 'base', None)
+        return base.size() if base and base.size() > 0 else 1
+    return 1
 
 
 class Codegen:
@@ -178,72 +204,107 @@ class Codegen:
 
         is_leaf = self._is_leaf(func.body)
 
-        # Parameter stack slot layout:
-        #   [0..local_size-1]      = local variables
-        #   [local_size..]         = param 1..4 spill slots, then lr
-        #   [frame_size+0..]       = params 5+ (pushed by caller)
+        # Compute param 1-4 spill slots (unchanged by callee reg count)
         param_offset = self._local_size
         for i, param in enumerate(func.params):
             if i >= 4:
-                break   # params 5+ live in caller's stack area
+                break
             sz = max(param.ctype.size(), 1)
             self._local_vars[param.name] = (param_offset, param.ctype)
             param_offset += sz
         param_spill_size = param_offset - self._local_size
 
-        frame_size = self._local_size + param_spill_size
-        if not is_leaf:
-            frame_size += 1  # slot for saved lr
+        # callee_base = first slot after local vars and param 1-4 spill
+        callee_base = self._local_size + param_spill_size
+        n_stack_params = max(0, len(func.params) - 4)
 
-        self._frame_size = frame_size
+        # ── Pass 1: generate body into a temp buffer ──────────────────────────
+        # We need to know which callee-saved regs are actually used before we
+        # can compute the final frame layout and emit the prologue.
+        saved_out = self.out
+        self.out = []
+        self._regs.restore(0)
+        self._regs.reset_callee_tracking()
 
-        # params 5+: located above frame_size (pushed by caller)
+        # Provisional frame_size (no callee regs yet) for params 5+ offset calc
+        prov_lr_slot = callee_base          # provisional LR position
+        prov_frame   = callee_base + (1 if not is_leaf else 0)
+        self._frame_size = prov_frame
+
         for i, param in enumerate(func.params):
             if i < 4:
                 continue
-            stack_off = frame_size + (i - 4)
-            self._local_vars[param.name] = (stack_off, param.ctype)
+            self._local_vars[param.name] = (prov_frame + (i - 4), param.ctype)
+        self._va_offset = prov_frame + n_stack_params
 
-        # va_start target offset: frame_size + number of stack params
-        n_stack_params = max(0, len(func.params) - 4)
+        # collect local variable offsets (offsets 0..local_size-1, unaffected)
+        offset = 0
+        for stmt in func.body.stmts:
+            offset = self._collect_locals(stmt, offset)
+
+        ret_label = f'{func.name}._ret'
+        self._ret_label = ret_label
+
+        self._gen_block(func.body)
+        body_lines = self.out
+        self.out = saved_out
+
+        # ── Determine actual callee-saved registers used ───────────────────────
+        callee_used = self._regs.callee_saved_used()
+        n_callee    = len(callee_used)
+
+        # ── Compute final frame layout ─────────────────────────────────────────
+        # [0..local_size-1]              local vars
+        # [callee_base..callee_base+n_callee-1] callee-saved regs (if any)
+        # [lr_slot]                      saved LR (non-leaf only)
+        # Above frame: params 5+ (pushed by caller, offset = frame_size + k)
+        lr_slot    = callee_base + n_callee
+        frame_size = lr_slot + (1 if not is_leaf else 0)
+        self._frame_size = frame_size
+
+        # ── Patch params 5+ and va_offset in body if callee regs were added ───
+        if n_callee > 0:
+            final_frame = frame_size
+            # Replace all r30-relative offsets >= prov_frame (params 5+, va)
+            # with the same offset + n_callee.  Local/param-spill offsets are
+            # < callee_base < prov_frame so they are not affected.
+            _sp_pat = _re.compile(r'\b' + _re.escape(SP) + r', (\d+)\b')
+            def _fix_offset(m):
+                off = int(m.group(1))
+                return f'{SP}, {off + n_callee}' if off >= prov_frame else m.group(0)
+            body_lines = [_sp_pat.sub(_fix_offset, ln) for ln in body_lines]
+
+        # Update params 5+ and va_offset to final values
+        for i, param in enumerate(func.params):
+            if i < 4:
+                continue
+            self._local_vars[param.name] = (frame_size + (i - 4), param.ctype)
         self._va_offset = frame_size + n_stack_params
 
+        # ── Emit prologue ──────────────────────────────────────────────────────
         if frame_size > 0:
             self._emit(f'    sub {SP}, {frame_size}')
-
-        lr_slot = self._local_size + param_spill_size
         if not is_leaf:
             self._emit(f'    st {LR}, {SP}, {lr_slot}')
-
-        # spill params 1..4 from r1..r4 into their stack slots
+        for i, reg in enumerate(callee_used):
+            self._emit(f'    st {reg}, {SP}, {callee_base + i}')
         for i, param in enumerate(func.params):
             if i >= len(ARG_REGS):
                 break
             slot, _ = self._local_vars[param.name]
             self._emit(f'    st {ARG_REGS[i]}, {SP}, {slot}')
 
-        # collect local variable offsets
-        offset = 0
-        for stmt in func.body.stmts:
-            offset = self._collect_locals(stmt, offset)
+        # ── Emit body ──────────────────────────────────────────────────────────
+        self.out.extend(body_lines)
 
-        # epilogue label (referenced by return statements)
-        ret_label = f'{func.name}._ret'
-        self._ret_label = ret_label
-
-        # generate body
-        self._regs.restore(0)
-        self._gen_block(func.body)
-
-        # epilogue
+        # ── Emit epilogue ──────────────────────────────────────────────────────
         self._label(ret_label)
-
+        for i in range(n_callee - 1, -1, -1):
+            self._emit(f'    ld {callee_used[i]}, {SP}, {callee_base + i}')
         if not is_leaf:
             self._emit(f'    ld {LR}, {SP}, {lr_slot}')
-
         if frame_size > 0:
             self._emit(f'    add {SP}, {frame_size}')
-
         self._emit(f'    jmp {LR}')
         self._emit('')
 
@@ -636,16 +697,23 @@ class Codegen:
         self._emit(f'    test {cond_r}, {cond_r}')
         self._regs.free()
         self._emit(f'    jz {else_lbl}')
+
+        # Record baseline before then-branch so both branches land in same reg.
+        cp    = self._regs.checkpoint()
+        dst   = TMP_REGS[cp]            # result register is always slot cp
         then_r = self._gen_expr(expr.then)
-        dst    = self._regs.alloc()
-        if dst != then_r:
+        if then_r != dst:
             self._emit(f'    mov {dst}, {then_r}')
+        self._regs.restore(cp + 1)      # exactly one result reg live
         self._emit(f'    jmp {end_lbl}')
+
         self._label(else_lbl)
-        self._regs.restore(self._regs.checkpoint() - 1)   # release dst before evaluating else
+        self._regs.restore(cp)          # reset to baseline for else-branch
         else_r = self._gen_expr(expr.else_)
         if else_r != dst:
             self._emit(f'    mov {dst}, {else_r}')
+        self._regs.restore(cp + 1)      # exactly one result reg live
+
         self._label(end_lbl)
         return dst
 
@@ -673,14 +741,15 @@ class Codegen:
             self._emit(f'    mov r1, {dst}')
             self._emit(f'    mov r2, {right_r}')
             self._emit(f'    jmp r31, {div_fn}')
-            dst = self._regs.alloc()
+            # Reuse left_r (= dst) for the result; __udiv/__sdiv return quotient
+            # in r1 and do NOT touch r5-r17, so dst is still safe to write into.
             self._emit(f'    mov {dst}, r1')
         elif op == '%':
             mod_fn = '__umod' if self._is_unsigned(expr.left.ctype, expr.right.ctype) else '__smod'
             self._emit(f'    mov r1, {dst}')
             self._emit(f'    mov r2, {right_r}')
             self._emit(f'    jmp r31, {mod_fn}')
-            dst = self._regs.alloc()
+            # __umod/__smod return remainder in r1
             self._emit(f'    mov {dst}, r1')
         elif op == '&':
             self._emit(f'    and {dst}, {right_r}')
@@ -811,21 +880,25 @@ class Codegen:
             return ptr_r
 
         if op in ('++pre', '--pre'):
-            addr_r = self._gen_addr(expr.operand)
-            val_r  = self._regs.alloc()
+            addr_r  = self._gen_addr(expr.operand)
+            val_r   = self._regs.alloc()
+            op_type = expr.operand.ctype
+            step    = _ptr_step(op_type)
             self._emit(f'    ld {val_r}, {addr_r}')
-            self._emit(f'    {"add" if op == "++pre" else "sub"} {val_r}, 1')
+            self._emit(f'    {"add" if op == "++pre" else "sub"} {val_r}, {step}')
             self._emit(f'    st {val_r}, {addr_r}')
             self._regs.free()  # addr_r
             return val_r
 
         if op in ('++post', '--post'):
-            addr_r = self._gen_addr(expr.operand)
-            old_r  = self._regs.alloc()
+            addr_r  = self._gen_addr(expr.operand)
+            old_r   = self._regs.alloc()
+            op_type = expr.operand.ctype
+            step    = _ptr_step(op_type)
             self._emit(f'    ld {old_r}, {addr_r}')
-            tmp_r  = self._regs.alloc()
+            tmp_r   = self._regs.alloc()
             self._emit(f'    mov {tmp_r}, {old_r}')
-            self._emit(f'    {"add" if op == "++post" else "sub"} {tmp_r}, 1')
+            self._emit(f'    {"add" if op == "++post" else "sub"} {tmp_r}, {step}')
             self._emit(f'    st {tmp_r}, {addr_r}')
             self._regs.free()  # tmp_r
             self._regs.free()  # addr_r
@@ -844,18 +917,31 @@ class Codegen:
         # compound assignment (+=, -= etc.) -> load, operate, store
         cur_r = self._gen_expr(expr.target)
         rhs_r = self._gen_expr(expr.value)
-        binop_map = {
-            '+=': 'add', '-=': 'sub', '&=': 'and',
-            '|=': 'or',  '^=': 'xor',
-        }
-        if op in binop_map:
-            self._emit(f'    {binop_map[op]} {cur_r}, {rhs_r}')
+
+        target_type = expr.target.ctype
+
+        if op in ('+=', '-='):
+            # Scale RHS by element size for pointer arithmetic
+            if isinstance(target_type, (CPointer, CArray)):
+                base = target_type.base if hasattr(target_type, 'base') else None
+                elem_sz = base.size() if base else 1
+                if elem_sz > 1:
+                    self._emit(f'    mul {rhs_r}, {rhs_r}, {elem_sz}')
+            asm_op = 'add' if op == '+=' else 'sub'
+            self._emit(f'    {asm_op} {cur_r}, {rhs_r}')
+        elif op == '&=':
+            self._emit(f'    and {cur_r}, {rhs_r}')
+        elif op == '|=':
+            self._emit(f'    or  {cur_r}, {rhs_r}')
+        elif op == '^=':
+            self._emit(f'    xor {cur_r}, {rhs_r}')
         elif op == '*=':
             self._emit(f'    mul {cur_r}, {cur_r}, {rhs_r}')
         elif op == '/=':
+            div_fn = '__udiv' if self._is_unsigned(target_type) else '__sdiv'
             self._emit(f'    mov r1, {cur_r}')
             self._emit(f'    mov r2, {rhs_r}')
-            self._emit(f'    jmp r31, __udiv')
+            self._emit(f'    jmp r31, {div_fn}')
             self._emit(f'    mov {cur_r}, r1')
         self._regs.free()  # rhs_r
         self._gen_store(cur_r, expr.target)
@@ -901,20 +987,39 @@ class Codegen:
         is_variadic = getattr(expr, '_variadic', False)
         n_fixed     = getattr(expr, '_n_fixed',  len(expr.args))
 
-        all_fixed      = expr.args[:n_fixed]    # all fixed parameters
-        variadic_extra = expr.args[n_fixed:]    # variadic arguments (after ...)
+        all_fixed      = expr.args[:n_fixed]
+        variadic_extra = expr.args[n_fixed:]
 
-        reg_args    = all_fixed[:4]             # passed in r1..r4
-        stack_fixed = all_fixed[4:]             # fixed params 5+ -> stack
+        reg_args    = all_fixed[:4]
+        stack_fixed = all_fixed[4:]
 
-        # evaluate arguments (preserve order)
+        # Snapshot outer live regs BEFORE evaluating any args.
+        # These are caller-saved regs that must survive the call.
+        # Only r5-r13 (CALLER_TMP_REGS) need saving; r14-r17 are callee-saved
+        # and will be preserved by the callee's own prologue/epilogue.
+        outer_cp   = self._regs.checkpoint()
+        n_outer    = min(outer_cp, len(CALLER_TMP_REGS))
+
+        # evaluate arguments
         reg_regs         = [self._gen_expr(a) for a in reg_args]
         stack_fixed_regs = [self._gen_expr(a) for a in stack_fixed]
         variadic_regs    = [self._gen_expr(a) for a in variadic_extra]
 
-        # push stack arguments in reverse order:
-        #   variadic_extra first (higher address), stack_fixed last (lower address)
-        #   -> callee sees: param5 = sp+frame_size+0, param6 = sp+frame_size+1, ...
+        # Resolve function pointer before saving outer regs (if indirect call)
+        fptr = None
+        if not isinstance(expr.func, Ident):
+            fptr = self._gen_expr(expr.func)
+
+        # Save outer caller-saved regs to a temporary area below SP.
+        # Stack layout after saves (before stack args):
+        #   SP-1 = CALLER_TMP_REGS[0]  (oldest, saved last = highest address)
+        #   ...
+        #   SP-n_outer = CALLER_TMP_REGS[n_outer-1]  (newest, lowest address)
+        for i in range(n_outer):
+            self._emit(f'    sub {SP}, 1')
+            self._emit(f'    st {CALLER_TMP_REGS[i]}, {SP}, 0')
+
+        # push stack arguments in reverse order
         all_stack_regs = stack_fixed_regs + variadic_regs
         for r in reversed(all_stack_regs):
             self._emit(f'    sub {SP}, 1')
@@ -926,17 +1031,23 @@ class Codegen:
                 self._emit(f'    mov {ARG_REGS[i]}, {r}')
 
         # call
-        if isinstance(expr.func, Ident):
-            self._emit(f'    jmp {LR}, {expr.func.name}')
-        else:
-            fptr = self._gen_expr(expr.func)
+        if fptr is not None:
             self._emit(f'    jmp {LR}, {fptr}')
+        else:
+            self._emit(f'    jmp {LR}, {expr.func.name}')
 
         # caller cleans up stack arguments
         total_stack = len(stack_fixed) + len(variadic_extra)
         if total_stack:
             self._emit(f'    add {SP}, {total_stack}')
 
+        # Restore outer caller-saved regs (in reverse save order)
+        for i in range(n_outer - 1, -1, -1):
+            self._emit(f'    ld {CALLER_TMP_REGS[i]}, {SP}, 0')
+            self._emit(f'    add {SP}, 1')
+
+        # Capture return value; arg regs are no longer needed
+        self._regs.restore(outer_cp)
         dst = self._regs.alloc()
         if dst != RET_REG:
             self._emit(f'    mov {dst}, {RET_REG}')

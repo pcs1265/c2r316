@@ -9,6 +9,14 @@
 - [x] `int >> n` uses logical shift (zero-fill) → wrong result for negative numbers
   - R316 `shr` is always a logical shift (confirmed in manual)
   - Fixed to arithmetic right shift (inline mask fill)
+- [x] Caller-saved registers (r5–r13) not preserved across user function calls
+  - `n * factorial(n-1)` type expressions computed wrong results (r5 clobbered by callee)
+  - Fixed: `_gen_call` now saves/restores all live outer caller-saved regs around each call
+- [x] `int / int` and `int % int` in `_gen_binop` allocated an extra temp register for the result,
+  leaking left_r and right_r; subsequent nested divisions/modulos reused the wrong register
+  - Fixed: result is written back into left_r (dst); no extra alloc needed
+- [x] `x /= n` always used `__udiv` even for signed `int` types
+  - Fixed: compound `/=` now selects `__sdiv` vs `__udiv` based on operand type
 
 ---
 
@@ -35,12 +43,14 @@
 
 ## Code Quality / Stability
 
-- [ ] **Register spill** — crashes with exception when temporary registers r5–r13 (9 total) are exhausted
-  - Need logic to spill to stack and restore when overflow occurs
-- [ ] **`_gen_ternary` register management** — `restore(checkpoint - 1)` approach relies on implicit assumptions
-  - No explicit guarantee that then/else branches use the same result register
-- [ ] **Missing pointer scaling in compound assignment `+=` etc.**
-  - `ptr += 1` increments by 1 instead of element size (currently works by coincidence for int-only)
+- [x] **Register spill** — extended TMP_REGS to 13 (r5–r17); callee-saved regs (r14–r17) saved/restored
+  via two-pass function code generation; caller-saved regs (r5–r13) saved/restored around every
+  user function call so that live values survive recursive and nested calls.
+- [x] **`_gen_ternary` register management** — rewritten with explicit `cp` checkpoint; both branches
+  always produce their result in `TMP_REGS[cp]` and the allocator is cleanly restored to `cp+1`.
+- [x] **Missing pointer scaling in compound assignment `+=` etc.**
+  - `ptr += n` / `ptr -= n` now multiplies `n` by `sizeof(*ptr)` before the add/sub.
+  - `++p` / `p++` / `--p` / `p--` use `_ptr_step()` to determine the correct step size.
 
 ---
 
