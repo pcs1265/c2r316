@@ -351,8 +351,8 @@ class Parser:
             self._parse_enum_def()
             return Block([])  # no-op
 
-        # local variable declaration
-        if self._at_type_start():
+        # local variable declaration (optionally prefixed with 'static')
+        if self._at(TK.STATIC) or self._at_type_start():
             return self._parse_local_decl()
 
         # expression statement
@@ -442,8 +442,8 @@ class Parser:
         return SwitchStmt(expr, cases)
 
     def _parse_local_decl(self) -> DeclStmt:
+        is_static = bool(self._try_eat(TK.STATIC))
         base = self._parse_base_type()
-        is_static = False
         stars = 0
         while self._try_eat(TK.STAR):
             stars += 1
@@ -464,7 +464,7 @@ class Parser:
         if self._try_eat(TK.ASSIGN):
             init = self._parse_init()
         self._eat(TK.SEMICOLON)
-        return DeclStmt(VarDecl(name, vtype, init, is_global=False))
+        return DeclStmt(VarDecl(name, vtype, init, is_global=False, is_static=is_static))
 
     def _parse_init(self) -> Expr:
         """Parse an initializer (after '='). Accepts {1,2,3} brace lists."""

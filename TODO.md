@@ -57,8 +57,8 @@
 - [ ] `inline` functions — keyword not in lexer; no special codegen
 - [ ] Function pointer type checking — function pointers are accepted but type info is discarded;
   calls through wrong-typed pointer silently proceed
-- [ ] `static` local variables — `static int x` inside a function should persist across calls
-  (currently allocated on stack like a regular local)
+- [x] `static` local variables — allocated in the data section with a unique scoped label;
+  persist across calls; scalar and array initialisers supported
 
 ### Preprocessor
 - [ ] `#include <...>` angle-bracket includes — silently ignored (no error)

@@ -97,6 +97,8 @@ class Codegen:
         self._regs = RegAlloc()
         self._local_vars: dict[str, tuple[int, CType]] = {}  # name -> (sp_offset, type)
         self._param_regs: dict[str, str] = {}   # name -> register
+        self._static_locals: dict[str, tuple[str, CType]] = {}  # name -> (label, type)
+        self._static_local_data: list[tuple[str, CType, object]] = []  # (label, type, init)
         self._local_size = 0
         self._current_ret_type: CType = CVoid()
 
@@ -150,6 +152,13 @@ class Codegen:
             for v in self._global_vars:
                 self._gen_global_var(v)
 
+        # static local variable data (persistent across calls, scoped by label name)
+        if self._static_local_data:
+            self._emit('')
+            self._emit('; -- static local variables --')
+            for label, ctype, init in self._static_local_data:
+                self._gen_static_local_data(label, ctype, init)
+
         # string literals
         if self._string_data:
             self._emit('')
@@ -190,6 +199,34 @@ class Codegen:
                 val = v.init.value & 0xFF
             self._emit(f'{v.name}: dw {val}')
 
+    def _gen_static_local_data(self, label: str, ctype: CType, init):
+        """Emit data section entry for a static local variable."""
+        if isinstance(ctype, CArray):
+            size = ctype.size() or 0
+            if isinstance(init, InitList):
+                vals = []
+                for item in init.items:
+                    if isinstance(item, IntLit):
+                        vals.append(item.value & 0xFFFF)
+                    elif isinstance(item, CharLit):
+                        vals.append(item.value & 0xFF)
+                    else:
+                        vals.append(0)
+                if size == 0:
+                    size = len(vals)
+                while len(vals) < size:
+                    vals.append(0)
+                self._emit(f'{label}: dw {", ".join(str(x) for x in vals)}')
+            else:
+                self._emit(f'{label}: dw {", ".join(["0"] * max(size, 1))}')
+        else:
+            val = 0
+            if isinstance(init, IntLit):
+                val = init.value & 0xFFFF
+            elif isinstance(init, CharLit):
+                val = init.value & 0xFF
+            self._emit(f'{label}: dw {val}')
+
     # ── Functions ─────────────────────────────────────────────────────────────
 
     def _gen_func(self, func: FuncDecl):
@@ -197,10 +234,12 @@ class Codegen:
         self._label(func.name)
 
         # reset local state
-        self._local_vars  = {}
-        self._param_regs  = {}
-        self._local_size  = getattr(func, '_local_size', 0)
+        self._local_vars   = {}
+        self._param_regs   = {}
+        self._static_locals = {}
+        self._local_size   = getattr(func, '_local_size', 0)
         self._current_ret_type = func.ret_type
+        self._cur_func_name = func.name
 
         is_leaf = self._is_leaf(func.body)
 
@@ -311,6 +350,14 @@ class Codegen:
     def _collect_locals(self, stmt: Stmt, offset: int) -> int:
         if isinstance(stmt, DeclStmt):
             d = stmt.decl
+            if d.is_static:
+                # Static locals go to the data section — assign a unique label now
+                # so that _gen_stmt can find it, but don't consume stack space.
+                self._label_cnt += 1
+                lbl = f'_sl_{self._cur_func_name}_{d.name}_{self._label_cnt}'
+                self._static_locals[d.name] = (lbl, d.ctype)
+                self._static_local_data.append((lbl, d.ctype, d.init))
+                return offset
             size = max(d.ctype.size(), 1)
             self._local_vars[d.name] = (offset, d.ctype)
             return offset + size
@@ -381,7 +428,9 @@ class Codegen:
 
         elif isinstance(stmt, DeclStmt):
             d = stmt.decl
-            if d.init is not None:
+            if d.is_static:
+                pass  # data section entry already emitted; no runtime init needed
+            elif d.init is not None:
                 off, ctype = self._local_vars[d.name]
                 if isinstance(d.init, InitList):
                     # local array init: store each element into its stack slot
@@ -622,6 +671,12 @@ class Codegen:
         # parameter register alias
         if name in self._param_regs:
             return self._param_regs[name]
+        # static local variable (persistent, addressed by label)
+        if name in self._static_locals:
+            lbl, _ = self._static_locals[name]
+            r = self._regs.alloc()
+            self._emit(f'    ld {r}, {lbl}')
+            return r
         # local variable
         if name in self._local_vars:
             off, ctype = self._local_vars[name]
@@ -640,6 +695,11 @@ class Codegen:
         """Load the address of an lvalue into a register and return it"""
         if isinstance(expr, Ident):
             name = expr.name
+            if name in self._static_locals:
+                lbl, _ = self._static_locals[name]
+                r = self._regs.alloc()
+                self._emit(f'    mov {r}, {lbl}')
+                return r
             if name in self._local_vars:
                 off, _ = self._local_vars[name]
                 r = self._regs.alloc()
@@ -668,6 +728,10 @@ class Codegen:
         """Store val_r into the target lvalue"""
         if isinstance(target, Ident):
             name = target.name
+            if name in self._static_locals:
+                lbl, _ = self._static_locals[name]
+                self._emit(f'    st {val_r}, {lbl}')
+                return
             if name in self._local_vars:
                 off, _ = self._local_vars[name]
                 self._emit(f'    st {val_r}, {SP}, {off}')
