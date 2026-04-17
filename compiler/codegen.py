@@ -344,6 +344,12 @@ class Codegen:
     def _has_call(self, node) -> bool:
         if isinstance(node, Call):
             return True
+        # BinOp / and % generate jmp r31, __udiv/__sdiv, so they act as calls
+        if isinstance(node, BinOp) and node.op in ('/', '%'):
+            return True
+        # Compound assignment /= and %= also call runtime helpers
+        if isinstance(node, Assign) and node.op in ('/=', '%='):
+            return True
         if isinstance(node, (Block, ForStmt, WhileStmt)):
             stmts = getattr(node, 'stmts', [])
             if not stmts:
@@ -811,7 +817,7 @@ class Codegen:
         self._label(true_lbl)
         self._emit(f'    mov {dst}, 1')
         self._label(end_lbl)
-        self._regs.free()  # right_r
+        # right_r is freed by the caller (_gen_binop) like all other operators
         return dst
 
     def _gen_short_circuit(self, expr: BinOp, is_or: bool) -> str:
@@ -943,6 +949,33 @@ class Codegen:
             self._emit(f'    mov r2, {rhs_r}')
             self._emit(f'    jmp r31, {div_fn}')
             self._emit(f'    mov {cur_r}, r1')
+        elif op == '%=':
+            mod_fn = '__umod' if self._is_unsigned(target_type) else '__smod'
+            self._emit(f'    mov r1, {cur_r}')
+            self._emit(f'    mov r2, {rhs_r}')
+            self._emit(f'    jmp r31, {mod_fn}')
+            self._emit(f'    mov {cur_r}, r1')
+        elif op == '<<=':
+            self._emit(f'    shl {cur_r}, {rhs_r}')
+        elif op == '>>=':
+            if self._is_unsigned(target_type):
+                self._emit(f'    shr {cur_r}, {rhs_r}')
+            else:
+                sign_r = self._regs.alloc()
+                mask_r = self._regs.alloc()
+                sar_lbl = self._new_label('sar')
+                self._emit(f'    mov {sign_r}, {cur_r}')
+                self._emit(f'    shr {sign_r}, 15')
+                self._emit(f'    shr {cur_r}, {rhs_r}')
+                self._emit(f'    test {sign_r}, {sign_r}')
+                self._emit(f'    jz {sar_lbl}')
+                self._emit(f'    mov {mask_r}, 0xFFFF')
+                self._emit(f'    shr {mask_r}, {rhs_r}')
+                self._emit(f'    xor {mask_r}, 0xFFFF')
+                self._emit(f'    or  {cur_r}, {mask_r}')
+                self._label(sar_lbl)
+                self._regs.free()   # mask_r
+                self._regs.free()   # sign_r
         self._regs.free()  # rhs_r
         self._gen_store(cur_r, expr.target)
         return cur_r
@@ -971,14 +1004,17 @@ class Codegen:
                 # va_arg(ap[, type]) : val = *ap; ap++
                 ap_addr = self._gen_addr(expr.args[0])
                 ptr_r = self._regs.alloc()
-                self._emit(f'    ld {ptr_r}, {ap_addr}')   # ptr = *(&ap) = ap
                 val_r = self._regs.alloc()
-                self._emit(f'    ld {val_r}, {ptr_r}')      # val = *ptr
+                self._emit(f'    ld {ptr_r}, {ap_addr}')   # ptr = *(&ap) = ap
+                self._emit(f'    ld {val_r}, {ptr_r}')      # val = *ap
                 self._emit(f'    add {ptr_r}, 1')
-                self._emit(f'    st {ptr_r}, {ap_addr}')    # ap++
+                self._emit(f'    st {ptr_r}, {ap_addr}')    # *(&ap) = ap+1
+                # Move result into ap_addr's register so we can free val_r and ptr_r
+                # cleanly, leaving exactly one result register live.
+                self._emit(f'    mov {ap_addr}, {val_r}')
+                self._regs.free()   # val_r
                 self._regs.free()   # ptr_r
-                self._regs.free()   # ap_addr
-                return val_r
+                return ap_addr      # ap_addr register now holds the fetched value
 
             if name == 'va_end':
                 return self._regs.alloc()   # no-op

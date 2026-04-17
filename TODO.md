@@ -17,6 +17,18 @@
   - Fixed: result is written back into left_r (dst); no extra alloc needed
 - [x] `x /= n` always used `__udiv` even for signed `int` types
   - Fixed: compound `/=` now selects `__sdiv` vs `__udiv` based on operand type
+- [x] `_gen_compare` double-freed `right_r` — both `_gen_compare` and `_gen_binop` called `free()` on it
+  - Expressions like `(a < b) + 1` or `(x == 0) * y` corrupted the register allocator state
+  - Fixed: removed the redundant `free()` from `_gen_compare`; `_gen_binop` owns the cleanup
+- [x] `%=`, `<<=`, `>>=` compound assignments silently no-op'd (operators missing in lexer/parser/codegen)
+  - Fixed: added `%=` (two-char) and `<<=`/`>>=` (three-char) token types; wired through parser and codegen
+  - Signed `>>=` uses the same inline arithmetic-right-shift pattern as binary `>>`
+- [x] Functions using `/` or `%` (but no C-level calls) wrongly classified as leaf functions
+  - `jmp r31, __udiv/__sdiv/__umod/__smod` overwrites LR, but leaf functions skip the prologue LR save
+  - Fixed: `_has_call` now returns `True` for `BinOp` `/`/`%` and `Assign` `/=`/`%=`
+- [x] `va_arg` register allocation inconsistency — result register was at a position above `_used`
+  - In complex call contexts this could cause the result to be clobbered by subsequent allocations
+  - Fixed: result is now moved into the first free register slot before freeing temporaries
 
 ---
 
@@ -59,4 +71,4 @@
 - [ ] **Constant folding** — avoid computing compile-time constants like `1 + 2` at runtime
 - [ ] **Eliminate unnecessary `mov`** — generates `mov r1, r1` when argument is already in r1
 - [ ] **Remove unconditional parameter spill** — use register as-is when there is no risk of overwriting
-- [ ] **Improve leaf function detection** — currently only checks for function calls; should precisely determine whether LR actually needs to be preserved
+- [x] **Improve leaf function detection** — `_has_call` now also flags `BinOp` `/`/`%` and `Assign` `/=`/`%=` as non-leaf since these emit `jmp r31, __udiv/...`

@@ -487,14 +487,17 @@ class Parser:
     def _parse_assign(self) -> Expr:
         left = self._parse_ternary()
         op_map = {
-            TK.ASSIGN:       '=',
-            TK.PLUS_ASSIGN:  '+=',
-            TK.MINUS_ASSIGN: '-=',
-            TK.STAR_ASSIGN:  '*=',
-            TK.SLASH_ASSIGN: '/=',
-            TK.AMP_ASSIGN:   '&=',
-            TK.PIPE_ASSIGN:  '|=',
-            TK.CARET_ASSIGN: '^=',
+            TK.ASSIGN:        '=',
+            TK.PLUS_ASSIGN:   '+=',
+            TK.MINUS_ASSIGN:  '-=',
+            TK.STAR_ASSIGN:   '*=',
+            TK.SLASH_ASSIGN:  '/=',
+            TK.MOD_ASSIGN:    '%=',
+            TK.AMP_ASSIGN:    '&=',
+            TK.PIPE_ASSIGN:   '|=',
+            TK.CARET_ASSIGN:  '^=',
+            TK.LSHIFT_ASSIGN: '<<=',
+            TK.RSHIFT_ASSIGN: '>>=',
         }
         if self._cur().kind in op_map:
             op = op_map[self._eat(self._cur().kind).kind]

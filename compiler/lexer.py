@@ -64,9 +64,12 @@ class TK(Enum):
     MINUS_ASSIGN = auto() # -=
     STAR_ASSIGN  = auto() # *=
     SLASH_ASSIGN = auto() # /=
+    MOD_ASSIGN   = auto() # %=
     AMP_ASSIGN   = auto() # &=
     PIPE_ASSIGN  = auto() # |=
     CARET_ASSIGN = auto() # ^=
+    LSHIFT_ASSIGN = auto() # <<=
+    RSHIFT_ASSIGN = auto() # >>=
     INC        = auto()   # ++
     DEC        = auto()   # --
     ARROW      = auto()   # ->
@@ -273,6 +276,14 @@ class Lexer:
                 self.tokens.append(Token(TK.STRING_LIT, val, line, col))
                 continue
 
+            # three-character compound shift-assign operators (checked before two-char)
+            three = ch + self._peek() + self._peek(2)
+            if three in ('<<=', '>>='):
+                self._advance(); self._advance(); self._advance()
+                tk = TK.LSHIFT_ASSIGN if three == '<<=' else TK.RSHIFT_ASSIGN
+                self.tokens.append(Token(tk, three, line, col))
+                continue
+
             # two-character operators first
             two = ch + self._peek()
             two_map = {
@@ -282,6 +293,7 @@ class Lexer:
                 '<=': TK.LTE,    '>=': TK.GTE,
                 '+=': TK.PLUS_ASSIGN,  '-=': TK.MINUS_ASSIGN,
                 '*=': TK.STAR_ASSIGN,  '/=': TK.SLASH_ASSIGN,
+                '%=': TK.MOD_ASSIGN,
                 '&=': TK.AMP_ASSIGN,   '|=': TK.PIPE_ASSIGN,
                 '^=': TK.CARET_ASSIGN, '++': TK.INC,
                 '--': TK.DEC,          '->': TK.ARROW,
