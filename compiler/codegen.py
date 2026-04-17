@@ -37,6 +37,11 @@ CALLEE_SAVED_REGS = ['r14', 'r15', 'r16', 'r17']
 TMP_REGS        = CALLER_TMP_REGS + CALLEE_SAVED_REGS   # 13 total
 
 
+# Comparison operators → conditional jump mnemonics
+_CMP_JT  = {'==':'jz',  '!=':'jnz', '<':'jl',  '>':'jnle', '<=':'jle', '>=':'jnl'}
+_CMP_JF  = {'==':'jnz', '!=':'jz',  '<':'jnl', '>':'jle',  '<=':'jnle','>=':'jl'}
+
+
 class CodegenError(Exception):
     pass
 
@@ -86,8 +91,9 @@ def _ptr_step(ctype) -> int:
 
 
 class Codegen:
-    def __init__(self, library_mode: bool = False):
+    def __init__(self, library_mode: bool = False, optimize: bool = False):
         self._library_mode   = library_mode
+        self._optimize       = optimize
         self.out: list[str]  = []
         self._label_cnt      = 0
         self._string_data: list[tuple[str, list[int]]] = []
@@ -105,6 +111,12 @@ class Codegen:
     # ── Output helpers ────────────────────────────────────────────────────────
 
     def _emit(self, line: str):
+        # Always-on peephole: drop self-moves (mov rX, rX)
+        s = line.lstrip()
+        if s.startswith('mov '):
+            parts = s[4:].split(', ', 1)
+            if len(parts) == 2 and parts[0] == parts[1]:
+                return
         self.out.append(line)
 
     def _label(self, name: str):
@@ -487,9 +499,12 @@ class Codegen:
         else_lbl = self._new_label('else')
         end_lbl  = self._new_label('endif')
 
-        cond_r = self._gen_expr(stmt.cond)
-        self._emit(f'    test {cond_r}, {cond_r}')
-        self._emit(f'    jz {else_lbl}')
+        if self._optimize:
+            self._gen_cond(stmt.cond, None, else_lbl)
+        else:
+            cond_r = self._gen_expr(stmt.cond)
+            self._emit(f'    test {cond_r}, {cond_r}')
+            self._emit(f'    jz {else_lbl}')
 
         self._gen_stmt(stmt.then)
         if stmt.else_:
@@ -501,16 +516,18 @@ class Codegen:
 
     def _gen_while(self, stmt: WhileStmt):
         cond_lbl = self._new_label('wcond')
-        body_lbl = self._new_label('wbody')
         end_lbl  = self._new_label('wend')
 
         self._loop_break_stack.append(end_lbl)
         self._loop_cont_stack.append(cond_lbl)
 
         self._label(cond_lbl)
-        cond_r = self._gen_expr(stmt.cond)
-        self._emit(f'    test {cond_r}, {cond_r}')
-        self._emit(f'    jz {end_lbl}')
+        if self._optimize:
+            self._gen_cond(stmt.cond, None, end_lbl)
+        else:
+            cond_r = self._gen_expr(stmt.cond)
+            self._emit(f'    test {cond_r}, {cond_r}')
+            self._emit(f'    jz {end_lbl}')
 
         self._gen_stmt(stmt.body)
         self._emit(f'    jmp {cond_lbl}')
@@ -532,9 +549,12 @@ class Codegen:
 
         self._label(cond_lbl)
         if stmt.cond:
-            cond_r = self._gen_expr(stmt.cond)
-            self._emit(f'    test {cond_r}, {cond_r}')
-            self._emit(f'    jz {end_lbl}')
+            if self._optimize:
+                self._gen_cond(stmt.cond, None, end_lbl)
+            else:
+                cond_r = self._gen_expr(stmt.cond)
+                self._emit(f'    test {cond_r}, {cond_r}')
+                self._emit(f'    jz {end_lbl}')
 
         self._gen_stmt(stmt.body)
 
@@ -550,17 +570,22 @@ class Codegen:
 
     def _gen_do_while(self, stmt: DoWhileStmt):
         body_lbl = self._new_label('dobody')
+        cond_lbl = self._new_label('docond')
         end_lbl  = self._new_label('doend')
 
         self._loop_break_stack.append(end_lbl)
-        self._loop_cont_stack.append(body_lbl)
+        self._loop_cont_stack.append(cond_lbl)  # continue → condition re-eval
 
         self._label(body_lbl)
         self._gen_stmt(stmt.body)
 
-        cond_r = self._gen_expr(stmt.cond)
-        self._emit(f'    test {cond_r}, {cond_r}')
-        self._emit(f'    jnz {body_lbl}')
+        self._label(cond_lbl)
+        if self._optimize:
+            self._gen_cond(stmt.cond, body_lbl, None)
+        else:
+            cond_r = self._gen_expr(stmt.cond)
+            self._emit(f'    test {cond_r}, {cond_r}')
+            self._emit(f'    jnz {body_lbl}')
         self._label(end_lbl)
 
         self._loop_break_stack.pop()
@@ -763,10 +788,13 @@ class Codegen:
     def _gen_ternary(self, expr: Ternary) -> str:
         else_lbl = self._new_label('telse')
         end_lbl  = self._new_label('tend')
-        cond_r   = self._gen_expr(expr.cond)
-        self._emit(f'    test {cond_r}, {cond_r}')
-        self._regs.free()
-        self._emit(f'    jz {else_lbl}')
+        if self._optimize:
+            self._gen_cond(expr.cond, None, else_lbl)
+        else:
+            cond_r = self._gen_expr(expr.cond)
+            self._emit(f'    test {cond_r}, {cond_r}')
+            self._regs.free()
+            self._emit(f'    jz {else_lbl}')
 
         # Record baseline before then-branch so both branches land in same reg.
         cp    = self._regs.checkpoint()
@@ -914,6 +942,66 @@ class Codegen:
         self._emit(f'    mov {dst}, 1')
         self._label(end2_lbl)
         return dst
+
+    def _gen_cond(self, expr: Expr, true_lbl, false_lbl):
+        """Emit a conditional branch.  Exactly one of true_lbl / false_lbl may
+        be None (meaning 'fall through').  At least one must be non-None."""
+        # Direct comparison — emit sub+jmp without materialising 0/1
+        if isinstance(expr, BinOp) and expr.op in _CMP_JT:
+            left_r  = self._gen_expr(expr.left)
+            right_r = self._gen_expr(expr.right)
+            self._emit(f'    sub r0, {left_r}, {right_r}')
+            self._regs.free()   # right_r
+            self._regs.free()   # left_r
+            if true_lbl and false_lbl:
+                self._emit(f'    {_CMP_JT[expr.op]} {true_lbl}')
+                self._emit(f'    jmp {false_lbl}')
+            elif true_lbl:
+                self._emit(f'    {_CMP_JT[expr.op]} {true_lbl}')
+            else:
+                self._emit(f'    {_CMP_JF[expr.op]} {false_lbl}')
+            return
+
+        # Short-circuit AND: both must be true
+        if isinstance(expr, BinOp) and expr.op == '&&':
+            if false_lbl:
+                self._gen_cond(expr.left, None, false_lbl)
+                self._gen_cond(expr.right, true_lbl, false_lbl)
+            else:
+                end_lbl = self._new_label('andend')
+                self._gen_cond(expr.left, None, end_lbl)
+                self._gen_cond(expr.right, true_lbl, None)
+                self._label(end_lbl)
+            return
+
+        # Short-circuit OR: either may be true
+        if isinstance(expr, BinOp) and expr.op == '||':
+            if true_lbl:
+                self._gen_cond(expr.left, true_lbl, None)
+                self._gen_cond(expr.right, true_lbl, false_lbl)
+            else:
+                skip_lbl = self._new_label('orskip')
+                self._gen_cond(expr.left, skip_lbl, None)
+                self._gen_cond(expr.right, None, false_lbl)
+                self._label(skip_lbl)
+            return
+
+        # Logical NOT: invert the two targets
+        if isinstance(expr, UnaryOp) and expr.op == '!':
+            self._gen_cond(expr.operand, false_lbl, true_lbl)
+            return
+
+        # General case: materialise to a register and test
+        r = self._gen_expr(expr)
+        self._emit(f'    test {r}, {r}')
+        self._regs.free()
+        if true_lbl and false_lbl:
+            self._emit(f'    jnz {true_lbl}')
+            self._emit(f'    jmp {false_lbl}')
+        elif true_lbl:
+            self._emit(f'    jnz {true_lbl}')
+        else:
+            self._emit(f'    jz {false_lbl}')
 
     def _gen_unary(self, expr: UnaryOp) -> str:
         op = expr.op

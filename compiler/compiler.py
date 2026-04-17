@@ -2,7 +2,7 @@
 C -> R316 Compiler entry point
 
 Usage:
-    python compiler/compiler.py input.c [-o output.asm]
+    python compiler/compiler.py input.c [-o output.asm] [-O]
 
 Output file is R316 assembly that can be assembled with TPTASM.
 """
@@ -22,7 +22,8 @@ from preprocessor  import preprocess, PreprocError
 
 
 def _compile_pipeline(src: str, label: str, filepath: str = '<string>',
-                      library_mode: bool = False) -> str:
+                      library_mode: bool = False,
+                      optimize: bool = False) -> str:
     """Shared compilation pipeline. label is the error message prefix."""
 
     try:
@@ -50,23 +51,25 @@ def _compile_pipeline(src: str, label: str, filepath: str = '<string>',
         raise SystemExit(f"{label} semantic error: {e}")
 
     try:
-        gen = Codegen(library_mode=library_mode)
+        gen = Codegen(library_mode=library_mode, optimize=optimize)
         return gen.generate(ast)
     except CodegenError as e:
         raise SystemExit(f"{label} codegen error: {e}")
 
 
-def compile_library(src: str, filepath: str = '<runtime>') -> str:
+def compile_library(src: str, filepath: str = '<runtime>',
+                    optimize: bool = False) -> str:
     """Compile a library (e.g. runtime.c) with no entry point"""
     return _compile_pipeline(src, label='[runtime.c]', filepath=filepath,
-                             library_mode=True)
+                             library_mode=True, optimize=optimize)
 
 
-def compile_c(src: str, src_name: str = '<stdin>') -> str:
+def compile_c(src: str, src_name: str = '<stdin>',
+              optimize: bool = False) -> str:
     """Compile a C source string to an R316 assembly string"""
 
     asm = _compile_pipeline(src, label=src_name, filepath=src_name,
-                            library_mode=False)
+                            library_mode=False, optimize=optimize)
 
     runtime_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'runtime'))
 
@@ -76,7 +79,8 @@ def compile_c(src: str, src_name: str = '<stdin>') -> str:
         with open(runtime_c_path, 'r', encoding='utf-8') as f:
             runtime_c_src = f.read()
         asm += '\n\n; -- runtime library (compiled from runtime.c) --\n'
-        asm += compile_library(runtime_c_src, filepath=runtime_c_path)
+        asm += compile_library(runtime_c_src, filepath=runtime_c_path,
+                               optimize=optimize)
 
     # hardware primitives (must be in assembly)
     # Path is relative to the output .asm file (assumed to be at repo root)
@@ -90,6 +94,8 @@ def main():
     ap = argparse.ArgumentParser(description='C to R316 Assembly Compiler')
     ap.add_argument('input',          help='Input C source file')
     ap.add_argument('-o', '--output', help='Output assembly file (default: stdout)')
+    ap.add_argument('-O', '--optimize', action='store_true',
+                    help='Enable optimizations (direct conditional branches, peephole)')
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='Print compilation steps')
     args = ap.parse_args()
@@ -104,7 +110,7 @@ def main():
     if args.verbose:
         print(f'[c2r316] Compiling {args.input} ...', file=sys.stderr)
 
-    asm = compile_c(src, args.input)
+    asm = compile_c(src, args.input, optimize=args.optimize)
 
     # write output
     if args.output:
