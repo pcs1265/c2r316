@@ -34,22 +34,52 @@
 
 ## Unsupported C Features
 
-### Syntax / Statements
-- [x] `do { } while (cond)` loop
-- [x] `switch` / `case` / `default`
-- [x] `goto` / labels
-
 ### Types
-- [ ] `struct` / `union` (field type and offset tracking)
-- [ ] `long` 32-bit arithmetic (2-word operations, upper 16-bit carry handling)
-- [x] `enum` (top-level and local; constants folded to `IntLit` at parse time)
-- [ ] `float` / `double` (software floating point)
+- [ ] `struct` / `union`
+  - Parsed and `Member` AST node exists, but semantic analysis treats them as `CInt()`
+  - Codegen has no field offset tracking; `.field` / `->field` access not generated
+- [ ] `long` — 32-bit two-word arithmetic
+  - `CLong` type and `long` keyword exist; codegen treats `long` as a single 16-bit register
+  - Need: two-register pairs (lo/hi), carry-propagating add/sub, widening multiply, 32-bit div
+- [ ] `float` / `double` — no lexer tokens, no AST nodes, no runtime support
+- [ ] Multi-level pointer types in casts (e.g. `int **`, `char ***`)
+  - Single-level pointers work; deeper nesting may lose type info in cast/deref chains
 
-### Other Language Features
-- [x] Preprocessor (`#include "file"`, `#define`, `#ifdef`/`#ifndef`/`#if`/`#else`/`#elif`/`#endif`, `#undef`)
-- [x] Compound literal initialization (local array `int a[] = {1, 2, 3}`)
-- [ ] Function pointer type checking (currently passes without type info)
-- [x] `typedef` support (scalar/pointer aliases registered; struct typedef treated as `int`)
+### Expressions
+- [ ] Struct member access `.field` and `->field` (requires struct type support above)
+- [ ] Designated initializers — `int a[5] = {[2] = 9}` / `struct S s = {.x = 1}`
+- [ ] Compound literals — `(int[]){1, 2, 3}` used inline as an expression
+- [ ] Unsigned comparisons — `_gen_compare` always emits signed jumps (`jl`, `jle`, etc.)
+  - `unsigned int a = 0xFFFF; if (a > 1)` may produce wrong result if R316 has unsigned jump instructions
+- [ ] `sizeof` on array types returns element count, not byte size (sizeof(int[4]) → 4, not 8 on a 16-bit word machine where int=2 bytes... depends on whether int is 1 or 2 words)
+
+### Functions & Linkage
+- [ ] `inline` functions — keyword not in lexer; no special codegen
+- [ ] Function pointer type checking — function pointers are accepted but type info is discarded;
+  calls through wrong-typed pointer silently proceed
+- [ ] `static` local variables — `static int x` inside a function should persist across calls
+  (currently allocated on stack like a regular local)
+
+### Preprocessor
+- [ ] `#include <...>` angle-bracket includes — silently ignored (no error)
+- [ ] `#pragma` directives — silently ignored
+- [ ] `#error` — recognized but does not halt compilation
+- [ ] Recursive / multi-level macro expansion — only single-pass expansion
+- [ ] Complex `#if` expressions — only `0`, `1`, and `defined(NAME)` supported; no arithmetic
+
+### Initializers & Scope
+- [ ] Block-scope variable shadowing — all locals hoisted to function frame at top;
+  two variables with the same name in nested scopes will collide
+- [ ] `register` storage class — keyword exists but is silently ignored
+- [ ] String literal to `char[]` — `char s[] = "hello"` should copy chars to stack array
+
+### Standard Library (runtime)
+- [ ] `scanf` / `sscanf` — no input parsing
+- [ ] `malloc` / `calloc` / `free` — no heap allocator
+- [ ] `strcpy`, `strcat`, `strncpy`, `strncmp`, `strstr`, `strtok`
+- [ ] `sprintf` — format to string buffer
+- [ ] Math functions (`abs`, `rand`) — no floating-point, but integer versions feasible
+- [ ] `exit()` — terminate program
 
 ---
 
@@ -63,6 +93,7 @@
 - [x] **Missing pointer scaling in compound assignment `+=` etc.**
   - `ptr += n` / `ptr -= n` now multiplies `n` by `sizeof(*ptr)` before the add/sub.
   - `++p` / `p++` / `--p` / `p--` use `_ptr_step()` to determine the correct step size.
+- [x] **Improve leaf function detection** — `_has_call` now also flags `BinOp` `/`/`%` and `Assign` `/=`/`%=` as non-leaf since these emit `jmp r31, __udiv/...`
 
 ---
 
@@ -71,4 +102,3 @@
 - [ ] **Constant folding** — avoid computing compile-time constants like `1 + 2` at runtime
 - [ ] **Eliminate unnecessary `mov`** — generates `mov r1, r1` when argument is already in r1
 - [ ] **Remove unconditional parameter spill** — use register as-is when there is no risk of overwriting
-- [x] **Improve leaf function detection** — `_has_call` now also flags `BinOp` `/`/`%` and `Assign` `/=`/`%=` as non-leaf since these emit `jmp r31, __udiv/...`
