@@ -1,2 +1,4 @@
 manual.md
 r3.lua
+__pycache__/
+*.pyc

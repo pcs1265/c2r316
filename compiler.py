@@ -11,13 +11,10 @@ import sys
 import os
 import argparse
 
-# load modules from same directory
-sys.path.insert(0, os.path.dirname(__file__))
-
-from lexer    import Lexer,  LexError
-from parser   import Parser, ParseError
-from semantic import Analyzer, SemanticError
-from codegen  import Codegen, CodegenError
+from compiler.lexer    import Lexer,  LexError
+from compiler.parser   import Parser, ParseError
+from compiler.semantic import Analyzer, SemanticError
+from compiler.codegen  import Codegen, CodegenError
 
 
 def compile_c(src: str, src_name: str = '<stdin>') -> str:
@@ -54,7 +51,7 @@ def compile_c(src: str, src_name: str = '<stdin>') -> str:
         raise SystemExit(f"Codegen error: {e}")
 
     # 5. include runtime library
-    runtime_path = os.path.join(os.path.dirname(__file__), 'runtime.asm')
+    runtime_path = os.path.join(os.path.dirname(__file__), 'runtime', 'runtime.asm')
     asm += '\n\n; ── runtime library ──\n'
     asm += f'%include "{runtime_path}"\n'
 
