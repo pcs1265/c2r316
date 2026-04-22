@@ -48,29 +48,85 @@ RET_REG   = 'r1'
 
 
 class FuncContext:
-    """Tracks spill-slot assignments for one function."""
+    """
+    Spill-slot allocator with temp recycling.
+    Vars (locals/params) get permanent slots.
+    Temps get slots recycled after their last use.
+    """
 
-    def __init__(self):
-        self._slots: Dict[str, int] = {}   # key → slot index
-        self._next  = 0
+    def __init__(self, instrs: list, params: list[str]):
+        self._slots:    Dict[str, int] = {}
+        self._free:     list[int]      = []   # recycled slots available
+        self._next      = 0
+        self._peak      = 0
 
-    def _key(self, op: Operand) -> str:
-        if isinstance(op, Temp):
-            return f't{op.id}'
-        if isinstance(op, Var):
-            return f'v_{op.name}'
-        raise CodegenError(f"No slot for {op}")
+        # params first — permanent slots 0..len(params)-1
+        for name in params:
+            self._alloc_permanent(f'v_{name}')
+
+        # compute last-use index for every Temp
+        last_use: Dict[int, int] = {}
+        for i, instr in enumerate(instrs):
+            for op in instr.uses():
+                if isinstance(op, Temp):
+                    last_use[op.id] = i
+            # a Temp that is defined but never used still gets a slot;
+            # mark its last use as the def site so it's freed immediately
+            d = instr.defs()
+            if isinstance(d, Temp) and d.id not in last_use:
+                last_use[d.id] = i
+
+        self._last_use = last_use
+        self._instrs   = instrs
+
+    def _alloc_permanent(self, key: str) -> int:
+        slot = self._next
+        self._next += 1
+        self._peak  = max(self._peak, self._next)
+        self._slots[key] = slot
+        return slot
+
+    def _alloc_temp(self, key: str) -> int:
+        if self._free:
+            slot = self._free.pop()
+        else:
+            slot = self._next
+            self._next += 1
+            self._peak  = max(self._peak, self._next)
+        self._slots[key] = slot
+        return slot
 
     def slot(self, op: Operand) -> int:
-        k = self._key(op)
-        if k not in self._slots:
-            self._slots[k] = self._next
-            self._next += 1
-        return self._slots[k]
+        if isinstance(op, Temp):
+            key = f't{op.id}'
+            if key not in self._slots:
+                self._alloc_temp(key)
+            return self._slots[key]
+        if isinstance(op, Var):
+            key = f'v_{op.name}'
+            if key not in self._slots:
+                self._alloc_permanent(key)
+            return self._slots[key]
+        raise CodegenError(f"No slot for {op}")
+
+    def free_dead_temps(self, instr_idx: int):
+        """Release slots for Temps whose last use is at instr_idx."""
+        instr = self._instrs[instr_idx]
+        for op in instr.uses():
+            if isinstance(op, Temp) and self._last_use.get(op.id) == instr_idx:
+                key = f't{op.id}'
+                if key in self._slots:
+                    self._free.append(self._slots.pop(key))
+        # also free a def-only temp (never used) right after its def
+        d = instr.defs()
+        if isinstance(d, Temp) and self._last_use.get(d.id) == instr_idx:
+            key = f't{d.id}'
+            if key in self._slots:
+                self._free.append(self._slots.pop(key))
 
     @property
     def frame_size(self) -> int:
-        return self._next
+        return self._peak
 
 
 class Codegen:
@@ -166,24 +222,29 @@ class Codegen:
     # ── Function ──────────────────────────────────────────────────────────────
 
     def _gen_func(self, fn: IRFunction):
-        self._ctx = FuncContext()
-
-        # params get slots first so they never collide with lr_slot
-        for pname in fn.params:
-            self._ctx.slot(Var(pname))
-
-        # pre-scan: assign slots for all defs/uses so frame_size is known
-        for instr in fn.instrs:
+        # dry run to compute true peak frame size with recycling
+        dry = FuncContext(fn.instrs, fn.params)
+        for i, instr in enumerate(fn.instrs):
+            for op in instr.uses():
+                if isinstance(op, Var):
+                    dry.slot(op)
             d = instr.defs()
             if d is not None:
-                self._ctx.slot(d)
+                dry.slot(d)
+            dry.free_dead_temps(i)
+        peak = dry.frame_size
+
+        self._ctx = FuncContext(fn.instrs, fn.params)
+
+        # pre-scan: ensure all Var operands get permanent slots
+        for instr in fn.instrs:
             for op in instr.uses():
                 if isinstance(op, Var):
                     self._ctx.slot(op)
 
         self._is_leaf = not any(isinstance(i, ICall) for i in fn.instrs)
-        frame_size    = self._ctx.frame_size + (0 if self._is_leaf else 1)
-        lr_slot       = self._ctx.frame_size   # saved lr goes after spill area
+        frame_size    = peak + (0 if self._is_leaf else 1)
+        lr_slot       = peak
 
         self._emit(f'; function {fn.name}')
         self._lbl(fn.name)
@@ -194,14 +255,14 @@ class Codegen:
         if not self._is_leaf:
             self._ins(f'st {LR}, {SP}, {lr_slot}')
 
-        # copy incoming args (r1..r4) into their Var spill slots
         for i, pname in enumerate(fn.params):
             if i < len(ARG_REGS):
                 slot = self._ctx.slot(Var(pname))
                 self._ins(f'st {ARG_REGS[i]}, {SP}, {slot}')
 
-        for instr in fn.instrs:
+        for idx, instr in enumerate(fn.instrs):
             self._gen_instr(instr, lr_slot, frame_size)
+            self._ctx.free_dead_temps(idx)
 
         self._emit('')
 
