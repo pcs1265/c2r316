@@ -1,6 +1,6 @@
 """
 C to R316 Compiler - Lexer
-토큰 종류와 렉서 구현
+Token types and lexer implementation
 """
 
 import re
@@ -8,13 +8,13 @@ from enum import Enum, auto
 
 
 class TK(Enum):
-    # 리터럴
+    # literals
     INT_LIT    = auto()
     CHAR_LIT   = auto()
     STRING_LIT = auto()
     IDENT      = auto()
 
-    # 키워드
+    # keywords
     INT        = auto()
     LONG       = auto()
     CHAR       = auto()
@@ -32,7 +32,7 @@ class TK(Enum):
     EXTERN     = auto()
     STATIC     = auto()
 
-    # 연산자
+    # operators
     PLUS       = auto()   # +
     MINUS      = auto()   # -
     STAR       = auto()   # *
@@ -65,7 +65,7 @@ class TK(Enum):
     DEC        = auto()   # --
     ARROW      = auto()   # ->
 
-    # 구분자
+    # delimiters
     LPAREN     = auto()   # (
     RPAREN     = auto()   # )
     LBRACE     = auto()   # {
@@ -151,11 +151,11 @@ class Lexer:
             if ch in ' \t\r\n':
                 self._advance()
             elif ch == '/' and self._peek() == '/':
-                # 한 줄 주석
+                # single-line comment
                 while self.pos < len(self.src) and self._cur() != '\n':
                     self._advance()
             elif ch == '/' and self._peek() == '*':
-                # 블록 주석
+                # block comment
                 self._advance(); self._advance()
                 while self.pos < len(self.src):
                     if self._cur() == '*' and self._peek() == '/':
@@ -180,13 +180,13 @@ class Lexer:
         else:
             while self.pos < len(self.src) and self._cur().isdigit():
                 self._advance()
-        # suffix (u, l, ul 등) 무시
+        # ignore suffix (u, l, ul, etc.)
         while self.pos < len(self.src) and self._cur() in 'uUlL':
             self._advance()
         return int(self.src[start:self.pos].rstrip('uUlL') or '0', base)
 
     def _read_char(self):
-        # ' 다음
+        # after '
         self._advance()  # '
         if self._cur() == '\\':
             self._advance()
@@ -231,13 +231,13 @@ class Lexer:
             line, col = self.line, self.col
             ch = self._cur()
 
-            # 숫자
+            # number
             if ch.isdigit():
                 val = self._read_int()
                 self.tokens.append(Token(TK.INT_LIT, val, line, col))
                 continue
 
-            # 식별자 / 키워드
+            # identifier / keyword
             if ch.isalpha() or ch == '_':
                 start = self.pos
                 while self.pos < len(self.src) and (self._cur().isalnum() or self._cur() == '_'):
@@ -247,19 +247,19 @@ class Lexer:
                 self.tokens.append(Token(kind, word, line, col))
                 continue
 
-            # 문자 리터럴
+            # char literal
             if ch == "'":
                 val = self._read_char()
                 self.tokens.append(Token(TK.CHAR_LIT, val, line, col))
                 continue
 
-            # 문자열 리터럴
+            # string literal
             if ch == '"':
                 val = self._read_string()
                 self.tokens.append(Token(TK.STRING_LIT, val, line, col))
                 continue
 
-            # 두 글자 연산자 먼저
+            # two-character operators first
             two = ch + self._peek()
             two_map = {
                 '<<': TK.LSHIFT, '>>': TK.RSHIFT,
@@ -277,7 +277,7 @@ class Lexer:
                 self.tokens.append(Token(two_map[two], two, line, col))
                 continue
 
-            # 한 글자 연산자
+            # single-character operators
             one_map = {
                 '+': TK.PLUS,    '-': TK.MINUS,   '*': TK.STAR,
                 '/': TK.SLASH,   '%': TK.PERCENT,  '&': TK.AMP,

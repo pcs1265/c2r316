@@ -1,4 +1,4 @@
-/* R316에서 실행되는 첫 C 프로그램 */
+/* First C program running on R316 */
 
 void putchar(int c);
 void print_int(int n);

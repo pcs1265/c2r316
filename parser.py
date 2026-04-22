@@ -1,6 +1,6 @@
 """
 C to R316 Compiler - Parser
-토큰 스트림 → AST
+Token stream → AST
 """
 
 from lexer import TK, Token
@@ -16,7 +16,7 @@ class Parser:
         self.tokens = tokens
         self.pos    = 0
 
-    # ── 기본 유틸 ──────────────────────────────────────────────────────────────
+    # ── Basic Utilities ──────────────────────────────────────────────────────────────
 
     def _cur(self) -> Token:
         return self.tokens[self.pos]
@@ -45,7 +45,7 @@ class Parser:
             return self._eat(*kinds)
         return None
 
-    # ── 타입 파싱 ─────────────────────────────────────────────────────────────
+    # ── Type Parsing ─────────────────────────────────────────────────────────────
 
     TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED}
 
@@ -61,7 +61,7 @@ class Parser:
             if unsigned:
                 raise ParseError("unsigned void is invalid")
             return CVoid()
-        # unsigned 단독 → unsigned int
+        # unsigned alone → unsigned int
         if unsigned:
             return CInt(unsigned=True)
         raise ParseError(f"Line {self._cur().line}: Expected type specifier")
@@ -73,16 +73,16 @@ class Parser:
         return base
 
     def _parse_type_and_name(self) -> tuple[CType, str]:
-        """타입 + 선택적 식별자. 배열 대괄호도 처리."""
+        """Type + optional identifier. Also handles array brackets."""
         base = self._parse_base_type()
-        # 포인터 수식어
+        # pointer modifiers
         stars = 0
         while self._try_eat(TK.STAR):
             stars += 1
         name = ''
         if self._at(TK.IDENT):
             name = self._eat(TK.IDENT).value
-        # 배열 수식어
+        # array modifiers
         if self._try_eat(TK.LBRACKET):
             if self._at(TK.INT_LIT):
                 length = self._eat(TK.INT_LIT).value
@@ -96,9 +96,9 @@ class Parser:
             t = CPointer(t) if not isinstance(t, CArray) else t
         if stars and not isinstance(t, (CPointer, CArray)):
             t = CPointer(t)
-        # 별표를 타입에 적용 (배열이 아닌 경우)
+        # apply stars to type (when not array)
         if stars and isinstance(t, CArray):
-            pass  # 배열 우선
+            pass  # array takes precedence
         elif stars:
             inner = base
             for _ in range(stars):
@@ -106,7 +106,7 @@ class Parser:
             t = inner
         return t, name
 
-    # ── 최상위 파싱 ───────────────────────────────────────────────────────────
+    # ── Top-Level Parsing ───────────────────────────────────────────────────────────
 
     def parse(self) -> Program:
         decls = []
@@ -128,7 +128,7 @@ class Parser:
         name = self._eat(TK.IDENT).value
 
         if self._at(TK.LPAREN):
-            # 함수 선언 또는 정의
+            # function declaration or definition
             params = self._parse_params()
             if self._try_eat(TK.SEMICOLON):
                 body = None
@@ -136,9 +136,9 @@ class Parser:
                 body = self._parse_block()
             return [FuncDecl(name, ret_type, params, body, is_static)]
         else:
-            # 전역 변수
+            # global variable
             results = []
-            # 배열 처리
+            # handle array
             if self._try_eat(TK.LBRACKET):
                 if self._at(TK.INT_LIT):
                     length = self._eat(TK.INT_LIT).value
@@ -182,7 +182,7 @@ class Parser:
         self._eat(TK.RPAREN)
         return params
 
-    # ── 문장 파싱 ─────────────────────────────────────────────────────────────
+    # ── Statement Parsing ─────────────────────────────────────────────────────────────
 
     def _parse_block(self) -> Block:
         self._eat(TK.LBRACE)
@@ -222,11 +222,11 @@ class Parser:
             self._eat(TK.SEMICOLON)
             return ContinueStmt()
 
-        # 지역 변수 선언
+        # local variable declaration
         if self._at(*self.TYPE_STARTS):
             return self._parse_local_decl()
 
-        # 표현식 문장
+        # expression statement
         expr = self._parse_expr()
         self._eat(TK.SEMICOLON)
         return ExprStmt(expr)
@@ -284,7 +284,7 @@ class Parser:
         while self._try_eat(TK.STAR):
             stars += 1
         name = self._eat(TK.IDENT).value
-        # 배열
+        # array
         if self._try_eat(TK.LBRACKET):
             if self._at(TK.INT_LIT):
                 length = self._eat(TK.INT_LIT).value
@@ -302,7 +302,7 @@ class Parser:
         self._eat(TK.SEMICOLON)
         return DeclStmt(VarDecl(name, vtype, init, is_global=False))
 
-    # ── 표현식 파싱 (연산자 우선순위) ─────────────────────────────────────────
+    # ── Expression Parsing (operator precedence) ─────────────────────────────────────────
 
     def _parse_expr(self) -> Expr:
         return self._parse_assign()
@@ -329,10 +329,10 @@ class Parser:
         cond = self._parse_or()
         if self._try_eat(TK.COLON if False else TK.ASSIGN if False else None.__class__ if False else TK.COLON if False else None.__class__ if False else None.__class__):
             pass
-        # 실제 삼항
+        # actual ternary
         if self._cur().kind == TK.COLON:
-            return cond  # 단순화: 삼항 미지원시 그냥 cond
-        # 진짜 삼항 처리
+            return cond  # simplified: return cond when ternary unsupported
+        # real ternary handling
         tok = self._cur()
         if tok.value == '?' if tok.kind == TK.COLON else False:
             pass
@@ -340,9 +340,9 @@ class Parser:
 
     def _parse_ternary(self) -> Expr:
         cond = self._parse_or()
-        # '?' 처리 — COLON을 재활용하지 않고 직접 체크
+        # '?' handling — check directly without reusing COLON
         if self._cur().value == '?' and self._cur().kind not in (TK.EOF,):
-            # 렉서에 '?'가 없으므로 건너뜀 (C 삼항은 추후 지원)
+            # '?' not in lexer, skip for now (C ternary to be supported later)
             pass
         return cond
 
@@ -471,7 +471,7 @@ class Parser:
         node = self._parse_primary()
         while True:
             if self._at(TK.LPAREN):
-                # 함수 호출
+                # function call
                 self._eat(TK.LPAREN)
                 args = []
                 if not self._at(TK.RPAREN):
@@ -481,7 +481,7 @@ class Parser:
                 self._eat(TK.RPAREN)
                 node = Call(node, args)
             elif self._at(TK.LBRACKET):
-                # 배열 인덱스
+                # array index
                 self._eat(TK.LBRACKET)
                 idx = self._parse_expr()
                 self._eat(TK.RBRACKET)

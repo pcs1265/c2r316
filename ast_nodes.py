@@ -1,33 +1,33 @@
 """
-C to R316 Compiler - AST 노드 정의
+C to R316 Compiler - AST Node Definitions
 """
 
 from dataclasses import dataclass, field
 from typing import List, Optional, Any
 
 
-# ── 타입 시스템 ────────────────────────────────────────────────────────────────
+# ── Type System ────────────────────────────────────────────────────────────────
 
 class CType:
     pass
 
 @dataclass
 class CInt(CType):
-    """16비트 정수 (signed/unsigned)"""
+    """16-bit integer (signed/unsigned)"""
     unsigned: bool = False
     def __repr__(self): return f"{'unsigned ' if self.unsigned else ''}int"
     def size(self): return 1   # 1 word
 
 @dataclass
 class CLong(CType):
-    """32비트 정수 (two words)"""
+    """32-bit integer (two words)"""
     unsigned: bool = False
     def __repr__(self): return f"{'unsigned ' if self.unsigned else ''}long"
     def size(self): return 2   # 2 words
 
 @dataclass
 class CChar(CType):
-    """8비트 문자 (1 word로 저장)"""
+    """8-bit character (stored as 1 word)"""
     unsigned: bool = False
     def __repr__(self): return f"{'unsigned ' if self.unsigned else ''}char"
     def size(self): return 1
@@ -41,7 +41,7 @@ class CVoid(CType):
 class CPointer(CType):
     base: CType
     def __repr__(self): return f"{self.base}*"
-    def size(self): return 1   # 16비트 포인터
+    def size(self): return 1   # 16-bit pointer
 
 @dataclass
 class CArray(CType):
@@ -71,14 +71,14 @@ def is_32bit(t: CType) -> bool:
     return isinstance(t, CLong)
 
 
-# ── AST 노드 기반 클래스 ───────────────────────────────────────────────────────
+# ── AST Node Base Class ───────────────────────────────────────────────────────
 
 class Node:
-    """모든 AST 노드의 기반"""
+    """Base class for all AST nodes"""
     pass
 
 
-# ── 최상위 선언 ──────────────────────────────────────────────────────────────
+# ── Top-Level Declarations ──────────────────────────────────────────────────────────────
 
 @dataclass
 class Program(Node):
@@ -89,7 +89,7 @@ class FuncDecl(Node):
     name: str
     ret_type: CType
     params: List['ParamDecl']
-    body: Optional['Block']    # None이면 선언만 (extern)
+    body: Optional['Block']    # None means declaration only (extern)
     is_static: bool = False
 
 @dataclass
@@ -106,7 +106,7 @@ class VarDecl(Node):
     is_static: bool = False
 
 
-# ── 문장 ─────────────────────────────────────────────────────────────────────
+# ── Statements ─────────────────────────────────────────────────────────────────────
 
 class Stmt(Node):
     pass
@@ -132,7 +132,7 @@ class WhileStmt(Stmt):
 
 @dataclass
 class ForStmt(Stmt):
-    init: Optional[Stmt]     # VarDecl 또는 ExprStmt 또는 None
+    init: Optional[Stmt]     # VarDecl, ExprStmt, or None
     cond: Optional['Expr']
     step: Optional['Expr']
     body: Stmt
@@ -154,7 +154,7 @@ class DeclStmt(Stmt):
     decl: VarDecl
 
 
-# ── 표현식 ───────────────────────────────────────────────────────────────────
+# ── Expressions ───────────────────────────────────────────────────────────────────
 
 class Expr(Node):
     pass
@@ -171,8 +171,8 @@ class CharLit(Expr):
 
 @dataclass
 class StringLit(Expr):
-    chars: List[int]          # null 포함 아직 아님; codegen이 추가
-    label: str = ''           # codegen이 할당
+    chars: List[int]          # null not yet included; codegen adds it
+    label: str = ''           # assigned by codegen
     ctype: CType = field(default_factory=lambda: CPointer(CChar()))
 
 @dataclass
@@ -219,7 +219,7 @@ class Index(Expr):
 class Member(Expr):
     obj: Expr
     field: str
-    arrow: bool               # True면 ->, False면 .
+    arrow: bool               # True for ->, False for .
     ctype: CType = None
 
 @dataclass
@@ -237,5 +237,5 @@ class Ternary(Expr):
 
 @dataclass
 class SizeOf(Expr):
-    target: Any               # CType 또는 Expr
+    target: Any               # CType or Expr
     ctype: CType = field(default_factory=CInt)

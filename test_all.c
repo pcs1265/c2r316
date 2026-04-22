@@ -1,6 +1,6 @@
-/* test_all.c - 현재 지원 기능 전체 테스트 */
+/* test_all.c - full test of currently supported features */
 
-/* 런타임 함수 선언 */
+/* runtime function declarations */
 void putchar(int c);
 void print_int(int n);
 void print_uint(int n);
@@ -13,7 +13,7 @@ int  strcmp(char *a, char *b);
 void memset(char *dst, int val, int n);
 void memcpy(char *dst, char *src, int n);
 
-/* ── 헬퍼 ── */
+/* ── helpers ── */
 void newline(void) {
     putchar(10);
 }
@@ -27,19 +27,19 @@ void print_ok(void) {
     puts("OK");
 }
 
-/* ── 재귀: 팩토리얼 ── */
+/* ── recursion: factorial ── */
 int factorial(int n) {
     if (n <= 1) return 1;
     return n * factorial(n - 1);
 }
 
-/* ── 재귀: 피보나치 ── */
+/* ── recursion: fibonacci ── */
 int fib(int n) {
     if (n <= 1) return n;
     return fib(n - 1) + fib(n - 2);
 }
 
-/* ── 배열 합산 ── */
+/* ── array sum ── */
 int array_sum(int *arr, int len) {
     int i;
     int sum;
@@ -50,7 +50,7 @@ int array_sum(int *arr, int len) {
     return sum;
 }
 
-/* ── 포인터로 스왑 ── */
+/* ── swap via pointers ── */
 void swap(int *a, int *b) {
     int tmp;
     tmp = *a;
@@ -61,17 +61,17 @@ void swap(int *a, int *b) {
 /* ── main ── */
 int main(void) {
 
-    /* 1. 기본 출력 */
+    /* 1. basic output */
     puts("=== test_all ===");
 
-    /* 2. 사칙연산 */
+    /* 2. arithmetic */
     print_label("3+4");   print_int(3 + 4);   newline();
     print_label("10-3");  print_int(10 - 3);  newline();
     print_label("6*7");   print_int(6 * 7);   newline();
     print_label("20/4");  print_int(20 / 4);  newline();
     print_label("17%5");  print_int(17 % 5);  newline();
 
-    /* 3. 비트 연산 */
+    /* 3. bitwise operations */
     print_label("5&3");   print_int(5 & 3);   newline();
     print_label("5|3");   print_int(5 | 3);   newline();
     print_label("5^3");   print_int(5 ^ 3);   newline();
@@ -79,7 +79,7 @@ int main(void) {
     print_label("1<<4");  print_int(1 << 4);  newline();
     print_label("32>>2"); print_int(32 >> 2); newline();
 
-    /* 4. 비교 / 논리 */
+    /* 4. comparison / logical */
     print_label("3==3");  print_int(3 == 3);  newline();
     print_label("3!=4");  print_int(3 != 4);  newline();
     print_label("2<5");   print_int(2 < 5);   newline();
@@ -88,7 +88,7 @@ int main(void) {
     print_label("||");    print_int(0 || 1);  newline();
     print_label("!");     print_int(!0);      newline();
 
-    /* 5. 복합 대입 */
+    /* 5. compound assignment */
     int x;
     x = 10;
     x += 5;  print_label("+="); print_int(x); newline();
@@ -99,7 +99,7 @@ int main(void) {
     x |= 8;  print_label("|="); print_int(x); newline();
     x ^= 3;  print_label("^="); print_int(x); newline();
 
-    /* 6. 전위 / 후위 증감 */
+    /* 6. prefix / postfix increment/decrement */
     int y;
     y = 5;
     print_label("++y"); print_int(++y); newline();
@@ -138,11 +138,11 @@ int main(void) {
     }
     newline();
 
-    /* 10. 재귀: 팩토리얼 */
+    /* 10. recursion: factorial */
     print_label("5!");   print_int(factorial(5));  newline();
     print_label("fib7"); print_int(fib(7));        newline();
 
-    /* 11. 배열 */
+    /* 11. arrays */
     int arr[5];
     arr[0] = 10;
     arr[1] = 20;
@@ -151,7 +151,7 @@ int main(void) {
     arr[4] = 50;
     print_label("sum"); print_int(array_sum(arr, 5)); newline();
 
-    /* 12. 포인터 + swap */
+    /* 12. pointers + swap */
     int p;
     int q;
     p = 11;
@@ -160,7 +160,7 @@ int main(void) {
     print_label("p"); print_int(p); newline();
     print_label("q"); print_int(q); newline();
 
-    /* 13. 문자열 함수 */
+    /* 13. string functions */
     char *s1;
     char *s2;
     s1 = "hello";

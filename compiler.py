@@ -1,17 +1,17 @@
 """
-C → R316 컴파일러 메인 진입점
+C → R316 Compiler Main Entry Point
 
-사용법:
+Usage:
     python compiler.py input.c [-o output.asm]
 
-출력 파일은 TPTASM으로 어셈블 가능한 R316 어셈블리입니다.
+Output file is R316 assembly assemblable with TPTASM.
 """
 
 import sys
 import os
 import argparse
 
-# 같은 디렉터리에서 모듈 로드
+# load modules from same directory
 sys.path.insert(0, os.path.dirname(__file__))
 
 from lexer    import Lexer,  LexError
@@ -21,39 +21,39 @@ from codegen  import Codegen, CodegenError
 
 
 def compile_c(src: str, src_name: str = '<stdin>') -> str:
-    """C 소스 문자열 → R316 어셈블리 문자열"""
+    """C source string → R316 assembly string"""
 
-    # 1. 렉싱
+    # 1. lexing
     try:
         lexer = Lexer(src)
     except LexError as e:
         raise SystemExit(f"Lex error: {e}")
 
-    # 2. 파싱
+    # 2. parsing
     try:
         parser = Parser(lexer.tokens)
         ast    = parser.parse()
     except ParseError as e:
         raise SystemExit(f"Parse error: {e}")
 
-    # 3. 시맨틱 분석
+    # 3. semantic analysis
     try:
         analyzer = Analyzer()
         analyzer.analyze(ast)
-        # 문자열 리터럴 레이블을 AST에 반영
+        # reflect string literal labels into AST
         for i, sl in enumerate(analyzer.string_lits):
             sl.label = f'_str_{i}'
     except SemanticError as e:
         raise SystemExit(f"Semantic error: {e}")
 
-    # 4. 코드 생성
+    # 4. code generation
     try:
         gen = Codegen()
         asm = gen.generate(ast)
     except CodegenError as e:
         raise SystemExit(f"Codegen error: {e}")
 
-    # 5. 런타임 라이브러리 포함
+    # 5. include runtime library
     runtime_path = os.path.join(os.path.dirname(__file__), 'runtime.asm')
     asm += '\n\n; ── runtime library ──\n'
     asm += f'%include "{runtime_path}"\n'
@@ -69,7 +69,7 @@ def main():
                     help='Print compilation steps')
     args = ap.parse_args()
 
-    # 입력 파일 읽기
+    # read input file
     try:
         with open(args.input, 'r', encoding='utf-8') as f:
             src = f.read()
@@ -81,7 +81,7 @@ def main():
 
     asm = compile_c(src, args.input)
 
-    # 출력
+    # output
     if args.output:
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write(asm)
