@@ -28,7 +28,7 @@ Every instruction records loc=(file, line) for diagnostics.
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Optional, Union, Tuple
+from typing import Dict, List, Optional, Union, Tuple
 
 
 # ── Operands ──────────────────────────────────────────────────────────────────
@@ -244,6 +244,19 @@ class IJumpIfNot(Instr):
     def __str__(self): return f'  ifnot {self.cond} goto {self.target}{self._loc_str()}'
 
 
+@dataclass
+class IInlineAsm(Instr):
+    """asm("template" : srcs...)  — %0..%N substituted at codegen time"""
+    text: str
+    srcs: List[Operand]
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return None
+    def uses(self): return list(self.srcs)
+    def __str__(self):
+        return f'  asm({self.text!r}, {", ".join(str(s) for s in self.srcs)}){self._loc_str()}'
+
+
 # ── Function IR container ──────────────────────────────────────────────────────
 
 @dataclass
@@ -251,6 +264,7 @@ class IRFunction:
     name: str
     params: List[str]           # parameter names in order
     instrs: List[Instr] = field(default_factory=list)
+    local_sizes: Dict[str, int] = field(default_factory=dict)  # name → slot count
 
     def dump(self) -> str:
         lines = [f'function {self.name}({", ".join(self.params)}):']

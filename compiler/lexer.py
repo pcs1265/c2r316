@@ -31,6 +31,7 @@ class TK(Enum):
     TYPEDEF    = auto()
     EXTERN     = auto()
     STATIC     = auto()
+    ASM        = auto()
 
     # operators
     PLUS       = auto()   # +
@@ -97,6 +98,8 @@ KEYWORDS = {
     'typedef':  TK.TYPEDEF,
     'extern':   TK.EXTERN,
     'static':   TK.STATIC,
+    'asm':      TK.ASM,
+    '__asm__':  TK.ASM,
 }
 
 

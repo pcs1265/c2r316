@@ -162,6 +162,10 @@ class Analyzer:
         elif isinstance(stmt, (BreakStmt, ContinueStmt)):
             pass
 
+        elif isinstance(stmt, AsmStmt):
+            for e in stmt.inputs:
+                self._analyze_expr(e)
+
         else:
             raise SemanticError(f"Unknown statement type: {type(stmt)}")
 

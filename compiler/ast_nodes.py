@@ -153,6 +153,12 @@ class ContinueStmt(Stmt):
 class DeclStmt(Stmt):
     decl: VarDecl
 
+@dataclass
+class AsmStmt(Stmt):
+    """asm("template" : "r"(e0), "r"(e1), ...)  — inputs only"""
+    text:   str        # template string, %0..%N are substituted
+    inputs: list       # list[Expr]
+
 
 # ── Expressions ───────────────────────────────────────────────────────────────────
 

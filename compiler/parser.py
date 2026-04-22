@@ -222,6 +222,9 @@ class Parser:
             self._eat(TK.SEMICOLON)
             return ContinueStmt()
 
+        if self._at(TK.ASM):
+            return self._parse_asm()
+
         # local variable declaration
         if self._at(*self.TYPE_STARTS):
             return self._parse_local_decl()
@@ -241,6 +244,26 @@ class Parser:
         if self._try_eat(TK.ELSE):
             else_ = self._parse_stmt()
         return IfStmt(cond, then, else_)
+
+    def _parse_asm(self) -> AsmStmt:
+        # asm("template")  or  asm("template" : "r"(e), ...)
+        self._eat(TK.ASM)
+        self._eat(TK.LPAREN)
+        template_chars = self._eat(TK.STRING_LIT).value
+        template = ''.join(chr(c) for c in template_chars)
+        inputs = []
+        if self._try_eat(TK.COLON):
+            while not self._at(TK.RPAREN):
+                # consume constraint string, e.g. "r"
+                self._eat(TK.STRING_LIT)
+                self._eat(TK.LPAREN)
+                inputs.append(self._parse_expr())
+                self._eat(TK.RPAREN)
+                if not self._try_eat(TK.COMMA):
+                    break
+        self._eat(TK.RPAREN)
+        self._eat(TK.SEMICOLON)
+        return AsmStmt(template, inputs)
 
     def _parse_while(self) -> WhileStmt:
         self._eat(TK.WHILE)

@@ -29,7 +29,7 @@ from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
-    IRFunction, IRProgram, Instr,
+    IInlineAsm, IRFunction, IRProgram, Instr,
 )
 
 
@@ -54,7 +54,7 @@ class FuncContext:
     Temps get slots recycled after their last use.
     """
 
-    def __init__(self, instrs: list, params: list[str]):
+    def __init__(self, instrs: list, params: list[str], local_sizes: Dict[str, int] = None):
         self._slots:    Dict[str, int] = {}
         self._free:     list[int]      = []   # recycled slots available
         self._next      = 0
@@ -63,6 +63,11 @@ class FuncContext:
         # params first — permanent slots 0..len(params)-1
         for name in params:
             self._alloc_permanent(f'v_{name}')
+
+        # pre-reserve contiguous slots for locals larger than 1 word (arrays)
+        for name, size in (local_sizes or {}).items():
+            if size > 1:
+                self._alloc_permanent_block(f'v_{name}', size)
 
         # compute last-use index for every Temp
         last_use: Dict[int, int] = {}
@@ -82,6 +87,14 @@ class FuncContext:
     def _alloc_permanent(self, key: str) -> int:
         slot = self._next
         self._next += 1
+        self._peak  = max(self._peak, self._next)
+        self._slots[key] = slot
+        return slot
+
+    def _alloc_permanent_block(self, key: str, size: int) -> int:
+        """Reserve `size` contiguous slots; key maps to the first slot."""
+        slot = self._next
+        self._next += size
         self._peak  = max(self._peak, self._next)
         self._slots[key] = slot
         return slot
@@ -214,7 +227,7 @@ class Codegen:
             self._emit('')
             self._emit('; -- string literals --')
             for lbl, chars in prog.strings:
-                data = ', '.join(str(c) for c in chars) + ', 0'
+                data = (', '.join(str(c) for c in chars) + ', 0') if chars else '0'
                 self._emit(f'{lbl}: dw {data}')
 
         return '\n'.join(self._out)
@@ -223,7 +236,7 @@ class Codegen:
 
     def _gen_func(self, fn: IRFunction):
         # dry run to compute true peak frame size with recycling
-        dry = FuncContext(fn.instrs, fn.params)
+        dry = FuncContext(fn.instrs, fn.params, fn.local_sizes)
         for i, instr in enumerate(fn.instrs):
             for op in instr.uses():
                 if isinstance(op, Var):
@@ -234,7 +247,7 @@ class Codegen:
             dry.free_dead_temps(i)
         peak = dry.frame_size
 
-        self._ctx = FuncContext(fn.instrs, fn.params)
+        self._ctx = FuncContext(fn.instrs, fn.params, fn.local_sizes)
 
         # pre-scan: ensure all Var operands get permanent slots
         for instr in fn.instrs:
@@ -322,8 +335,33 @@ class Codegen:
             self._ins(f'test {SCRATCH_A}, {SCRATCH_A}')
             self._ins(f'jz {instr.target}')
 
+        elif isinstance(instr, IInlineAsm):
+            self._gen_inline_asm(instr)
+
         else:
             raise CodegenError(f"Unhandled IR instruction: {type(instr)}")
+
+    # Caller-saved regs available as operand slots for inline asm (%0..%8)
+    _ASM_REGS = ['r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13']
+
+    def _gen_inline_asm(self, instr: IInlineAsm):
+        if len(instr.srcs) > len(self._ASM_REGS):
+            raise CodegenError(
+                f"asm: too many input operands ({len(instr.srcs)}, max {len(self._ASM_REGS)})"
+            )
+        regs = []
+        for i, src in enumerate(instr.srcs):
+            reg = self._ASM_REGS[i]
+            self._load_op(src, reg)
+            regs.append(reg)
+        # substitute %0..%N in each line of the template
+        for line in instr.text.split('\n'):
+            text = line.strip()
+            if not text:
+                continue
+            for i, reg in enumerate(regs):
+                text = text.replace(f'%{i}', reg)
+            self._ins(text)
 
     def _gen_epilogue(self, lr_slot: int, frame_size: int):
         if not self._is_leaf:

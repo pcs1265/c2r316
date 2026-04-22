@@ -13,7 +13,7 @@ from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
-    IRFunction, IRProgram,
+    IInlineAsm, IRFunction, IRProgram,
 )
 
 
@@ -128,9 +128,12 @@ class IRGen:
         return self._fn
 
     def _collect_locals(self, node):
-        """Walk body and register all declared local names."""
+        """Walk body and register all declared local names and their sizes."""
         if isinstance(node, DeclStmt):
-            self._locals.add(node.decl.name)
+            d = node.decl
+            self._locals.add(d.name)
+            size = d.ctype.size() if isinstance(d.ctype, CArray) else 1
+            self._fn.local_sizes[d.name] = size
         elif isinstance(node, Block):
             for s in node.stmts:
                 self._collect_locals(s)
@@ -190,6 +193,10 @@ class IRGen:
             if not self._cont_stack:
                 raise IRGenError("continue outside loop")
             self._emit(IJump(self._cont_stack[-1], self._loc(stmt)))
+
+        elif isinstance(stmt, AsmStmt):
+            srcs = [self._gen_expr(e) for e in stmt.inputs]
+            self._emit(IInlineAsm(stmt.text, srcs, self._loc(stmt)))
 
         else:
             raise IRGenError(f"Unhandled statement: {type(stmt)}")
