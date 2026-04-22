@@ -1,18 +1,18 @@
-; C→R316 런타임 라이브러리
-; 컴파일러 출력 파일의 끝에 %include "runtime.asm" 으로 포함됨
+; C→R316 Runtime Library
+; Included at the end of compiler output via %include "runtime.asm"
 ;
 ; ABI:
-;   r1..r4  : 인자 / 반환값
-;   r5..r13 : caller-saved 임시
+;   r1..r4  : arguments / return values
+;   r5..r13 : caller-saved temporaries
 ;   r14..r29: callee-saved
-;   r30 (sp): 스택 포인터
-;   r31 (lr): 링크 레지스터
+;   r30 (sp): stack pointer
+;   r31 (lr): link register
 ;
-; 터미널 주소 (demo.asm 규격):
-;   0x9F80 : term_input  (키보드 읽기)
-;   0x9F84 : term_raw    (raw 출력 - scrollprint)
-;   0x9F85 : term_single (단일 문자 출력)
-;   0x9FB5 : term_term   (일반 문자 출력 - 개행 처리)
+; Terminal addresses (demo.asm spec):
+;   0x9F80 : term_input  (keyboard read)
+;   0x9F84 : term_raw    (raw output - scrollprint)
+;   0x9F85 : term_single (single character output)
+;   0x9FB5 : term_term   (general character output - handles newline)
 ;   0x9FC2 : term_hrange
 ;   0x9FC3 : term_vrange
 ;   0x9FC4 : term_cursor
@@ -34,8 +34,8 @@
 %define _term_height 8
 %define _nlchar      10
 
-; ── 터미널 초기화 ─────────────────────────────────────────────────────────────
-; 입력: 없음 / 출력: 없음 / 파괴: r1
+; ── terminal initialization ─────────────────────────────────────────────────────────────
+; in: none / out: none / clobbers: r1
 __term_init:
     st r0, _term_input
     mov r1, { _term_width 1 - }
@@ -44,11 +44,11 @@ __term_init:
     mov r1, { _term_height 1 - }
     shl r1, 5
     st r1, _term_vrange
-    mov r1, 0x0A           ; 녹색 on 검정
+    mov r1, 0x0A           ; green on black
     st r1, _term_colour
     mov r1, _nlchar
     st r1, _term_nlchar
-    ; 화면 전체 공백으로 클리어
+    ; clear entire screen with spaces
     mov r1, ' '
     mov r2, 0
 .__term_init_clear:
@@ -59,13 +59,13 @@ __term_init:
     jmp r31
 
 ; ── putchar(int c) ────────────────────────────────────────────────────────────
-; 입력: r1 = 문자 코드 / 출력: r1 = 출력한 문자
+; in: r1 = character code / out: r1 = character output
 putchar:
     st r1, _term_term
     jmp r31
 
 ; ── getchar() → int ──────────────────────────────────────────────────────────
-; 입력: 없음 / 출력: r1 = 키 코드 (0이 아닐 때까지 대기)
+; in: none / out: r1 = key code (waits until non-zero)
 getchar:
     ld r1, _term_input
     test r1, r1
@@ -73,9 +73,9 @@ getchar:
     jmp r31
 
 ; ── puts(char *s) ─────────────────────────────────────────────────────────────
-; 입력: r1 = 문자열 포인터 (null 종료) / 출력: 없음
+; in: r1 = string pointer (null-terminated) / out: none
 puts:
-    st r31, r30, 0xFFFF    ; lr 저장 (sp-1)
+    st r31, r30, 0xFFFF    ; save lr (sp-1)
     sub r30, 1
 .__puts_loop:
     ld r2, r1
@@ -92,7 +92,7 @@ puts:
     jmp r31
 
 ; ── print_str(char *s) ───────────────────────────────────────────────────────
-; puts와 동일하나 개행 없음
+; same as puts but without trailing newline
 print_str:
     ld r2, r1
     test r2, r2
@@ -104,26 +104,26 @@ print_str:
     jmp r31
 
 ; ── print_int(int n) ─────────────────────────────────────────────────────────
-; 입력: r1 = 부호 있는 16비트 정수 / 출력: 없음
+; in: r1 = signed 16-bit integer / out: none
 print_int:
     st r31, r30, 0xFFFF
     sub r30, 1
-    ; 음수 처리
+    ; handle negative
     test r1, 0x8000
     jz .__pi_pos
     mov r2, '-'
     st r2, _term_term
     sub r1, r0, r1         ; negate: r0 ALU-wise=0, so r1 = -r1
 .__pi_pos:
-    ; r1이 0이면 특수 처리
+    ; special case: r1 == 0
     test r1, r1
     jnz .__pi_nonzero
     mov r2, '0'
     st r2, _term_term
     jmp .__pi_done
 .__pi_nonzero:
-    ; 스택에 숫자를 역순으로 push
-    mov r3, 0              ; 자릿수 카운트
+    ; push digits onto stack in reverse order
+    mov r3, 0              ; digit count
 .__pi_digit_loop:
     test r1, r1
     jz .__pi_print_loop
@@ -131,7 +131,7 @@ print_int:
     mov r4, r1
     mulh r5, r4, 6554      ; floor(r4/10) for r4 in [0,65535]
     mul r6, r5, 10
-    sub r2, r4, r6         ; 나머지
+    sub r2, r4, r6         ; remainder
     add r2, '0'
     sub r30, 1
     st r2, r30             ; push digit
@@ -152,7 +152,7 @@ print_int:
     jmp r31
 
 ; ── print_uint(unsigned int n) ───────────────────────────────────────────────
-; 입력: r1 = 부호 없는 16비트 정수
+; in: r1 = unsigned 16-bit integer
 print_uint:
     st r31, r30, 0xFFFF
     sub r30, 1
@@ -189,12 +189,12 @@ print_uint:
     jmp r31
 
 ; ── print_hex(unsigned int n) ────────────────────────────────────────────────
-; 입력: r1 = 값 (16비트), 4자리 16진수로 출력
+; in: r1 = value (16-bit), printed as 4-digit hex
 print_hex:
-    mov r2, 4              ; 4 니블
+    mov r2, 4              ; 4 nibbles
 .__ph_loop:
     sub r2, 1
-    ; r1의 최상위 니블 추출
+    ; extract top nibble of r1
     mov r3, r1
     shr r3, 12
     and r3, 0xF
@@ -211,39 +211,39 @@ print_hex:
     jnz .__ph_loop
     jmp r31
 
-; ── __udiv: 부호 없는 16비트 나눗셈 ─────────────────────────────────────────
-; 입력: r1 = 피제수, r2 = 제수
-; 출력: r1 = 몫, r2 = 나머지
+; ── __udiv: unsigned 16-bit division ─────────────────────────────────────────
+; in: r1 = dividend, r2 = divisor
+; out: r1 = quotient, r2 = remainder
 __udiv:
-    ; 간단한 반복 빼기 방식 (느리지만 정확)
-    ; TODO: 빠른 알고리즘으로 교체
-    mov r3, 0              ; 몫
+    ; simple repeated subtraction (slow but correct)
+    ; TODO: replace with faster algorithm
+    mov r3, 0              ; quotient
 .__udiv_loop:
-    ; r1 >= r2 이면 빼기
+    ; subtract while r1 >= r2
     sub r0, r1, r2         ; flags only
     jl .__udiv_done        ; r1 < r2 (signed, but values are unsigned 0..65535)
     sub r1, r2
     add r3, 1
     jmp .__udiv_loop
 .__udiv_done:
-    mov r2, r1             ; 나머지
-    mov r1, r3             ; 몫
+    mov r2, r1             ; remainder
+    mov r1, r3             ; quotient
     jmp r31
 
-; ── __umod: 부호 없는 16비트 나머지 ─────────────────────────────────────────
-; 입력: r1 = 피제수, r2 = 제수
-; 출력: r1 = 나머지
+; ── __umod: unsigned 16-bit modulo ─────────────────────────────────────────
+; in: r1 = dividend, r2 = divisor
+; out: r1 = remainder
 __umod:
     st r31, r30, 0xFFFF
     sub r30, 1
     jmp r31, __udiv
-    mov r1, r2             ; 나머지를 r1에
+    mov r1, r2             ; move remainder to r1
     add r30, 1
     ld r31, r30, 0xFFFF
     jmp r31
 
 ; ── memset(void *dst, int val, int n) ────────────────────────────────────────
-; 입력: r1=dst, r2=val, r3=n
+; in: r1=dst, r2=val, r3=n
 memset:
 .__ms_loop:
     test r3, r3
@@ -256,7 +256,7 @@ memset:
     jmp r31
 
 ; ── memcpy(void *dst, void *src, int n) ──────────────────────────────────────
-; 입력: r1=dst, r2=src, r3=n
+; in: r1=dst, r2=src, r3=n
 memcpy:
 .__mc_loop:
     test r3, r3
@@ -271,7 +271,7 @@ memcpy:
     jmp r31
 
 ; ── strlen(char *s) → int ────────────────────────────────────────────────────
-; 입력: r1 = 문자열 포인터 / 출력: r1 = 길이
+; in: r1 = string pointer / out: r1 = length
 strlen:
     mov r2, r1
 .__sl_loop:
@@ -285,7 +285,7 @@ strlen:
     jmp r31
 
 ; ── strcmp(char *a, char *b) → int ───────────────────────────────────────────
-; 출력: r1 = 0(같음), 양수(a>b), 음수(a<b)
+; out: r1 = 0 (equal), positive (a>b), negative (a<b)
 strcmp:
 .__sc_loop:
     ld r3, r1
