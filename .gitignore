@@ -2,3 +2,4 @@ manual.md
 r3.lua
 __pycache__/
 *.pyc
+output.asm
