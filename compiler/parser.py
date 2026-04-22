@@ -3,8 +3,8 @@ C to R316 Compiler - Parser
 Token stream → AST
 """
 
-from lexer import TK, Token
-from ast_nodes import *
+from .lexer import TK, Token
+from .ast_nodes import *
 
 
 class ParseError(Exception):

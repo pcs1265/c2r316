@@ -18,7 +18,7 @@ Register allocation strategy:
   Spill to stack when registers are exhausted
 """
 
-from ast_nodes import *
+from .ast_nodes import *
 import sys
 
 

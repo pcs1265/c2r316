@@ -3,7 +3,7 @@ C to R316 Compiler - Semantic Analysis
 Symbol table construction + type checking
 """
 
-from ast_nodes import *
+from .ast_nodes import *
 
 
 class SemanticError(Exception):
