@@ -305,22 +305,32 @@ strcmp:
 ; Detects the top of writable RAM at runtime using binary search (6 iterations),
 ; sets SP (r30) to it.
 ; RAM size is 128..8192 words in increments of 128 (64 possible sizes = 6 bits).
+; Binary search: probe the midpoint block boundary each step, converge in 6 probes.
 ; Uses __earlystack as a temporary stack during execution.
 ; Input: none / Output: none / Clobbers: r1, r2, r4, r5, r30
 __stack_init:
-    mov r30, __earlystack_top
+    mov r30, __earlystack_top   ; use reserved area as temporary stack
 
+    ; --- save return address on early stack ---
     sub r30, 1
     st  r31, r30, 0
 
-    mov r1, __prog_end
-    shr r1, 7
-    mov r4, 63
+    ; --- binary search for highest writable block (6 iterations max) ---
+    ; Search over block indices lo..63; block N covers addresses N*128..(N*128+127)
+    ; We probe the last word of block N: address = N*128 + 127 = N*0x80 + 0x7F
+    ; lo starts at the block containing __prog_end so we never probe program memory.
+    ; r1 = lo block index, r4 = hi block index, r2 = mid probe address
+    mov r1, __prog_end          ; r1 = first address past program
+    shr r1, 7                   ; r1 = block index of __prog_end (round down)
+    mov r4, 63                  ; hi = 63
+    ; if lo > hi (program fills all RAM), use block 63 as fallback
+    sub r0, r4, r1
+    jl  .__stack_found_fallback
 .__stack_bsearch:
-    add r2, r1, r4
-    shr r2, 1
-    shl r2, 7
-    add r2, 0x7F
+    add r2, r1, r4              ; r2 = lo + hi
+    shr r2, 1                   ; r2 = mid block index
+    shl r2, 7                   ; r2 = mid * 128
+    add r2, 0x7F                ; r2 = last word of mid block
     mov r5, 0x1234
     st  r5, r2
     ld  r5, r2
@@ -333,20 +343,29 @@ __stack_init:
     add r1, r5, 1
     jmp .__stack_bsearch
 .__stack_not_writable:
-    sub r5, r2, 0x7F
-    shr r5, 7
-    sub r4, r5, 1
+    ; not writable: answer is in [lo..mid-1]; hi = mid - 1
+    sub r5, r2, 0x7F            ; r5 = mid * 128
+    shr r5, 7                   ; r5 = mid block index
+    sub r4, r5, 1               ; hi = mid - 1
     jmp .__stack_bsearch
+.__stack_found_fallback:
+    mov r2, 63
+    shl r2, 7
+    add r2, 0x7F                ; r2 = last word of block 63
 .__stack_found:
+    ; r2 = last word address of highest writable block = top of RAM
+
+    ; --- set heap base and limit (limit = ram_top - 256 for stack reservation) ---
     mov r5, __prog_end
     st  r5, __heap_base
     sub r5, r2, 256
     st  r5, __heap_limit
 
-    ld  r31, r30, 0
+    ; --- restore return address and set real SP ---
+    ld  r31, r30, 0             ; restore saved return address from early stack
     add r30, 1
     mov r30, r2
-    add r30, 1          ; SP = ram_top + 1 (descending stack, first sub lands on ram_top)
+    add r30, 1                  ; SP = ram_top + 1 (first sub lands on ram_top)
     jmp r31
 
 ; ── heap / early-stack data ──────────────────────────────────────────────────
