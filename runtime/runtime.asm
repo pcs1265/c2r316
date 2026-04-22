@@ -30,8 +30,8 @@
 %eval _term_nlchar _term_base 0x45 +
 %eval _term_colour _term_base 0x46 +
 
-%define _term_width  12
-%define _term_height 8
+%define _term_width  24
+%define _term_height 16
 %define _nlchar      10
 
 ; ── terminal initialization ─────────────────────────────────────────────────────────────
@@ -300,3 +300,58 @@ strcmp:
 .__sc_done:
     mov r1, r5
     jmp r31
+
+; ── __stack_init ─────────────────────────────────────────────────────────────
+; Detects the top of writable RAM at runtime using binary search (6 iterations),
+; sets SP (r30) to it.
+; RAM size is 128..8192 words in increments of 128 (64 possible sizes = 6 bits).
+; Uses __earlystack as a temporary stack during execution.
+; Input: none / Output: none / Clobbers: r1, r2, r4, r5, r30
+__stack_init:
+    mov r30, __earlystack_top
+
+    sub r30, 1
+    st  r31, r30, 0
+
+    mov r1, __prog_end
+    shr r1, 7
+    mov r4, 63
+.__stack_bsearch:
+    add r2, r1, r4
+    shr r2, 1
+    shl r2, 7
+    add r2, 0x7F
+    mov r5, 0x1234
+    st  r5, r2
+    ld  r5, r2
+    cmp r5, 0x1234
+    jnz .__stack_not_writable
+    sub r5, r2, 0x7F
+    shr r5, 7
+    cmp r1, r4
+    jz  .__stack_found
+    add r1, r5, 1
+    jmp .__stack_bsearch
+.__stack_not_writable:
+    sub r5, r2, 0x7F
+    shr r5, 7
+    sub r4, r5, 1
+    jmp .__stack_bsearch
+.__stack_found:
+    mov r5, __prog_end
+    st  r5, __heap_base
+    sub r5, r2, 256
+    st  r5, __heap_limit
+
+    ld  r31, r30, 0
+    add r30, 1
+    mov r30, r2
+    add r30, 1          ; SP = ram_top + 1 (descending stack, first sub lands on ram_top)
+    jmp r31
+
+; ── heap / early-stack data ──────────────────────────────────────────────────
+__heap_base:  dw 0
+__heap_limit: dw 0
+__earlystack: dw 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+__earlystack_top:
+__prog_end:

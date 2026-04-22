@@ -1,0 +1,535 @@
+"""
+C to R316 Compiler - IR Generator
+AST → Three-Address IR
+
+Assumes semantic analysis has already run (ctype / _sym attached to nodes).
+"""
+
+from __future__ import annotations
+from typing import Optional, List
+
+from .ast_nodes import *
+from .ir import (
+    Temp, Var, Global, ImmInt, StrLabel, Operand,
+    IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
+    ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
+    IRFunction, IRProgram,
+)
+
+
+class IRGenError(Exception):
+    pass
+
+
+class IRGen:
+    def __init__(self, filename: str = '<unknown>'):
+        self._filename   = filename
+        self._tmp_cnt    = 0
+        self._label_cnt  = 0
+        self._fn: Optional[IRFunction] = None
+        self._break_stack: List[str]   = []
+        self._cont_stack:  List[str]   = []
+        # set of local variable names in current function
+        self._locals: set[str] = set()
+        # set of param names in current function
+        self._params: set[str] = set()
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _tmp(self) -> Temp:
+        t = Temp(self._tmp_cnt)
+        self._tmp_cnt += 1
+        return t
+
+    def _new_label(self, prefix: str) -> str:
+        self._label_cnt += 1
+        return f'._ir_{prefix}_{self._label_cnt}'
+
+    def _loc(self, node: Node):
+        line = getattr(node, 'line', None)
+        return (self._filename, line) if line else None
+
+    def _emit(self, instr):
+        self._fn.instrs.append(instr)
+
+    def _operand(self, node: Expr) -> Optional[Operand]:
+        """
+        Try to turn a simple expression into an operand directly (no instruction).
+        Returns None if the expression needs code generation.
+        """
+        if isinstance(node, IntLit):
+            return ImmInt(node.value & 0xFFFF)
+        if isinstance(node, CharLit):
+            return ImmInt(node.value & 0xFF)
+        if isinstance(node, Ident):
+            name = node.name
+            if name in self._params or name in self._locals:
+                return Var(name)
+            return Global(name)
+        return None
+
+    def _as_temp(self, op: Operand, loc) -> Temp:
+        """Ensure operand is in a Temp (emit ICopy if needed)."""
+        if isinstance(op, Temp):
+            return op
+        t = self._tmp()
+        self._emit(ICopy(t, op, loc))
+        return t
+
+    # ── Top-Level ─────────────────────────────────────────────────────────────
+
+    def generate(self, prog: Program) -> IRProgram:
+        ir = IRProgram()
+
+        for decl in prog.decls:
+            if isinstance(decl, VarDecl):
+                ir.globals.append(decl.name)
+            elif isinstance(decl, FuncDecl) and decl.body is not None:
+                ir.functions.append(self._gen_func(decl))
+
+        # string literals are collected during generation
+        ir.strings = self._strings
+        return ir
+
+    _strings: List = []
+
+    def __init_subclass__(cls, **kwargs): pass  # suppress dataclass warning
+
+    # re-init strings list per IRGen instance
+    def _init_strings(self):
+        self._strings = []
+
+    # ── Functions ─────────────────────────────────────────────────────────────
+
+    def _gen_func(self, func: FuncDecl) -> IRFunction:
+        if not hasattr(self, '_strings'):
+            self._strings = []
+
+        self._tmp_cnt = 0
+        self._label_cnt = 0
+        self._params = {p.name for p in func.params}
+        self._locals = set()
+        self._break_stack = []
+        self._cont_stack  = []
+
+        self._fn = IRFunction(
+            name=func.name,
+            params=[p.name for p in func.params],
+        )
+
+        self._collect_locals(func.body)
+        self._gen_block(func.body)
+
+        # ensure every path ends with a ret
+        instrs = self._fn.instrs
+        if not instrs or not isinstance(instrs[-1], IRet):
+            self._emit(IRet(None, self._loc(func)))
+
+        return self._fn
+
+    def _collect_locals(self, node):
+        """Walk body and register all declared local names."""
+        if isinstance(node, DeclStmt):
+            self._locals.add(node.decl.name)
+        elif isinstance(node, Block):
+            for s in node.stmts:
+                self._collect_locals(s)
+        elif isinstance(node, IfStmt):
+            self._collect_locals(node.then)
+            if node.else_:
+                self._collect_locals(node.else_)
+        elif isinstance(node, (WhileStmt,)):
+            self._collect_locals(node.body)
+        elif isinstance(node, ForStmt):
+            if node.init:
+                self._collect_locals(node.init)
+            self._collect_locals(node.body)
+
+    # ── Statements ────────────────────────────────────────────────────────────
+
+    def _gen_block(self, block: Block):
+        for stmt in block.stmts:
+            self._gen_stmt(stmt)
+
+    def _gen_stmt(self, stmt: Stmt):
+        if isinstance(stmt, Block):
+            self._gen_block(stmt)
+
+        elif isinstance(stmt, DeclStmt):
+            d = stmt.decl
+            if d.init is not None:
+                val = self._gen_expr(d.init)
+                addr = self._var_addr(d.name, self._loc(stmt))
+                self._emit(IStore(addr, val, self._loc(stmt)))
+
+        elif isinstance(stmt, ExprStmt):
+            self._gen_expr(stmt.expr)
+
+        elif isinstance(stmt, ReturnStmt):
+            if stmt.expr is not None:
+                val = self._gen_expr(stmt.expr)
+                self._emit(IRet(val, self._loc(stmt)))
+            else:
+                self._emit(IRet(None, self._loc(stmt)))
+
+        elif isinstance(stmt, IfStmt):
+            self._gen_if(stmt)
+
+        elif isinstance(stmt, WhileStmt):
+            self._gen_while(stmt)
+
+        elif isinstance(stmt, ForStmt):
+            self._gen_for(stmt)
+
+        elif isinstance(stmt, BreakStmt):
+            if not self._break_stack:
+                raise IRGenError("break outside loop")
+            self._emit(IJump(self._break_stack[-1], self._loc(stmt)))
+
+        elif isinstance(stmt, ContinueStmt):
+            if not self._cont_stack:
+                raise IRGenError("continue outside loop")
+            self._emit(IJump(self._cont_stack[-1], self._loc(stmt)))
+
+        else:
+            raise IRGenError(f"Unhandled statement: {type(stmt)}")
+
+    def _gen_if(self, stmt: IfStmt):
+        loc = self._loc(stmt)
+        else_lbl = self._new_label('else')
+        end_lbl  = self._new_label('endif')
+
+        cond = self._gen_expr(stmt.cond)
+        self._emit(IJumpIfNot(cond, else_lbl, loc))
+
+        self._gen_stmt(stmt.then)
+        if stmt.else_:
+            self._emit(IJump(end_lbl, loc))
+
+        self._emit(ILabel(else_lbl, loc))
+        if stmt.else_:
+            self._gen_stmt(stmt.else_)
+            self._emit(ILabel(end_lbl, loc))
+
+    def _gen_while(self, stmt: WhileStmt):
+        loc = self._loc(stmt)
+        cond_lbl = self._new_label('wcond')
+        end_lbl  = self._new_label('wend')
+
+        self._break_stack.append(end_lbl)
+        self._cont_stack.append(cond_lbl)
+
+        self._emit(ILabel(cond_lbl, loc))
+        cond = self._gen_expr(stmt.cond)
+        self._emit(IJumpIfNot(cond, end_lbl, loc))
+        self._gen_stmt(stmt.body)
+        self._emit(IJump(cond_lbl, loc))
+        self._emit(ILabel(end_lbl, loc))
+
+        self._break_stack.pop()
+        self._cont_stack.pop()
+
+    def _gen_for(self, stmt: ForStmt):
+        loc = self._loc(stmt)
+        cond_lbl = self._new_label('fcond')
+        step_lbl = self._new_label('fstep')
+        end_lbl  = self._new_label('fend')
+
+        if stmt.init:
+            self._gen_stmt(stmt.init)
+
+        self._break_stack.append(end_lbl)
+        self._cont_stack.append(step_lbl)
+
+        self._emit(ILabel(cond_lbl, loc))
+        if stmt.cond:
+            cond = self._gen_expr(stmt.cond)
+            self._emit(IJumpIfNot(cond, end_lbl, loc))
+
+        self._gen_stmt(stmt.body)
+
+        self._emit(ILabel(step_lbl, loc))
+        if stmt.step:
+            self._gen_expr(stmt.step)
+
+        self._emit(IJump(cond_lbl, loc))
+        self._emit(ILabel(end_lbl, loc))
+
+        self._break_stack.pop()
+        self._cont_stack.pop()
+
+    # ── Expressions → Operand ─────────────────────────────────────────────────
+
+    def _gen_expr(self, expr: Expr) -> Operand:
+        """Lower expression, return the operand holding its value."""
+        loc = self._loc(expr)
+
+        if isinstance(expr, IntLit):
+            return ImmInt(expr.value & 0xFFFF)
+
+        if isinstance(expr, CharLit):
+            return ImmInt(expr.value & 0xFF)
+
+        if isinstance(expr, StringLit):
+            if not hasattr(self, '_strings'):
+                self._strings = []
+            lbl = f'_cstr_{len(self._strings) + 1}'
+            self._strings.append((lbl, expr.chars))
+            expr.label = lbl
+            t = self._tmp()
+            self._emit(ICopy(t, StrLabel(lbl), loc))
+            return t
+
+        if isinstance(expr, Ident):
+            return self._gen_load_ident(expr)
+
+        if isinstance(expr, BinOp):
+            return self._gen_binop(expr)
+
+        if isinstance(expr, UnaryOp):
+            return self._gen_unary(expr)
+
+        if isinstance(expr, Assign):
+            return self._gen_assign(expr)
+
+        if isinstance(expr, Call):
+            return self._gen_call(expr)
+
+        if isinstance(expr, Index):
+            addr = self._gen_addr(expr)
+            t = self._tmp()
+            self._emit(ILoad(t, addr, loc))
+            return t
+
+        if isinstance(expr, Cast):
+            val = self._gen_expr(expr.expr)
+            if isinstance(expr.to_type, CChar):
+                t = self._tmp()
+                self._emit(IBinOp(t, '&', val, ImmInt(0xFF), loc))
+                return t
+            return val
+
+        if isinstance(expr, SizeOf):
+            if isinstance(expr.target, CType):
+                sz = expr.target.size()
+            else:
+                sz = expr.target.ctype.size() if expr.target.ctype else 1
+            return ImmInt(sz)
+
+        if isinstance(expr, Ternary):
+            return self._gen_ternary(expr)
+
+        raise IRGenError(f"Unhandled expression: {type(expr)}")
+
+    def _gen_load_ident(self, expr: Ident) -> Operand:
+        loc  = self._loc(expr)
+        name = expr.name
+
+        # function name → just a label operand (no load)
+        if isinstance(expr.ctype, CFunction):
+            return Global(name)
+
+        # local array decays to pointer — params typed as array are already pointers
+        if isinstance(expr.ctype, CArray) and name not in self._params:
+            t = self._tmp()
+            self._emit(IAddrOf(t, self._var_operand(name), loc))
+            return t
+
+        # load value
+        addr = self._var_addr(name, loc)
+        t    = self._tmp()
+        self._emit(ILoad(t, addr, loc))
+        return t
+
+    def _var_operand(self, name: str) -> Union[Var, Global]:
+        if name in self._locals or name in self._params:
+            return Var(name)
+        return Global(name)
+
+    def _var_addr(self, name: str, loc) -> Operand:
+        """Return an operand representing the address of a variable."""
+        t = self._tmp()
+        self._emit(IAddrOf(t, self._var_operand(name), loc))
+        return t
+
+    def _gen_addr(self, expr: Expr) -> Operand:
+        """Return an operand holding the address of an lvalue."""
+        loc = self._loc(expr)
+
+        if isinstance(expr, Ident):
+            return self._var_addr(expr.name, loc)
+
+        if isinstance(expr, Index):
+            arr  = self._gen_expr(expr.array)
+            idx  = self._gen_expr(expr.index)
+            elem_sz = expr.ctype.size() if expr.ctype else 1
+            t_idx = self._as_temp(idx, loc)
+            if elem_sz > 1:
+                t_scaled = self._tmp()
+                self._emit(IBinOp(t_scaled, '*', t_idx, ImmInt(elem_sz), loc))
+                t_idx = t_scaled
+            t_arr = self._as_temp(arr, loc)
+            t_addr = self._tmp()
+            self._emit(IBinOp(t_addr, '+', t_arr, t_idx, loc))
+            return t_addr
+
+        if isinstance(expr, UnaryOp) and expr.op == '*':
+            return self._gen_expr(expr.operand)
+
+        raise IRGenError(f"Cannot take address of {type(expr)}")
+
+    def _gen_store_to(self, val: Operand, target: Expr):
+        """Store val into an lvalue target."""
+        loc = self._loc(target)
+        addr = self._gen_addr(target)
+        self._emit(IStore(addr, val, loc))
+
+    # ── BinOp ─────────────────────────────────────────────────────────────────
+
+    def _gen_binop(self, expr: BinOp) -> Operand:
+        loc = self._loc(expr)
+
+        if expr.op == '&&':
+            return self._gen_short_circuit(expr, is_or=False)
+        if expr.op == '||':
+            return self._gen_short_circuit(expr, is_or=True)
+
+        left  = self._gen_expr(expr.left)
+        right = self._gen_expr(expr.right)
+        t     = self._tmp()
+        self._emit(IBinOp(t, expr.op, left, right, loc))
+        return t
+
+    def _gen_short_circuit(self, expr: BinOp, is_or: bool) -> Operand:
+        loc     = self._loc(expr)
+        end_lbl = self._new_label('sc_end')
+        result  = self._tmp()
+
+        left = self._gen_expr(expr.left)
+        self._emit(ICopy(result, left, loc))
+
+        if is_or:
+            self._emit(IJumpIf(result, end_lbl, loc))
+        else:
+            self._emit(IJumpIfNot(result, end_lbl, loc))
+
+        right = self._gen_expr(expr.right)
+        self._emit(ICopy(result, right, loc))
+
+        self._emit(ILabel(end_lbl, loc))
+        # normalize to 0/1
+        t_norm = self._tmp()
+        self._emit(IBinOp(t_norm, '!=', result, ImmInt(0), loc))
+        return t_norm
+
+    # ── UnaryOp ───────────────────────────────────────────────────────────────
+
+    def _gen_unary(self, expr: UnaryOp) -> Operand:
+        loc = self._loc(expr)
+        op  = expr.op
+
+        if op == '-':
+            src = self._gen_expr(expr.operand)
+            t   = self._tmp()
+            self._emit(IUnaryOp(t, '-', src, loc))
+            return t
+
+        if op == '~':
+            src = self._gen_expr(expr.operand)
+            t   = self._tmp()
+            self._emit(IUnaryOp(t, '~', src, loc))
+            return t
+
+        if op == '!':
+            src = self._gen_expr(expr.operand)
+            t   = self._tmp()
+            self._emit(IBinOp(t, '==', src, ImmInt(0), loc))
+            return t
+
+        if op == '&':
+            return self._gen_addr(expr.operand)
+
+        if op == '*':
+            ptr = self._gen_expr(expr.operand)
+            t   = self._tmp()
+            self._emit(ILoad(t, ptr, loc))
+            return t
+
+        if op in ('++pre', '--pre'):
+            addr = self._gen_addr(expr.operand)
+            old  = self._tmp()
+            self._emit(ILoad(old, addr, loc))
+            new_ = self._tmp()
+            arith_op = '+' if op == '++pre' else '-'
+            self._emit(IBinOp(new_, arith_op, old, ImmInt(1), loc))
+            self._emit(IStore(addr, new_, loc))
+            return new_
+
+        if op in ('++post', '--post'):
+            addr = self._gen_addr(expr.operand)
+            old  = self._tmp()
+            self._emit(ILoad(old, addr, loc))
+            new_ = self._tmp()
+            arith_op = '+' if op == '++post' else '-'
+            self._emit(IBinOp(new_, arith_op, old, ImmInt(1), loc))
+            self._emit(IStore(addr, new_, loc))
+            return old   # post: yield original value
+
+        raise IRGenError(f"Unknown unary op: {op!r}")
+
+    # ── Assign ────────────────────────────────────────────────────────────────
+
+    def _gen_assign(self, expr: Assign) -> Operand:
+        loc = self._loc(expr)
+
+        if expr.op == '=':
+            val = self._gen_expr(expr.value)
+            self._gen_store_to(val, expr.target)
+            return val
+
+        # compound: read current, operate, write back
+        cur  = self._gen_expr(expr.target)
+        rhs  = self._gen_expr(expr.value)
+        base = expr.op[:-1]   # '+=' → '+'
+        t    = self._tmp()
+        self._emit(IBinOp(t, base, cur, rhs, loc))
+        self._gen_store_to(t, expr.target)
+        return t
+
+    # ── Call ──────────────────────────────────────────────────────────────────
+
+    def _gen_call(self, expr: Call) -> Operand:
+        loc  = self._loc(expr)
+        args = [self._gen_expr(a) for a in expr.args]
+
+        if isinstance(expr.func, Ident):
+            func_op = Global(expr.func.name)
+        else:
+            func_op = self._gen_expr(expr.func)
+
+        is_void = isinstance(getattr(expr, 'ctype', None), CVoid)
+        dst = None if is_void else self._tmp()
+        self._emit(ICall(dst, func_op, args, loc))
+        return dst if dst is not None else ImmInt(0)
+
+    # ── Ternary ───────────────────────────────────────────────────────────────
+
+    def _gen_ternary(self, expr: Ternary) -> Operand:
+        loc      = self._loc(expr)
+        else_lbl = self._new_label('tern_else')
+        end_lbl  = self._new_label('tern_end')
+        result   = self._tmp()
+
+        cond = self._gen_expr(expr.cond)
+        self._emit(IJumpIfNot(cond, else_lbl, loc))
+
+        then_val = self._gen_expr(expr.then)
+        self._emit(ICopy(result, then_val, loc))
+        self._emit(IJump(end_lbl, loc))
+
+        self._emit(ILabel(else_lbl, loc))
+        else_val = self._gen_expr(expr.else_)
+        self._emit(ICopy(result, else_val, loc))
+
+        self._emit(ILabel(end_lbl, loc))
+        return result

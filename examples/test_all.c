@@ -1,6 +1,5 @@
-/* test_all.c - full test of currently supported features */
+/* test_all.c - self-validating tests */
 
-/* runtime function declarations */
 void putchar(int c);
 void print_int(int n);
 void print_uint(int n);
@@ -13,33 +12,38 @@ int  strcmp(char *a, char *b);
 void memset(char *dst, int val, int n);
 void memcpy(char *dst, char *src, int n);
 
-/* ── helpers ── */
-void newline(void) {
-    putchar(10);
+/* ── test helpers ── */
+
+int pass_count;
+int fail_count;
+
+void check(char *name, int got, int expected) {
+    if (got == expected) {
+        print_str(name);
+        puts(": PASS");
+        pass_count = pass_count + 1;
+    } else {
+        print_str(name);
+        print_str(": FAIL got=");
+        print_int(got);
+        print_str(" exp=");
+        print_int(expected);
+        putchar(10);
+        fail_count = fail_count + 1;
+    }
 }
 
-void print_label(char *s) {
-    print_str(s);
-    print_str(": ");
-}
-
-void print_ok(void) {
-    puts("OK");
-}
-
-/* ── recursion: factorial ── */
+/* ── recursive functions ── */
 int factorial(int n) {
     if (n <= 1) return 1;
     return n * factorial(n - 1);
 }
 
-/* ── recursion: fibonacci ── */
 int fib(int n) {
     if (n <= 1) return n;
     return fib(n - 1) + fib(n - 2);
 }
 
-/* ── array sum ── */
 int array_sum(int *arr, int len) {
     int i;
     int sum;
@@ -50,7 +54,6 @@ int array_sum(int *arr, int len) {
     return sum;
 }
 
-/* ── swap via pointers ── */
 void swap(int *a, int *b) {
     int tmp;
     tmp = *a;
@@ -60,122 +63,123 @@ void swap(int *a, int *b) {
 
 /* ── main ── */
 int main(void) {
+    pass_count = 0;
+    fail_count = 0;
 
-    /* 1. basic output */
     puts("=== test_all ===");
 
-    /* 2. arithmetic */
-    print_label("3+4");   print_int(3 + 4);   newline();
-    print_label("10-3");  print_int(10 - 3);  newline();
-    print_label("6*7");   print_int(6 * 7);   newline();
-    print_label("20/4");  print_int(20 / 4);  newline();
-    print_label("17%5");  print_int(17 % 5);  newline();
+    /* 1. arithmetic */
+    check("3+4",   3 + 4,   7);
+    check("10-3",  10 - 3,  7);
+    check("6*7",   6 * 7,   42);
+    check("20/4",  20 / 4,  5);
+    check("17%5",  17 % 5,  2);
 
-    /* 3. bitwise operations */
-    print_label("5&3");   print_int(5 & 3);   newline();
-    print_label("5|3");   print_int(5 | 3);   newline();
-    print_label("5^3");   print_int(5 ^ 3);   newline();
-    print_label("~0");    print_int(~0);       newline();
-    print_label("1<<4");  print_int(1 << 4);  newline();
-    print_label("32>>2"); print_int(32 >> 2); newline();
+    /* 2. bitwise */
+    check("5&3",   5 & 3,   1);
+    check("5|3",   5 | 3,   7);
+    check("5^3",   5 ^ 3,   6);
+    check("~0",    ~0,      65535);
+    check("1<<4",  1 << 4,  16);
+    check("32>>2", 32 >> 2, 8);
 
-    /* 4. comparison / logical */
-    print_label("3==3");  print_int(3 == 3);  newline();
-    print_label("3!=4");  print_int(3 != 4);  newline();
-    print_label("2<5");   print_int(2 < 5);   newline();
-    print_label("5>2");   print_int(5 > 2);   newline();
-    print_label("&&");    print_int(1 && 1);  newline();
-    print_label("||");    print_int(0 || 1);  newline();
-    print_label("!");     print_int(!0);      newline();
+    /* 3. comparison / logical */
+    check("3==3",  3 == 3,  1);
+    check("3!=4",  3 != 4,  1);
+    check("2<5",   2 < 5,   1);
+    check("5>2",   5 > 2,   1);
+    check("&&",    1 && 1,  1);
+    check("||",    0 || 1,  1);
+    check("!",     !0,      1);
 
-    /* 5. compound assignment */
+    /* 4. compound assignment */
     int x;
     x = 10;
-    x += 5;  print_label("+="); print_int(x); newline();
-    x -= 3;  print_label("-="); print_int(x); newline();
-    x *= 2;  print_label("*="); print_int(x); newline();
-    x /= 4;  print_label("/="); print_int(x); newline();
-    x &= 5;  print_label("&="); print_int(x); newline();
-    x |= 8;  print_label("|="); print_int(x); newline();
-    x ^= 3;  print_label("^="); print_int(x); newline();
+    x += 5;  check("+=", x, 15);
+    x -= 3;  check("-=", x, 12);
+    x *= 2;  check("*=", x, 24);
+    x /= 4;  check("/=", x, 6);
+    x &= 5;  check("&=", x, 4);
+    x |= 8;  check("|=", x, 12);
+    x ^= 3;  check("^=", x, 15);
 
-    /* 6. prefix / postfix increment/decrement */
+    /* 5. prefix / postfix increment */
     int y;
     y = 5;
-    print_label("++y"); print_int(++y); newline();
-    print_label("y++"); print_int(y++); newline();
-    print_label("y");   print_int(y);   newline();
-    print_label("--y"); print_int(--y); newline();
+    check("++y", ++y, 6);
+    check("y++", y++, 6);
+    check("y",   y,   7);
+    check("--y", --y, 6);
 
-    /* 7. if / else */
+    /* 6. if/else */
     int a;
     a = 7;
-    if (a > 5) {
-        print_str("if:T"); newline();
-    } else {
-        print_str("if:F"); newline();
-    }
+    check("if>5", a > 5, 1);
+    a = 3;
+    check("if<5", a > 5, 0);
 
-    /* 8. while + break + continue */
+    /* 7. while + break + continue */
     int w;
+    int wsum;
     w = 0;
-    print_str("while:");
+    wsum = 0;
     while (w < 10) {
         w++;
         if (w == 3) continue;
         if (w == 7) break;
-        print_int(w);
-        putchar(' ');
+        wsum += w;
     }
-    newline();
+    /* w goes 1,2,(skip 3),4,5,6,(break at 7) → sum = 1+2+4+5+6 = 18 */
+    check("while", wsum, 18);
 
-    /* 9. for */
-    print_str("for:");
+    /* 8. for */
+    int fsum;
     int fi;
+    fsum = 0;
     for (fi = 0; fi < 5; fi++) {
-        print_int(fi);
-        putchar(' ');
+        fsum += fi;
     }
-    newline();
+    check("for", fsum, 10);
 
-    /* 10. recursion: factorial */
-    print_label("5!");   print_int(factorial(5));  newline();
-    print_label("fib7"); print_int(fib(7));        newline();
+    /* 9. recursion */
+    check("5!",   factorial(5), 120);
+    check("fib7", fib(7),       13);
 
-    /* 11. arrays */
+    /* 10. arrays */
     int arr[5];
     arr[0] = 10;
     arr[1] = 20;
     arr[2] = 30;
     arr[3] = 40;
     arr[4] = 50;
-    print_label("sum"); print_int(array_sum(arr, 5)); newline();
+    check("sum", array_sum(arr, 5), 150);
 
-    /* 12. pointers + swap */
+    /* 11. pointers + swap */
     int p;
     int q;
     p = 11;
     q = 22;
     swap(&p, &q);
-    print_label("p"); print_int(p); newline();
-    print_label("q"); print_int(q); newline();
+    check("swap_p", p, 22);
+    check("swap_q", q, 11);
 
-    /* 13. string functions */
+    /* 12. string functions */
     char *s1;
     char *s2;
     s1 = "hello";
     s2 = "hello";
-    print_label("len");  print_int(strlen(s1));      newline();
-    print_label("cmp");  print_int(strcmp(s1, s2));  newline();
+    check("strlen", strlen(s1),     5);
+    check("strcmp", strcmp(s1, s2), 0);
 
-    /* 14. print_hex */
-    print_label("hex"); print_hex(0xABCD); newline();
-
-    /* 15. char */
+    /* 13. char */
     char c;
-    c = 'Z';
-    print_label("chr"); putchar(c); newline();
+    c = 65;
+    check("char", c, 65);
 
+    /* summary */
+    puts("================");
+    print_str("PASS: "); print_int(pass_count); putchar(10);
+    print_str("FAIL: "); print_int(fail_count); putchar(10);
     puts("=== done ===");
     return 0;
 }

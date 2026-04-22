@@ -14,10 +14,12 @@ import argparse
 from compiler.lexer    import Lexer,  LexError
 from compiler.parser   import Parser, ParseError
 from compiler.semantic import Analyzer, SemanticError
+from compiler.irgen    import IRGen,  IRGenError
 from compiler.codegen  import Codegen, CodegenError
 
 
-def compile_c(src: str, src_name: str = '<stdin>') -> str:
+def compile_c(src: str, src_name: str = '<stdin>',
+              dump_ir: bool = False) -> str:
     """C source string → R316 assembly string"""
 
     # 1. lexing
@@ -37,23 +39,29 @@ def compile_c(src: str, src_name: str = '<stdin>') -> str:
     try:
         analyzer = Analyzer()
         analyzer.analyze(ast)
-        # reflect string literal labels into AST
-        for i, sl in enumerate(analyzer.string_lits):
-            sl.label = f'_str_{i}'
     except SemanticError as e:
         raise SystemExit(f"Semantic error: {e}")
 
-    # 4. code generation
+    # 4. IR generation
+    try:
+        irgen  = IRGen(filename=src_name)
+        ir     = irgen.generate(ast)
+    except IRGenError as e:
+        raise SystemExit(f"IR error: {e}")
+
+    if dump_ir:
+        print(ir.dump(), file=sys.stderr)
+
+    # 5. code generation (IR → asm)
     try:
         gen = Codegen()
-        asm = gen.generate(ast)
+        asm = gen.generate(ir)
     except CodegenError as e:
         raise SystemExit(f"Codegen error: {e}")
 
     # 5. include runtime library
-    runtime_path = os.path.join(os.path.dirname(__file__), 'runtime', 'runtime.asm')
-    asm += '\n\n; ── runtime library ──\n'
-    asm += f'%include "{runtime_path}"\n'
+    asm += '\n\n; -- runtime library --\n'
+    asm += '%include "runtime\\runtime.asm"\n'
 
     return asm
 
@@ -64,6 +72,8 @@ def main():
     ap.add_argument('-o', '--output', help='Output assembly file (default: stdout)')
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='Print compilation steps')
+    ap.add_argument('--dump-ir', action='store_true',
+                    help='Dump IR to stderr before codegen (for debugging)')
     args = ap.parse_args()
 
     # read input file
@@ -76,7 +86,7 @@ def main():
     if args.verbose:
         print(f'[c2r316] Compiling {args.input} ...', file=sys.stderr)
 
-    asm = compile_c(src, args.input)
+    asm = compile_c(src, args.input, dump_ir=args.dump_ir)
 
     # output
     if args.output:
