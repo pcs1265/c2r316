@@ -88,8 +88,8 @@ puts:
 .__puts_done:
     mov r2, _nlchar
     st r2, _term_term
+    ld r31, r30, 0
     add r30, 1
-    ld r31, r30, 0xFFFF
     jmp r31
 
 ; ── print_str(char *s) ───────────────────────────────────────────────────────
@@ -148,8 +148,8 @@ print_int:
     sub r3, 1
     jmp .__pi_print_loop
 .__pi_done:
+    ld r31, r30, 0
     add r30, 1
-    ld r31, r30, 0xFFFF
     jmp r31
 
 ; ── print_uint(unsigned int n) ───────────────────────────────────────────────
@@ -185,8 +185,8 @@ print_uint:
     sub r3, 1
     jmp .__pu_print_loop
 .__pu_done:
+    ld r31, r30, 0
     add r30, 1
-    ld r31, r30, 0xFFFF
     jmp r31
 
 ; ── print_hex(unsigned int n) ────────────────────────────────────────────────
@@ -239,8 +239,8 @@ __umod:
     sub r30, 1
     jmp r31, __udiv
     mov r1, r2             ; move remainder to r1
+    ld r31, r30, 0
     add r30, 1
-    ld r31, r30, 0xFFFF
     jmp r31
 
 ; ── memset(void *dst, int val, int n) ────────────────────────────────────────

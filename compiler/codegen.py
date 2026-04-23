@@ -290,7 +290,11 @@ class Codegen:
                 if isinstance(op, Var):
                     self._ctx.slot(op)
 
-        self._is_leaf = not any(isinstance(i, ICall) for i in fn.instrs)
+        self._is_leaf = not any(
+            isinstance(i, ICall) or
+            (isinstance(i, IBinOp) and i.op in ('/', '%'))
+            for i in fn.instrs
+        )
 
         # Determine which callee-saved registers this function uses.
         # For now, with the spill-only allocator, we don't allocate callee-saved
