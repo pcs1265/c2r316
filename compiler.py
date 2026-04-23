@@ -47,10 +47,12 @@ def compile_c(src: str, src_name: str = '<stdin>',
         if verbose:
             print(f'[c2r316] {msg}', file=sys.stderr)
 
-    # 1. preprocessing
+    # 1. preprocessing — auto-prepend stdlib.h then process the source
     _v('Preprocessing ...')
+    _stdlib = os.path.join(os.path.dirname(__file__), 'runtime', 'stdlib.h')
+    _stdlib_include = f'#include "{_stdlib}"\n'
     try:
-        src = preprocess(src, src_path=src_path)
+        src = preprocess(_stdlib_include + src, src_path=src_path)
     except PreprocessorError as e:
         raise SystemExit(f"Preprocessor error: {e}")
 

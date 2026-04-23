@@ -1,17 +1,5 @@
 /* test_all.c - self-validating tests */
 
-void putchar(int c);
-void print_int(int n);
-void print_uint(int n);
-void print_hex(int n);
-void puts(char *s);
-void print_str(char *s);
-int  getchar(void);
-int  strlen(char *s);
-int  strcmp(char *a, char *b);
-void memset(char *dst, int val, int n);
-void memcpy(char *dst, char *src, int n);
-
 /* ── test helpers ── */
 
 int pass_count;
