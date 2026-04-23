@@ -56,7 +56,7 @@ int main(void) {
     pass_count = 0;
     fail_count = 0;
 
-    puts("=== test_all ===");
+    puts("=== test_basic ===");
 
     /* 1. arithmetic */
     check("3+4",      3 + 4,     7);
