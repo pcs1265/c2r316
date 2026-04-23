@@ -52,6 +52,7 @@ __term_init:
     st r1, _term_colour
     mov r1, _nlchar
     st r1, _term_nlchar
+    st r0, _term_cursor
     mov r1, ' '
     mov r2, 0
 .__term_init_clear:
