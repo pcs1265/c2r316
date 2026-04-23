@@ -36,6 +36,16 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 
 - **Analyze in small steps**: When analyzing code or assembly output, break the analysis into small, focused steps. Read or examine one section at a time, confirm each step before proceeding to the next. Do NOT attempt to analyze everything in a single pass — this causes errors and omissions.
 
+## Debugging
+
+- `--dump-tokens` — dump lexer tokens to stderr
+- `--dump-ast` — dump AST to stderr
+- `--dump-ir` — dump IR to stderr
+- `--stop-after {lex,parse,semantic,ir,codegen}` — stop after a compilation stage
+- `-g` / `--annotate` — annotate ASM with source line comments (requires parser line tracking, see below)
+- `-v` / `--verbose` — print compilation stages
+- Error messages include source context with caret indicator
+
 ## Known Issues
 
 - `compiler/parser.py`: `_parse_ternary` and `_parse_eq` have duplicate method definitions (second one wins)
@@ -43,3 +53,4 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 - Parser does not support ternary operator `? :` or array initializer syntax `{1, 2, 3}`
 - Stack arguments for 7th+ params not implemented (r1–r6 register args work)
 - `long` (32-bit) type has no code generation support
+- `-g` flag produces no source annotations: parser doesn't set `line` attribute on AST nodes, so `irgen._loc()` always returns `None`

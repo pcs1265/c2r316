@@ -157,6 +157,31 @@ class Codegen:
         self._callee_saves: List[str] = []  # callee-saved regs used by current function
         self._frame_size = 0
         self._callee_save_n = 0
+        # source annotation (-g flag)
+        self._annotate = False
+        self._src_lines: list[str] = []
+        self._src_name: str = ''
+        self._last_src_line: int = 0
+
+    # ── Source annotation (-g) ────────────────────────────────────────────────
+
+    def set_source(self, src: str, src_name: str):
+        """Enable source annotation for -g flag."""
+        self._annotate = True
+        self._src_lines = src.split('\n')
+        self._src_name = src_name
+        self._last_src_line = 0
+
+    def _emit_src_comment(self, instr: Instr):
+        """Emit a source line comment if annotation is enabled and line changed."""
+        if not self._annotate or not instr.loc:
+            return
+        _, line = instr.loc
+        if line != self._last_src_line and 1 <= line <= len(self._src_lines):
+            src_text = self._src_lines[line - 1].strip()
+            if src_text:
+                self._emit(f'    ; {self._src_name}:{line}: {src_text}')
+            self._last_src_line = line
 
     # ── Output ────────────────────────────────────────────────────────────────
 
@@ -329,6 +354,7 @@ class Codegen:
     # ── Instructions ──────────────────────────────────────────────────────────
 
     def _gen_instr(self, instr: Instr, lr_slot: int, frame_size: int):
+        self._emit_src_comment(instr)
 
         if isinstance(instr, ILabel):
             self._lbl(instr.name)

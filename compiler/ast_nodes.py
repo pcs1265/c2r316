@@ -245,3 +245,124 @@ class Ternary(Expr):
 class SizeOf(Expr):
     target: Any               # CType or Expr
     ctype: CType = field(default_factory=CInt)
+
+
+# ── AST Pretty-Printer ──────────────────────────────────────────────────────────
+
+def dump_ast(node, indent: int = 0) -> str:
+    """Return a human-readable dump of the AST."""
+    prefix = '  ' * indent
+    child_prefix = '  ' * (indent + 1)
+
+    if isinstance(node, Program):
+        inner = '\n'.join(dump_ast(d, indent + 1) for d in node.decls)
+        return f'{prefix}Program(\n{inner}\n{prefix})'
+
+    if isinstance(node, FuncDecl):
+        params = ', '.join(f'{p.ctype} {p.name}' for p in node.params)
+        body = dump_ast(node.body, indent + 1) if node.body else f'{child_prefix}<no body>'
+        return f'{prefix}FuncDecl({node.ret_type} {node.name}({params})\n{body}\n{prefix})'
+
+    if isinstance(node, ParamDecl):
+        return f'{prefix}ParamDecl({node.ctype} {node.name})'
+
+    if isinstance(node, VarDecl):
+        init = f' = {dump_ast(node.init, 0)}' if node.init else ''
+        return f'{prefix}VarDecl({node.ctype} {node.name}{init})'
+
+    if isinstance(node, Block):
+        inner = '\n'.join(dump_ast(s, indent + 1) for s in node.stmts)
+        return f'{prefix}Block(\n{inner}\n{prefix})'
+
+    if isinstance(node, ExprStmt):
+        return f'{prefix}ExprStmt({dump_ast(node.expr, 0)})'
+
+    if isinstance(node, IfStmt):
+        else_part = f'\n{dump_ast(node.else_, indent + 1)}' if node.else_ else ''
+        return (f'{prefix}IfStmt(\n'
+                f'{child_prefix}cond: {dump_ast(node.cond, 0)}\n'
+                f'{child_prefix}then: {dump_ast(node.then, indent + 1)}{else_part}\n'
+                f'{prefix})')
+
+    if isinstance(node, WhileStmt):
+        return (f'{prefix}WhileStmt(\n'
+                f'{child_prefix}cond: {dump_ast(node.cond, 0)}\n'
+                f'{child_prefix}body: {dump_ast(node.body, indent + 1)}\n'
+                f'{prefix})')
+
+    if isinstance(node, ForStmt):
+        init = dump_ast(node.init, indent + 1) if node.init else f'{child_prefix}<none>'
+        cond = dump_ast(node.cond, 0) if node.cond else '<none>'
+        step = dump_ast(node.step, 0) if node.step else '<none>'
+        return (f'{prefix}ForStmt(\n'
+                f'{child_prefix}init: {init}\n'
+                f'{child_prefix}cond: {cond}\n'
+                f'{child_prefix}step: {step}\n'
+                f'{child_prefix}body: {dump_ast(node.body, indent + 1)}\n'
+                f'{prefix})')
+
+    if isinstance(node, ReturnStmt):
+        expr = f' {dump_ast(node.expr, 0)}' if node.expr else ''
+        return f'{prefix}ReturnStmt({expr})'
+
+    if isinstance(node, BreakStmt):
+        return f'{prefix}BreakStmt'
+
+    if isinstance(node, ContinueStmt):
+        return f'{prefix}ContinueStmt'
+
+    if isinstance(node, DeclStmt):
+        return f'{prefix}DeclStmt({dump_ast(node.decl, 0)})'
+
+    if isinstance(node, AsmStmt):
+        inputs = ', '.join(dump_ast(i, 0) for i in node.inputs)
+        return f'{prefix}AsmStmt("{node.text}"{", " + inputs if inputs else ""})'
+
+    # ── Expressions ──
+
+    if isinstance(node, IntLit):
+        return f'IntLit({node.value})'
+
+    if isinstance(node, CharLit):
+        return f'CharLit({chr(node.value)!r})'
+
+    if isinstance(node, StringLit):
+        s = ''.join(chr(c) if 32 <= c < 127 else f'\\x{c:02x}' for c in node.chars)
+        return f'StringLit("{s}")'
+
+    if isinstance(node, Ident):
+        return f'Ident({node.name})'
+
+    if isinstance(node, BinOp):
+        return f'({dump_ast(node.left)} {node.op} {dump_ast(node.right)})'
+
+    if isinstance(node, UnaryOp):
+        if node.op.endswith('post'):
+            return f'({dump_ast(node.operand)}{node.op[0]})'
+        return f'({node.op}{dump_ast(node.operand)})'
+
+    if isinstance(node, Assign):
+        return f'({dump_ast(node.target)} {node.op} {dump_ast(node.value)})'
+
+    if isinstance(node, Call):
+        args = ', '.join(dump_ast(a) for a in node.args)
+        return f'{dump_ast(node.func)}({args})'
+
+    if isinstance(node, Index):
+        return f'{dump_ast(node.array)}[{dump_ast(node.index)}]'
+
+    if isinstance(node, Member):
+        op = '->' if node.arrow else '.'
+        return f'{dump_ast(node.obj)}{op}{node.field}'
+
+    if isinstance(node, Cast):
+        return f'(({node.to_type}){dump_ast(node.expr)})'
+
+    if isinstance(node, Ternary):
+        return f'({dump_ast(node.cond)} ? {dump_ast(node.then)} : {dump_ast(node.else_)})'
+
+    if isinstance(node, SizeOf):
+        t = node.target if isinstance(node.target, CType) else dump_ast(node.target)
+        return f'sizeof({t})'
+
+    return f'{prefix}Unknown({type(node).__name__})'
