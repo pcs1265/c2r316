@@ -351,6 +351,7 @@ class Parser:
             TK.MINUS_ASSIGN: '-=',
             TK.STAR_ASSIGN:  '*=',
             TK.SLASH_ASSIGN: '/=',
+            TK.PERCENT_ASSIGN: '%=',
             TK.AMP_ASSIGN:   '&=',
             TK.PIPE_ASSIGN:  '|=',
             TK.CARET_ASSIGN: '^=',

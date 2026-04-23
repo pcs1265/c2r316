@@ -63,6 +63,7 @@ class TK(Enum):
     AMP_ASSIGN   = auto() # &=
     PIPE_ASSIGN  = auto() # |=
     CARET_ASSIGN = auto() # ^=
+    PERCENT_ASSIGN = auto() # %=
     INC        = auto()   # ++
     DEC        = auto()   # --
     ARROW      = auto()   # ->
@@ -277,6 +278,7 @@ class Lexer:
                 '<=': TK.LTE,    '>=': TK.GTE,
                 '+=': TK.PLUS_ASSIGN,  '-=': TK.MINUS_ASSIGN,
                 '*=': TK.STAR_ASSIGN,  '/=': TK.SLASH_ASSIGN,
+                '%=': TK.PERCENT_ASSIGN,
                 '&=': TK.AMP_ASSIGN,   '|=': TK.PIPE_ASSIGN,
                 '^=': TK.CARET_ASSIGN, '++': TK.INC,
                 '--': TK.DEC,          '->': TK.ARROW,
