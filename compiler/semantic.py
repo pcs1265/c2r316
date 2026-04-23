@@ -225,9 +225,23 @@ class Analyzer:
 
         if isinstance(expr, Call):
             ft = self._analyze_expr(expr.func)
-            for arg in expr.args:
-                self._analyze_expr(arg)
+            arg_types = [self._analyze_expr(a) for a in expr.args]
             if isinstance(ft, CFunction):
+                # argument count check
+                if len(expr.args) != len(ft.params):
+                    name = expr.func.name if isinstance(expr.func, Ident) else '<expr>'
+                    raise SemanticError(
+                        f"Function '{name}' expects {len(ft.params)} argument(s), "
+                        f"but {len(expr.args)} given"
+                    )
+                # argument type check
+                name = expr.func.name if isinstance(expr.func, Ident) else '<expr>'
+                for i, (arg_t, param_t) in enumerate(zip(arg_types, ft.params)):
+                    if not self._is_assignable(arg_t, param_t):
+                        raise SemanticError(
+                            f"Function '{name}': argument {i+1} type mismatch — "
+                            f"expected {param_t}, got {arg_t}"
+                        )
                 expr.ctype = ft.ret
             else:
                 expr.ctype = CInt()   # simplified for function pointers etc.
@@ -264,3 +278,26 @@ class Analyzer:
             return expr.ctype
 
         raise SemanticError(f"Unknown expression type: {type(expr)}")
+
+    # ── Type Compatibility ───────────────────────────────────────────────────────
+
+    def _is_assignable(self, src: CType, dst: CType) -> bool:
+        """Check if src type can be implicitly converted to dst type."""
+        # same type → OK
+        if type(src) == type(dst):
+            # for pointers, check base type compatibility
+            if isinstance(src, CPointer) and isinstance(dst, CPointer):
+                return self._is_assignable(src.base, dst.base)
+            return True
+        # int/char/long are interchangeable (integer promotions)
+        if is_integer(src) and is_integer(dst):
+            return True
+        # void* ↔ any pointer (C allows implicit conversion)
+        if isinstance(src, CPointer) and isinstance(dst, CPointer):
+            if isinstance(src.base, CVoid) or isinstance(dst.base, CVoid):
+                return True
+            return self._is_assignable(src.base, dst.base)
+        # array decays to pointer (e.g., char[] → char*)
+        if isinstance(src, CArray) and isinstance(dst, CPointer):
+            return self._is_assignable(src.base, dst.base)
+        return False
