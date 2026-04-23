@@ -1,12 +1,13 @@
 ; C→R316 Runtime Library
 ; Included at the end of compiler output via %include "runtime.asm"
 ;
-; ABI:
-;   r1..r4  : arguments / return values
-;   r5..r13 : caller-saved temporaries
-;   r14..r29: callee-saved
-;   r30 (sp): stack pointer
-;   r31 (lr): link register
+; ABI (see docs/ABI.md for full specification):
+;   r0       : zero (read-only)
+;   r1..r6   : arguments / return values (a0-a5)
+;   r7..r18  : caller-saved temporaries (t0-t11)
+;   r19..r29 : callee-saved (s0-s10)
+;   r30 (sp) : stack pointer
+;   r31 (lr) : link register
 ;
 ; Terminal addresses (demo.asm spec):
 ;   0x9F80 : term_input  (keyboard read)

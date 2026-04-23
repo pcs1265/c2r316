@@ -2,28 +2,31 @@
 C to R316 Compiler - Code Generator
 IR → TPTASM R316 Assembly
 
-ABI:
-  r1..r4  : arguments / return values (r1=lo, r2=hi for long)
-  r5..r13 : caller-saved temporaries
-  r14..r29: callee-saved
-  r30 (sp): stack pointer (grows downward)
-  r31 (lr): link register
+ABI (see docs/ABI.md for full specification):
+  r0       : zero (read-only)
+  r1..r6   : arguments / return values (a0-a5)
+  r7..r18  : caller-saved temporaries (t0-t11)
+  r19..r29 : callee-saved (s0-s10)
+  r30 (sp) : stack pointer (grows downward)
+  r31 (lr) : link register
 
 Stack frame layout (per function):
-  [sp+0 .. sp+N-1] : spill slots for Temps and local Vars
-  [sp+N]           : saved lr  (non-leaf functions only)
+  [sp+0 .. sp+F-1]          : spill slots for Temps and local Vars
+  [sp+F .. sp+F+CS-1]       : saved callee-saved registers (only those used)
+  [sp+F+CS]                 : saved lr (non-leaf functions only)
+  [sp+F+CS+1 .. ]           : stack arguments (7th+, caller's responsibility)
 
 Register allocation:
   Each Temp/Var gets a fixed spill slot allocated linearly.
   Small number of physical regs used as scratch; values always
   loaded into scratch before use and stored back after def.
 
-  scratch regs: r5 (left/dst), r6 (right), r7 (addr)
+  scratch regs: r7 (primary/left/dst), r8 (secondary/right), r9 (address)
 """
 
 from __future__ import annotations
 import os
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Set
 
 from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
@@ -37,14 +40,18 @@ class CodegenError(Exception):
     pass
 
 
-# Physical register names
-SP   = 'r30'
-LR   = 'r31'
-SCRATCH_A = 'r5'   # primary scratch / result
-SCRATCH_B = 'r6'   # secondary scratch
-SCRATCH_C = 'r7'   # address scratch
-ARG_REGS  = ['r1', 'r2', 'r3', 'r4']
-RET_REG   = 'r1'
+# ── Physical register names (per docs/ABI.md) ─────────────────────────────────
+
+SP         = 'r30'
+LR         = 'r31'
+SCRATCH_A  = 'r7'   # primary scratch / result
+SCRATCH_B  = 'r8'   # secondary scratch
+SCRATCH_C  = 'r9'   # address scratch
+ARG_REGS   = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+RET_REG    = 'r1'
+
+# Callee-saved registers that the compiler may allocate
+CALLEE_SAVED_REGS = [f'r{i}' for i in range(19, 30)]  # r19..r29
 
 
 class FuncContext:
@@ -147,6 +154,9 @@ class Codegen:
         self._out:  list[str] = []
         self._ctx:  Optional[FuncContext] = None
         self._is_leaf = False
+        self._callee_saves: List[str] = []  # callee-saved regs used by current function
+        self._frame_size = 0
+        self._callee_save_n = 0
 
     # ── Output ────────────────────────────────────────────────────────────────
 
@@ -256,28 +266,65 @@ class Codegen:
                     self._ctx.slot(op)
 
         self._is_leaf = not any(isinstance(i, ICall) for i in fn.instrs)
-        frame_size    = peak + (0 if self._is_leaf else 1)
-        lr_slot       = peak
+
+        # Determine which callee-saved registers this function uses.
+        # For now, with the spill-only allocator, we don't allocate callee-saved
+        # registers to temporaries.  When a register allocator is added, this
+        # scan will detect which callee-saved regs are assigned.
+        self._callee_saves = self._detect_callee_saves(fn)
+        self._callee_save_n = len(self._callee_saves)
+
+        # Stack frame layout (per docs/ABI.md §4):
+        #   [sp+0 .. sp+F-1]           : local/spill slots (F = peak)
+        #   [sp+F .. sp+F+CS-1]        : saved callee-saved registers
+        #   [sp+F+CS]                  : saved LR (non-leaf only)
+        F = peak
+        CS = self._callee_save_n
+        total = F + CS + (1 if not self._is_leaf else 0)
+        self._frame_size = total
+        lr_slot = F + CS  # LR is saved right after callee-saved area
 
         self._emit(f'; function {fn.name}')
         self._lbl(fn.name)
 
-        if frame_size > 0:
-            self._ins(f'sub {SP}, {frame_size}')
+        # Prologue: allocate stack frame
+        if total > 0:
+            self._ins(f'sub {SP}, {total}')
 
+        # Save callee-saved registers
+        for i, reg in enumerate(self._callee_saves):
+            self._ins(f'st {reg}, {SP}, {F + i}')
+
+        # Save link register (non-leaf only)
         if not self._is_leaf:
             self._ins(f'st {LR}, {SP}, {lr_slot}')
 
+        # Copy register arguments to their spill slots
         for i, pname in enumerate(fn.params):
             if i < len(ARG_REGS):
                 slot = self._ctx.slot(Var(pname))
                 self._ins(f'st {ARG_REGS[i]}, {SP}, {slot}')
 
+        # Generate instructions
         for idx, instr in enumerate(fn.instrs):
-            self._gen_instr(instr, lr_slot, frame_size)
+            self._gen_instr(instr, lr_slot, total)
             self._ctx.free_dead_temps(idx)
 
         self._emit('')
+
+    def _detect_callee_saves(self, fn: IRFunction) -> List[str]:
+        """
+        Detect which callee-saved registers are used by the function.
+        
+        With the current spill-only allocator, no callee-saved registers
+        are allocated to temporaries, so this returns an empty list.
+        When a register allocator is added, this should scan the function's
+        register assignments and return the set of callee-saved regs used.
+        """
+        # TODO: implement when register allocator is added
+        # For now, all values are spilled to stack slots, so no callee-saved
+        # registers are used beyond their spill-slot storage.
+        return []
 
     # ── Instructions ──────────────────────────────────────────────────────────
 
@@ -341,8 +388,8 @@ class Codegen:
         else:
             raise CodegenError(f"Unhandled IR instruction: {type(instr)}")
 
-    # Caller-saved regs available as operand slots for inline asm (%0..%8)
-    _ASM_REGS = ['r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13']
+    # Caller-saved regs available as operand slots for inline asm (%0..%9)
+    _ASM_REGS = ['r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'r16']
 
     def _gen_inline_asm(self, instr: IInlineAsm):
         if len(instr.srcs) > len(self._ASM_REGS):
@@ -364,10 +411,20 @@ class Codegen:
             self._ins(text)
 
     def _gen_epilogue(self, lr_slot: int, frame_size: int):
+        # Restore callee-saved registers
+        F = self._frame_size - self._callee_save_n - (1 if not self._is_leaf else 0)
+        for i, reg in enumerate(self._callee_saves):
+            self._ins(f'ld {reg}, {SP}, {F + i}')
+
+        # Restore link register (non-leaf only)
         if not self._is_leaf:
             self._ins(f'ld {LR}, {SP}, {lr_slot}')
+
+        # Deallocate stack frame
         if frame_size > 0:
             self._ins(f'add {SP}, {frame_size}')
+
+        # Return
         self._ins(f'jmp {LR}')
 
     # ── BinOp instruction selection ───────────────────────────────────────────
@@ -455,10 +512,14 @@ class Codegen:
     # ── Call ──────────────────────────────────────────────────────────────────
 
     def _gen_call(self, instr: ICall):
-        # move args into r1..r4
+        # Load arguments into a0-a5 (r1-r6)
         for i, arg in enumerate(instr.args):
             if i < len(ARG_REGS):
                 self._load_op(arg, ARG_REGS[i])
+
+        # TODO: stack arguments for 7th+ params (see docs/ABI.md §2.3)
+        # When a function has more than 6 arguments, the remaining ones
+        # must be stored on the stack by the caller before the call.
 
         if isinstance(instr.func, Global):
             self._ins(f'jmp {LR}, {instr.func.name}')
