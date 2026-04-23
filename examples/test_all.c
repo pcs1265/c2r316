@@ -69,39 +69,73 @@ int main(void) {
     puts("=== test_all ===");
 
     /* 1. arithmetic */
-    check("3+4",   3 + 4,   7);
-    check("10-3",  10 - 3,  7);
-    check("6*7",   6 * 7,   42);
-    check("20/4",  20 / 4,  5);
-    check("17%5",  17 % 5,  2);
+    check("3+4",      3 + 4,     7);
+    check("10-3",     10 - 3,    7);
+    check("6*7",      6 * 7,     42);
+    check("20/4",     20 / 4,    5);
+    check("17%5",     17 % 5,    2);
+    check("0+0",      0 + 0,     0);
+    check("0*99",     0 * 99,    0);
+    check("1*1",      1 * 1,     1);
+    check("100/1",    100 / 1,   100);
+    check("100%1",    100 % 1,   0);
+    check("7/7",      7 / 7,     1);
+    check("7%7",      7 % 7,     0);
+    check("1000/7",   1000 / 7,  142);
+    check("1000%7",   1000 % 7,  6);
+    check("255*255",  255 * 255, 65025);
+    check("1+2+3",    1 + 2 + 3, 6);
+    check("10-3-2",   10 - 3 - 2, 5);
+    check("2*3+4",    2 * 3 + 4,  10);
+    check("4+3*2",    4 + 3 * 2,  10);
 
     /* 2. bitwise */
-    check("5&3",   5 & 3,   1);
-    check("5|3",   5 | 3,   7);
-    check("5^3",   5 ^ 3,   6);
-    check("~0",    ~0,      65535);
-    check("1<<4",  1 << 4,  16);
-    check("32>>2", 32 >> 2, 8);
+    check("5&3",      5 & 3,      1);
+    check("5|3",      5 | 3,      7);
+    check("5^3",      5 ^ 3,      6);
+    check("~0",       ~0,         65535);
+    check("1<<4",     1 << 4,     16);
+    check("32>>2",    32 >> 2,    8);
+    check("0xFF&0x0F",0xFF & 0x0F,15);
+    check("0xF0|0x0F",0xF0 | 0x0F,255);
+    check("0xFF^0xFF",0xFF ^ 0xFF, 0);
+    check("1<<0",     1 << 0,     1);
+    check("1<<15",    1 << 15,    32768);
+    check("32768>>15",32768 >> 15,1);
+    check("0>>5",     0 >> 5,     0);
+    check("~1",       ~1,         65534);
 
     /* 3. comparison / logical */
-    check("3==3",  3 == 3,  1);
-    check("3!=4",  3 != 4,  1);
-    check("2<5",   2 < 5,   1);
-    check("5>2",   5 > 2,   1);
-    check("&&",    1 && 1,  1);
-    check("||",    0 || 1,  1);
-    check("!",     !0,      1);
+    check("3==3",   3 == 3,   1);
+    check("3==4",   3 == 4,   0);
+    check("3!=4",   3 != 4,   1);
+    check("3!=3",   3 != 3,   0);
+    check("2<5",    2 < 5,    1);
+    check("5<2",    5 < 2,    0);
+    check("5>2",    5 > 2,    1);
+    check("2>5",    2 > 5,    0);
+    check("3<=3",   3 <= 3,   1);
+    check("4<=3",   4 <= 3,   0);
+    check("3>=3",   3 >= 3,   1);
+    check("2>=3",   2 >= 3,   0);
+    check("&&T",    1 && 1,   1);
+    check("&&F",    1 && 0,   0);
+    check("||T",    0 || 1,   1);
+    check("||F",    0 || 0,   0);
+    check("!0",     !0,       1);
+    check("!1",     !1,       0);
 
     /* 4. compound assignment */
     int x;
     x = 10;
-    x += 5;  check("+=", x, 15);
-    x -= 3;  check("-=", x, 12);
-    x *= 2;  check("*=", x, 24);
-    x /= 4;  check("/=", x, 6);
-    x &= 5;  check("&=", x, 4);
-    x |= 8;  check("|=", x, 12);
-    x ^= 3;  check("^=", x, 15);
+    x += 5;  check("+=",  x, 15);
+    x -= 3;  check("-=",  x, 12);
+    x *= 2;  check("*=",  x, 24);
+    x /= 4;  check("/=",  x, 6);
+    x = 0xFF;
+    x &= 5;  check("&=",  x, 5);
+    x |= 8;  check("|=",  x, 13);
+    x ^= 3;  check("^=",  x, 14);
 
     /* 5. prefix / postfix increment */
     int y;
@@ -141,6 +175,28 @@ int main(void) {
     }
     check("for", fsum, 10);
 
+    /* for with continue */
+    int fsum2;
+    fsum2 = 0;
+    for (fi = 0; fi < 6; fi++) {
+        if (fi == 3) continue;
+        fsum2 += fi;
+    }
+    /* 0+1+2+4+5 = 12 */
+    check("for+cont", fsum2, 12);
+
+    /* nested for */
+    int nsum;
+    int ni;
+    int nj;
+    nsum = 0;
+    for (ni = 0; ni < 3; ni++) {
+        for (nj = 0; nj < 3; nj++) {
+            nsum += 1;
+        }
+    }
+    check("nested_for", nsum, 9);
+
     /* 9. recursion */
     check("5!",   factorial(5), 120);
     check("fib7", fib(7),       13);
@@ -152,7 +208,23 @@ int main(void) {
     arr[2] = 30;
     arr[3] = 40;
     arr[4] = 50;
-    check("sum", array_sum(arr, 5), 150);
+    check("arr_sum",  array_sum(arr, 5), 150);
+    check("arr[0]",   arr[0], 10);
+    check("arr[4]",   arr[4], 50);
+
+    /* pointer arithmetic */
+    int *p2;
+    p2 = arr;
+    check("ptr[0]",   *p2,     10);
+    check("ptr[1]",   *(p2+1), 20);
+    check("ptr[4]",   *(p2+4), 50);
+    p2 = p2 + 2;
+    check("ptr+2",    *p2,     30);
+
+    /* array write through pointer */
+    *p2 = 99;
+    check("ptr_wr",   arr[2],  99);
+    arr[2] = 30;
 
     /* 11. pointers + swap */
     int p;
@@ -168,8 +240,13 @@ int main(void) {
     char *s2;
     s1 = "hello";
     s2 = "hello";
-    check("strlen", strlen(s1),     5);
-    check("strcmp", strcmp(s1, s2), 0);
+    check("strlen5",   strlen(s1),        5);
+    check("strlen0",   strlen(""),        0);
+    check("strlen1",   strlen("x"),       1);
+    check("strcmp_eq", strcmp(s1, s2),    0);
+    check("strcmp_gt", strcmp("b","a")>0, 1);
+    check("strcmp_lt", strcmp("a","b")<0, 1);
+    check("strcmp_pre",strcmp("ab","a")>0,1);
 
     /* 13. char */
     char c;
