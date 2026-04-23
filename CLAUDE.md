@@ -32,11 +32,14 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 - No hardware stack; software-managed via r30 (sp) and r31 (lr)
 - Quasi-32-bit: four "physically zero" values cannot be stored in memory
 
+## Working Rules
+
+- **Analyze in small steps**: When analyzing code or assembly output, break the analysis into small, focused steps. Read or examine one section at a time, confirm each step before proceeding to the next. Do NOT attempt to analyze everything in a single pass — this causes errors and omissions.
+
 ## Known Issues
 
 - `compiler/parser.py`: `_parse_ternary` and `_parse_eq` have duplicate method definitions (second one wins)
 - `compiler/irgen.py`: `_strings` is a class variable instead of instance variable (shared across compilations)
 - Parser does not support ternary operator `? :` or array initializer syntax `{1, 2, 3}`
-- Codegen only passes arguments in r1–r4; stack arguments (>4 params) not implemented
-- Callee-saved register preservation not implemented in codegen
+- Stack arguments for 7th+ params not implemented (r1–r6 register args work)
 - `long` (32-bit) type has no code generation support
