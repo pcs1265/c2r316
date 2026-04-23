@@ -131,6 +131,11 @@ class WhileStmt(Stmt):
     body: Stmt
 
 @dataclass
+class DoWhileStmt(Stmt):
+    body: Stmt
+    cond: 'Expr'
+
+@dataclass
 class ForStmt(Stmt):
     init: Optional[Stmt]     # VarDecl, ExprStmt, or None
     cond: Optional['Expr']
@@ -288,6 +293,12 @@ def dump_ast(node, indent: int = 0) -> str:
         return (f'{prefix}WhileStmt(\n'
                 f'{child_prefix}cond: {dump_ast(node.cond, 0)}\n'
                 f'{child_prefix}body: {dump_ast(node.body, indent + 1)}\n'
+                f'{prefix})')
+
+    if isinstance(node, DoWhileStmt):
+        return (f'{prefix}DoWhileStmt(\n'
+                f'{child_prefix}body: {dump_ast(node.body, indent + 1)}\n'
+                f'{child_prefix}cond: {dump_ast(node.cond, 0)}\n'
                 f'{prefix})')
 
     if isinstance(node, ForStmt):

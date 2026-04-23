@@ -141,7 +141,7 @@ class IRGen:
             self._collect_locals(node.then)
             if node.else_:
                 self._collect_locals(node.else_)
-        elif isinstance(node, (WhileStmt,)):
+        elif isinstance(node, (WhileStmt, DoWhileStmt)):
             self._collect_locals(node.body)
         elif isinstance(node, ForStmt):
             if node.init:
@@ -180,6 +180,9 @@ class IRGen:
 
         elif isinstance(stmt, WhileStmt):
             self._gen_while(stmt)
+
+        elif isinstance(stmt, DoWhileStmt):
+            self._gen_do_while(stmt)
 
         elif isinstance(stmt, ForStmt):
             self._gen_for(stmt)
@@ -231,6 +234,25 @@ class IRGen:
         self._emit(IJumpIfNot(cond, end_lbl, loc))
         self._gen_stmt(stmt.body)
         self._emit(IJump(cond_lbl, loc))
+        self._emit(ILabel(end_lbl, loc))
+
+        self._break_stack.pop()
+        self._cont_stack.pop()
+
+    def _gen_do_while(self, stmt: DoWhileStmt):
+        loc = self._loc(stmt)
+        body_lbl = self._new_label('dobody')
+        cond_lbl = self._new_label('docond')
+        end_lbl  = self._new_label('doend')
+
+        self._break_stack.append(end_lbl)
+        self._cont_stack.append(cond_lbl)
+
+        self._emit(ILabel(body_lbl, loc))
+        self._gen_stmt(stmt.body)
+        self._emit(ILabel(cond_lbl, loc))
+        cond = self._gen_expr(stmt.cond)
+        self._emit(IJumpIf(cond, body_lbl, loc))
         self._emit(ILabel(end_lbl, loc))
 
         self._break_stack.pop()

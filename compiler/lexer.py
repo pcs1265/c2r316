@@ -22,6 +22,7 @@ class TK(Enum):
     IF         = auto()
     ELSE       = auto()
     WHILE      = auto()
+    DO         = auto()
     FOR        = auto()
     RETURN     = auto()
     BREAK      = auto()
@@ -89,6 +90,7 @@ KEYWORDS = {
     'if':       TK.IF,
     'else':     TK.ELSE,
     'while':    TK.WHILE,
+    'do':       TK.DO,
     'for':      TK.FOR,
     'return':   TK.RETURN,
     'break':    TK.BREAK,

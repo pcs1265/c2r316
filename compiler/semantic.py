@@ -144,6 +144,10 @@ class Analyzer:
             self._analyze_expr(stmt.cond)
             self._analyze_stmt(stmt.body)
 
+        elif isinstance(stmt, DoWhileStmt):
+            self._analyze_stmt(stmt.body)
+            self._analyze_expr(stmt.cond)
+
         elif isinstance(stmt, ForStmt):
             self._push_scope()
             if stmt.init:

@@ -204,6 +204,9 @@ class Parser:
         if self._at(TK.WHILE):
             return self._parse_while()
 
+        if self._at(TK.DO):
+            return self._parse_do_while()
+
         if self._at(TK.FOR):
             return self._parse_for()
 
@@ -272,6 +275,16 @@ class Parser:
         self._eat(TK.RPAREN)
         body = self._parse_stmt()
         return WhileStmt(cond, body)
+
+    def _parse_do_while(self) -> DoWhileStmt:
+        self._eat(TK.DO)
+        body = self._parse_stmt()
+        self._eat(TK.WHILE)
+        self._eat(TK.LPAREN)
+        cond = self._parse_expr()
+        self._eat(TK.RPAREN)
+        self._eat(TK.SEMICOLON)
+        return DoWhileStmt(body, cond)
 
     def _parse_for(self) -> ForStmt:
         self._eat(TK.FOR)

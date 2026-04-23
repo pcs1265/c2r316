@@ -11,11 +11,12 @@ import sys
 import os
 import argparse
 
-from compiler.lexer    import Lexer,  LexError
-from compiler.parser   import Parser, ParseError
-from compiler.semantic import Analyzer, SemanticError
-from compiler.irgen    import IRGen,  IRGenError
-from compiler.codegen  import Codegen, CodegenError
+from compiler.lexer          import Lexer,  LexError
+from compiler.parser         import Parser, ParseError
+from compiler.semantic       import Analyzer, SemanticError
+from compiler.irgen          import IRGen,  IRGenError
+from compiler.codegen        import Codegen, CodegenError
+from compiler.preprocessor   import preprocess, PreprocessorError
 
 
 def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
@@ -33,6 +34,7 @@ def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
 
 
 def compile_c(src: str, src_name: str = '<stdin>',
+              src_path: str = '',
               dump_tokens: bool = False,
               dump_ast: bool = False,
               dump_ir: bool = False,
@@ -45,7 +47,14 @@ def compile_c(src: str, src_name: str = '<stdin>',
         if verbose:
             print(f'[c2r316] {msg}', file=sys.stderr)
 
-    # 1. lexing
+    # 1. preprocessing
+    _v('Preprocessing ...')
+    try:
+        src = preprocess(src, src_path=src_path)
+    except PreprocessorError as e:
+        raise SystemExit(f"Preprocessor error: {e}")
+
+    # 2. lexing
     try:
         lexer = Lexer(src)
     except LexError as e:
@@ -175,6 +184,7 @@ def main():
 
     try:
         asm = compile_c(src, args.input,
+                        src_path=os.path.abspath(args.input),
                         dump_tokens=args.dump_tokens,
                         dump_ast=args.dump_ast,
                         dump_ir=args.dump_ir,

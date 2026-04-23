@@ -197,6 +197,22 @@ int main(void) {
     }
     check("nested_for", nsum, 9);
 
+    /* do-while */
+    int dw;
+    dw = 0;
+    do {
+        dw += 1;
+    } while (dw < 5);
+    check("do-while", dw, 5);
+
+    /* do-while executes at least once */
+    int dw2;
+    dw2 = 0;
+    do {
+        dw2 = 42;
+    } while (0);
+    check("do-while0", dw2, 42);
+
     /* 9. recursion */
     check("5!",   factorial(5), 120);
     check("fib7", fib(7),       13);
