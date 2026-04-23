@@ -92,16 +92,9 @@ class IRGen:
         ir.strings = self._strings
         return ir
 
-    # re-init strings list per IRGen instance
-    def _init_strings(self):
-        self._strings = []
-
     # ── Functions ─────────────────────────────────────────────────────────────
 
     def _gen_func(self, func: FuncDecl) -> IRFunction:
-        if not hasattr(self, '_strings'):
-            self._strings = []
-
         self._tmp_cnt = 0
         self._label_cnt = 0
         self._params = {p.name for p in func.params}
@@ -291,14 +284,12 @@ class IRGen:
         loc = self._loc(expr)
 
         if isinstance(expr, IntLit):
-            return ImmInt(expr.value & 0xFFFF)
+            return ImmInt(expr.value)
 
         if isinstance(expr, CharLit):
             return ImmInt(expr.value & 0xFF)
 
         if isinstance(expr, StringLit):
-            if not hasattr(self, '_strings'):
-                self._strings = []
             lbl = f'_cstr_{len(self._strings) + 1}'
             self._strings.append((lbl, expr.chars))
             expr.label = lbl
@@ -344,6 +335,9 @@ class IRGen:
 
         if isinstance(expr, Ternary):
             return self._gen_ternary(expr)
+
+        if isinstance(expr, Member):
+            raise IRGenError("struct/union member access is not yet implemented")
 
         raise IRGenError(f"Unhandled expression: {type(expr)}")
 

@@ -82,6 +82,11 @@ class Parser:
         name = ''
         if self._at(TK.IDENT):
             name = self._eat(TK.IDENT).value
+        # Apply pointer stars to base before building array so that
+        # `int *arr[10]` correctly yields CArray(CPointer(CInt()), 10).
+        elem = base
+        for _ in range(stars):
+            elem = CPointer(elem)
         # array modifiers
         if self._try_eat(TK.LBRACKET):
             if self._at(TK.INT_LIT):
@@ -89,21 +94,9 @@ class Parser:
             else:
                 length = None
             self._eat(TK.RBRACKET)
-            t = CArray(base, length)
+            t = CArray(elem, length)
         else:
-            t = base
-        for _ in range(stars):
-            t = CPointer(t) if not isinstance(t, CArray) else t
-        if stars and not isinstance(t, (CPointer, CArray)):
-            t = CPointer(t)
-        # apply stars to type (when not array)
-        if stars and isinstance(t, CArray):
-            pass  # array takes precedence
-        elif stars:
-            inner = base
-            for _ in range(stars):
-                inner = CPointer(inner)
-            t = inner
+            t = elem
         return t, name
 
     # ── Top-Level Parsing ───────────────────────────────────────────────────────────

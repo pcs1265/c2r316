@@ -48,9 +48,9 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 
 ## Known Issues
 
-- `compiler/parser.py`: `_parse_ternary` and `_parse_eq` have duplicate method definitions (second one wins)
-- `compiler/irgen.py`: `_strings` is a class variable instead of instance variable (shared across compilations)
-- Parser does not support ternary operator `? :` or array initializer syntax `{1, 2, 3}`
+- Parser does not support array initializer syntax `{1, 2, 3}`
 - Stack arguments for 7th+ params not implemented (r1–r6 register args work)
 - `long` (32-bit) type has no code generation support
 - `-g` flag produces no source annotations: parser doesn't set `line` attribute on AST nodes, so `irgen._loc()` always returns `None`
+- Struct/union member access (`.` and `->`) is parsed but raises `IRGenError` at IR generation — not yet implemented
+- Integer literals larger than 16 bits are passed through to codegen as-is; codegen does not handle multi-word constants
