@@ -61,34 +61,6 @@ __term_init:
     jne .__term_init_clear
     jmp r31
 
-; ── __udiv ───────────────────────────────────────────────────────────────────
-; Unsigned 16-bit division.  Called by compiler-generated code for / and %.
-; in: r1 = dividend, r2 = divisor / out: r1 = quotient, r2 = remainder
-__udiv:
-    mov r3, 0
-.__udiv_loop:
-    sub r0, r1, r2
-    jl  .__udiv_done
-    sub r1, r2
-    add r3, 1
-    jmp .__udiv_loop
-.__udiv_done:
-    mov r2, r1
-    mov r1, r3
-    jmp r31
-
-; ── __umod ───────────────────────────────────────────────────────────────────
-; Unsigned 16-bit modulo.  Called by compiler-generated code for %.
-; in: r1 = dividend, r2 = divisor / out: r1 = remainder
-__umod:
-    st  r31, r30, 0xFFFF
-    sub r30, 1
-    jmp r31, __udiv
-    mov r1, r2
-    ld  r31, r30, 0
-    add r30, 1
-    jmp r31
-
 ; ── __stack_init ─────────────────────────────────────────────────────────────
 ; Detect top of writable RAM via binary search; initialise SP and heap bounds.
 ; RAM size: 128..8192 words in 128-word blocks (64 possibilities = 6 iterations).

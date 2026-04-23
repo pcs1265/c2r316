@@ -282,11 +282,7 @@ class Codegen:
                 if isinstance(op, Var):
                     self._ctx.slot(op)
 
-        self._is_leaf = not any(
-            isinstance(i, ICall) or
-            (isinstance(i, IBinOp) and i.op in ('/', '%'))
-            for i in fn.instrs
-        )
+        self._is_leaf = not any(isinstance(i, ICall) for i in fn.instrs)
 
         # Determine which callee-saved registers this function uses.
         # For now, with the spill-only allocator, we don't allocate callee-saved
@@ -473,16 +469,6 @@ class Codegen:
             self._ins(f'sub {SCRATCH_A}, {SCRATCH_B}')
         elif op == '*':
             self._ins(f'mul {SCRATCH_A}, {SCRATCH_A}, {SCRATCH_B}')
-        elif op == '/':
-            self._ins(f'mov r1, {SCRATCH_A}')
-            self._ins(f'mov r2, {SCRATCH_B}')
-            self._ins(f'jmp {LR}, __udiv')
-            self._ins(f'mov {SCRATCH_A}, r1')
-        elif op == '%':
-            self._ins(f'mov r1, {SCRATCH_A}')
-            self._ins(f'mov r2, {SCRATCH_B}')
-            self._ins(f'jmp {LR}, __umod')
-            self._ins(f'mov {SCRATCH_A}, r1')
         elif op == '&':
             self._ins(f'and {SCRATCH_A}, {SCRATCH_B}')
         elif op == '|':

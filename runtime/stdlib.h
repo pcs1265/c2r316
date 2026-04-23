@@ -17,6 +17,25 @@
 #ifndef STDLIB_H
 #define STDLIB_H
 
+/* ── division helpers (called by compiler for / and %) ─────────────────── */
+
+static int __udiv(unsigned int dividend, unsigned int divisor) {
+    unsigned int q;
+    q = 0;
+    while (dividend >= divisor) {
+        dividend = dividend - divisor;
+        q = q + 1;
+    }
+    return q;
+}
+
+static int __umod(unsigned int dividend, unsigned int divisor) {
+    while (dividend >= divisor) {
+        dividend = dividend - divisor;
+    }
+    return dividend;
+}
+
 /* ── MMIO primitives ────────────────────────────────────────────────────── */
 
 static void _term_putch(int c) {

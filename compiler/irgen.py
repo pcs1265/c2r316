@@ -425,7 +425,16 @@ class IRGen:
 
         left  = self._gen_expr(expr.left)
         right = self._gen_expr(expr.right)
-        t     = self._tmp()
+
+        # Division and modulo are lowered to runtime helper calls so that
+        # the IR call graph is complete (correct leaf detection, LR save, etc.)
+        if expr.op in ('/', '%'):
+            helper = '__udiv' if expr.op == '/' else '__umod'
+            t = self._tmp()
+            self._emit(ICall(t, Global(helper), [left, right], loc))
+            return t
+
+        t = self._tmp()
         self._emit(IBinOp(t, expr.op, left, right, loc))
         return t
 
@@ -516,12 +525,16 @@ class IRGen:
             self._gen_store_to(val, expr.target)
             return val
 
-        # compound: read current, operate, write back
+        # compound: synthesize a BinOp and lower through _gen_binop
         cur  = self._gen_expr(expr.target)
         rhs  = self._gen_expr(expr.value)
         base = expr.op[:-1]   # '+=' → '+'
         t    = self._tmp()
-        self._emit(IBinOp(t, base, cur, rhs, loc))
+        if base in ('/', '%'):
+            helper = '__udiv' if base == '/' else '__umod'
+            self._emit(ICall(t, Global(helper), [cur, rhs], loc))
+        else:
+            self._emit(IBinOp(t, base, cur, rhs, loc))
         self._gen_store_to(t, expr.target)
         return t
 
