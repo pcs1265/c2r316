@@ -29,6 +29,7 @@ class TK(Enum):
     CONTINUE   = auto()
     UNSIGNED   = auto()
     STRUCT     = auto()
+    UNION      = auto()
     TYPEDEF    = auto()
     EXTERN     = auto()
     STATIC     = auto()
@@ -99,6 +100,7 @@ KEYWORDS = {
     'continue': TK.CONTINUE,
     'unsigned': TK.UNSIGNED,
     'struct':   TK.STRUCT,
+    'union':    TK.UNION,
     'typedef':  TK.TYPEDEF,
     'extern':   TK.EXTERN,
     'static':   TK.STATIC,

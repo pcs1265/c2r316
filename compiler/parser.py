@@ -47,9 +47,20 @@ class Parser:
 
     # ── Type Parsing ─────────────────────────────────────────────────────────────
 
-    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED}
+    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION}
+
+    def __init__(self, tokens: list[Token]):
+        self.tokens = tokens
+        self.pos    = 0
+        # struct/union tag registry: tag → CStruct/CUnion (possibly incomplete)
+        self._struct_tags: dict[str, CStruct] = {}
+        self._union_tags:  dict[str, CUnion]  = {}
 
     def _parse_base_type(self) -> CType:
+        if self._at(TK.STRUCT):
+            return self._parse_struct_or_union(is_union=False)
+        if self._at(TK.UNION):
+            return self._parse_struct_or_union(is_union=True)
         unsigned = bool(self._try_eat(TK.UNSIGNED))
         if self._try_eat(TK.INT):
             return CInt(unsigned)
@@ -65,6 +76,47 @@ class Parser:
         if unsigned:
             return CInt(unsigned=True)
         raise ParseError(f"Line {self._cur().line}: Expected type specifier")
+
+    def _parse_struct_or_union(self, is_union: bool) -> CType:
+        """Parse `struct [tag] [{ field; ... }]` or `union [tag] [{ ... }]`."""
+        if is_union:
+            self._eat(TK.UNION)
+            registry = self._union_tags
+        else:
+            self._eat(TK.STRUCT)
+            registry = self._struct_tags
+
+        # optional tag
+        tag = ''
+        if self._at(TK.IDENT):
+            tag = self._eat(TK.IDENT).value
+
+        # look up or create the type record
+        if tag and tag in registry:
+            rec = registry[tag]
+        else:
+            rec = CUnion(tag) if is_union else CStruct(tag)
+            if tag:
+                registry[tag] = rec
+
+        # optional body
+        if self._at(TK.LBRACE):
+            self._eat(TK.LBRACE)
+            fields: list[StructField] = []
+            offset = 0
+            while not self._at(TK.RBRACE, TK.EOF):
+                ftype, fname = self._parse_type_and_name()
+                self._eat(TK.SEMICOLON)
+                sf = StructField(fname, ftype, offset)
+                fields.append(sf)
+                # unions: all fields share offset 0; structs: fields are sequential
+                if not is_union:
+                    offset += ftype.size()
+            self._eat(TK.RBRACE)
+            rec.fields = fields
+            rec.complete = True
+
+        return rec
 
     def _parse_type(self) -> CType:
         base = self._parse_base_type()
@@ -112,6 +164,12 @@ class Parser:
         is_extern = bool(self._try_eat(TK.EXTERN))
 
         ret_type = self._parse_base_type()
+
+        # `struct foo { ... };` with no declarator — type definition only
+        if self._at(TK.SEMICOLON) and isinstance(ret_type, (CStruct, CUnion)):
+            self._eat(TK.SEMICOLON)
+            return []
+
         stars = 0
         while self._try_eat(TK.STAR):
             stars += 1
@@ -307,24 +365,12 @@ class Parser:
         return ForStmt(init, cond, step, body)
 
     def _parse_local_decl(self) -> DeclStmt:
-        base = self._parse_base_type()
-        is_static = False
-        stars = 0
-        while self._try_eat(TK.STAR):
-            stars += 1
-        name = self._eat(TK.IDENT).value
-        # array
-        if self._try_eat(TK.LBRACKET):
-            if self._at(TK.INT_LIT):
-                length = self._eat(TK.INT_LIT).value
-            else:
-                length = None
-            self._eat(TK.RBRACKET)
-            vtype = CArray(base, length)
-        else:
-            vtype = base
-            for _ in range(stars):
-                vtype = CPointer(vtype)
+        vtype, name = self._parse_type_and_name()
+        # struct/union type-only declaration inside a block (`struct foo { ... };`)
+        if not name and isinstance(vtype, (CStruct, CUnion)):
+            self._eat(TK.SEMICOLON)
+            # dummy: nothing to declare, but valid syntax
+            raise ParseError(f"Line {self._cur().line}: type-only declaration inside block has no effect")
         init = None
         if self._try_eat(TK.ASSIGN):
             init = self._parse_expr()

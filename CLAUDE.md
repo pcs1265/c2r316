@@ -52,5 +52,7 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 - Stack arguments for 7th+ params not implemented (r1–r6 register args work)
 - `long` (32-bit) type has no code generation support
 - `-g` flag produces no source annotations: parser doesn't set `line` attribute on AST nodes, so `irgen._loc()` always returns `None`
-- Struct/union member access (`.` and `->`) is parsed but raises `IRGenError` at IR generation — not yet implemented
 - Integer literals larger than 16 bits are passed through to codegen as-is; codegen does not handle multi-word constants
+- `sizeof(struct T)` fails to parse — `sizeof` is not implemented in the parser
+- Struct/union pass-by-value (hidden pointer ABI) not implemented; use pointers instead
+- `typedef struct { ... } Name;` not supported; use tag names directly

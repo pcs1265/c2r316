@@ -270,8 +270,26 @@ class Analyzer:
             return expr.ctype
 
         if isinstance(expr, Member):
-            self._analyze_expr(expr.obj)
-            expr.ctype = CInt()   # simplified when struct unsupported
+            obj_type = self._analyze_expr(expr.obj)
+            # for `->`, dereference the pointer first
+            if expr.arrow:
+                if isinstance(obj_type, CPointer):
+                    obj_type = obj_type.base
+                else:
+                    raise SemanticError(
+                        f"Arrow operator '->' requires a pointer, got {obj_type}"
+                    )
+            if not isinstance(obj_type, (CStruct, CUnion)):
+                raise SemanticError(
+                    f"Member access on non-struct/union type {obj_type}"
+                )
+            sf = obj_type.get_field(expr.field)
+            if sf is None:
+                raise SemanticError(
+                    f"'{obj_type}' has no field '{expr.field}'"
+                )
+            expr._field_info = sf      # offset + ctype for IRGen
+            expr.ctype = sf.ctype
             return expr.ctype
 
         if isinstance(expr, Ternary):

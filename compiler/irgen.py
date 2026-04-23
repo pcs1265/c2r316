@@ -122,7 +122,7 @@ class IRGen:
         if isinstance(node, DeclStmt):
             d = node.decl
             self._locals.add(d.name)
-            size = d.ctype.size() if isinstance(d.ctype, CArray) else 1
+            size = d.ctype.size() if isinstance(d.ctype, (CArray, CStruct, CUnion)) else 1
             self._fn.local_sizes[d.name] = size
         elif isinstance(node, Block):
             for s in node.stmts:
@@ -337,7 +337,10 @@ class IRGen:
             return self._gen_ternary(expr)
 
         if isinstance(expr, Member):
-            raise IRGenError("struct/union member access is not yet implemented")
+            addr = self._gen_member_addr(expr)
+            t = self._tmp()
+            self._emit(ILoad(t, addr, loc))
+            return t
 
         raise IRGenError(f"Unhandled expression: {type(expr)}")
 
@@ -349,8 +352,8 @@ class IRGen:
         if isinstance(expr.ctype, CFunction):
             return Global(name)
 
-        # local array decays to pointer — params typed as array are already pointers
-        if isinstance(expr.ctype, CArray) and name not in self._params:
+        # local array/struct/union decays to its base address
+        if isinstance(expr.ctype, (CArray, CStruct, CUnion)) and name not in self._params:
             t = self._tmp()
             self._emit(IAddrOf(t, self._var_operand(name), loc))
             return t
@@ -406,7 +409,37 @@ class IRGen:
         if isinstance(expr, UnaryOp) and expr.op == '*':
             return self._gen_expr(expr.operand)
 
+        if isinstance(expr, Member):
+            return self._gen_member_addr(expr)
+
         raise IRGenError(f"Cannot take address of {type(expr)}")
+
+    def _gen_member_addr(self, expr: Member) -> Operand:
+        """Return an operand holding the address of a struct/union member."""
+        loc = self._loc(expr)
+        sf = expr._field_info   # StructField set by semantic analysis
+
+        if expr.arrow:
+            # p->field: p is a pointer; base address is the pointer value
+            base = self._gen_expr(expr.obj)
+        else:
+            # s.field: s is a struct on the stack; get its address.
+            # _gen_addr returns Var for a local — must use IAddrOf, not ICopy,
+            # to materialise the stack address rather than loading the value.
+            raw = self._gen_addr(expr.obj)
+            if isinstance(raw, Var):
+                t = self._tmp()
+                self._emit(IAddrOf(t, raw, loc))
+                base = t
+            else:
+                base = raw
+
+        if sf.offset == 0:
+            return self._as_temp(base, loc)
+
+        t = self._tmp()
+        self._emit(IBinOp(t, '+', base, ImmInt(sf.offset), loc))
+        return t
 
     def _gen_store_to(self, val: Operand, target: Expr):
         """Store val into an lvalue target."""

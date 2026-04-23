@@ -58,6 +58,51 @@ class CFunction(CType):
     def size(self): return 0
 
 
+@dataclass
+class StructField:
+    name: str
+    ctype: CType
+    offset: int = 0   # word offset from struct base
+
+
+@dataclass
+class CStruct(CType):
+    name: str                               # tag name (may be '' for anonymous)
+    fields: List[StructField] = field(default_factory=list)
+    complete: bool = False                  # False = forward declaration only
+
+    def size(self) -> int:
+        return sum(f.ctype.size() for f in self.fields)
+
+    def get_field(self, name: str) -> Optional[StructField]:
+        for f in self.fields:
+            if f.name == name:
+                return f
+        return None
+
+    def __repr__(self):
+        return f"struct {self.name}" if self.name else "struct <anon>"
+
+
+@dataclass
+class CUnion(CType):
+    name: str
+    fields: List[StructField] = field(default_factory=list)
+    complete: bool = False
+
+    def size(self) -> int:
+        return max((f.ctype.size() for f in self.fields), default=0)
+
+    def get_field(self, name: str) -> Optional[StructField]:
+        for f in self.fields:
+            if f.name == name:
+                return f
+        return None
+
+    def __repr__(self):
+        return f"union {self.name}" if self.name else "union <anon>"
+
+
 def is_integer(t: CType) -> bool:
     return isinstance(t, (CInt, CLong, CChar))
 
