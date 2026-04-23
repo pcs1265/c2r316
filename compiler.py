@@ -133,10 +133,6 @@ def compile_c(src: str, src_name: str = '<stdin>',
     if stop_after == 'codegen':
         return asm
 
-    # 6. include runtime library
-    asm += '\n\n; -- runtime library --\n'
-    asm += '%include "runtime\\runtime.asm"\n'
-
     _v('Done.')
     return asm
 

@@ -30,6 +30,13 @@
 %define _term_height 16
 %define _nlchar      10
 
+; ── entry point ──────────────────────────────────────────────────────────────
+start:
+    jmp r31, __stack_init
+    jmp r31, __term_init
+    jmp r31, main
+    hlt
+
 ; ── __term_init ──────────────────────────────────────────────────────────────
 ; Configure terminal geometry, colour, and newline character; clear screen.
 ; in: none / out: none / clobbers: r1, r2
