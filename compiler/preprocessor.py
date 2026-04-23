@@ -22,18 +22,21 @@ class PreprocessorError(Exception):
         super().__init__(f'{filename}:{line}: {msg}' if filename else msg)
 
 
-def preprocess(src: str, src_path: str = '', defines: dict = None) -> str:
+def preprocess(src: str, src_path: str = '', defines: dict = None,
+               include_dirs: list = None) -> str:
     """
     Run the preprocessor over `src` and return the expanded source text.
     `src_path` is the path of the file being processed (used to resolve
     relative #include paths).  `defines` is an optional initial macro dict.
+    `include_dirs` is a list of additional directories searched for #include.
     """
     defines = dict(defines) if defines else {}
     src_dir = os.path.dirname(os.path.abspath(src_path)) if src_path else os.getcwd()
-    return _process(src, src_path or '<stdin>', src_dir, defines, set())
+    inc_dirs = [src_dir] + [os.path.abspath(d) for d in (include_dirs or [])]
+    return _process(src, src_path or '<stdin>', inc_dirs, defines, set())
 
 
-def _process(src: str, filename: str, base_dir: str,
+def _process(src: str, filename: str, inc_dirs: list,
              defines: dict, include_stack: set) -> str:
     lines = src.split('\n')
     out = []
@@ -97,8 +100,13 @@ def _process(src: str, filename: str, base_dir: str,
                 raise PreprocessorError(
                     f'#include syntax error: expected "file"', filename, lineno)
             inc_path_rel = m.group(1)
-            inc_path = os.path.join(base_dir, inc_path_rel)
-            if not os.path.isfile(inc_path):
+            inc_path = None
+            for search_dir in inc_dirs:
+                candidate = os.path.join(search_dir, inc_path_rel)
+                if os.path.isfile(candidate):
+                    inc_path = candidate
+                    break
+            if inc_path is None:
                 raise PreprocessorError(
                     f'#include file not found: {inc_path_rel}', filename, lineno)
             real_inc = os.path.realpath(inc_path)
@@ -107,8 +115,9 @@ def _process(src: str, filename: str, base_dir: str,
                 continue
             new_stack = include_stack | {real_inc}
             inc_src = open(inc_path, encoding='utf-8').read()
-            inc_dir = os.path.dirname(inc_path)
-            expanded = _process(inc_src, inc_path, inc_dir, defines, new_stack)
+            inc_file_dir = os.path.dirname(os.path.abspath(inc_path))
+            child_dirs = [inc_file_dir] + [d for d in inc_dirs if d != inc_file_dir]
+            expanded = _process(inc_src, inc_path, child_dirs, defines, new_stack)
             out.append(expanded)
 
         elif directive == 'define':

@@ -35,6 +35,7 @@ def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
 
 def compile_c(src: str, src_name: str = '<stdin>',
               src_path: str = '',
+              include_dirs: list = None,
               dump_tokens: bool = False,
               dump_ast: bool = False,
               dump_ir: bool = False,
@@ -47,12 +48,13 @@ def compile_c(src: str, src_name: str = '<stdin>',
         if verbose:
             print(f'[c2r316] {msg}', file=sys.stderr)
 
-    # 1. preprocessing — auto-prepend stdlib.h then process the source
+    # 1. preprocessing
     _v('Preprocessing ...')
-    _stdlib = os.path.join(os.path.dirname(__file__), 'runtime', 'stdlib.h')
-    _stdlib_include = f'#include "{_stdlib}"\n'
+    # Always search the compiler's own root so #include "runtime/stdlib.h" works
+    _root = os.path.dirname(os.path.abspath(__file__))
+    _inc_dirs = [_root] + (include_dirs or [])
     try:
-        src = preprocess(_stdlib_include + src, src_path=src_path)
+        src = preprocess(src, src_path=src_path, include_dirs=_inc_dirs)
     except PreprocessorError as e:
         raise SystemExit(f"Preprocessor error: {e}")
 
@@ -174,6 +176,8 @@ def main():
                     help='Stop after the given compilation stage')
     ap.add_argument('-g', '--annotate', action='store_true',
                     help='Annotate ASM output with source line comments')
+    ap.add_argument('-I', dest='include_dirs', action='append', default=[],
+                    metavar='DIR', help='Add directory to #include search path')
 
     args = ap.parse_args()
 
@@ -187,6 +191,7 @@ def main():
     try:
         asm = compile_c(src, args.input,
                         src_path=os.path.abspath(args.input),
+                        include_dirs=args.include_dirs,
                         dump_tokens=args.dump_tokens,
                         dump_ast=args.dump_ast,
                         dump_ir=args.dump_ir,

@@ -1,5 +1,7 @@
 /* test_all.c - self-validating tests */
 
+#include "runtime/stdlib.h"
+
 /* ── test helpers ── */
 
 int pass_count;

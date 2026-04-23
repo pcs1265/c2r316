@@ -1,8 +1,6 @@
 /* First C program running on R316 */
 
-void putchar(int c);
-void print_int(int n);
-void puts(char *s);
+#include "runtime/stdlib.h"
 
 int main() {
     puts("Hello, R316!");

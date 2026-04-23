@@ -11,10 +11,7 @@
  *   0x9FB5 : term_term    (character output, handles newline)
  */
 
-/* ── test harness (still uses runtime.asm originals) ────────────────────── */
-void print_str(char *s);
-void print_int(int n);
-void putchar(int c);
+#include "runtime/stdlib.h"
 
 int pass_count;
 int fail_count;
