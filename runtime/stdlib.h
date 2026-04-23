@@ -20,36 +20,52 @@
 /* ── division helpers (called by compiler for / and %) ─────────────────── */
 
 static int __udiv(unsigned int dividend, unsigned int divisor) {
-    unsigned int remainder;
-    unsigned int i;
-    remainder = 0;
-    i = 0;
-    while (i < 16) {
-        remainder = (remainder << 1) | (dividend >> 15);
-        dividend = dividend << 1;
-        if (remainder >= divisor) {
-            remainder = remainder - divisor;
-            dividend = dividend | 1;
-        }
-        i = i + 1;
-    }
-    return dividend;
+    unsigned int res;
+    asm(
+        "mov r10, 0\n"
+        "mov r11, 16\n"
+        "._udiv_loop:\n"
+        "mov r12, %0\n"
+        "shr r12, 15\n"
+        "and r12, 1\n"
+        "shl r10, 1\n"
+        "or r10, r12\n"
+        "shl %0, 1\n"
+        "sub r0, r10, %1\n"
+        "jc ._udiv_skip\n"
+        "sub r10, %1\n"
+        "or %0, 1\n"
+        "._udiv_skip:\n"
+        "sub r11, 1\n"
+        "jnz ._udiv_loop\n"
+        "st %0, %2"
+        : "r"(dividend), "r"(divisor), "r"(&res)
+    );
+    return res;
 }
 
 static int __umod(unsigned int dividend, unsigned int divisor) {
-    unsigned int remainder;
-    unsigned int i;
-    remainder = 0;
-    i = 0;
-    while (i < 16) {
-        remainder = (remainder << 1) | (dividend >> 15);
-        dividend = dividend << 1;
-        if (remainder >= divisor) {
-            remainder = remainder - divisor;
-        }
-        i = i + 1;
-    }
-    return remainder;
+    unsigned int res;
+    asm(
+        "mov r10, 0\n"
+        "mov r11, 16\n"
+        "._umod_loop:\n"
+        "mov r12, %0\n"
+        "shr r12, 15\n"
+        "and r12, 1\n"
+        "shl r10, 1\n"
+        "or r10, r12\n"
+        "shl %0, 1\n"
+        "sub r0, r10, %1\n"
+        "jc ._umod_skip\n"
+        "sub r10, %1\n"
+        "._umod_skip:\n"
+        "sub r11, 1\n"
+        "jnz ._umod_loop\n"
+        "st r10, %2"
+        : "r"(dividend), "r"(divisor), "r"(&res)
+    );
+    return res;
 }
 
 /* ── MMIO primitives ────────────────────────────────────────────────────── */
