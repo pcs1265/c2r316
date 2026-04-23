@@ -256,9 +256,13 @@ class Lexer:
                 self.tokens.append(Token(TK.CHAR_LIT, val, line, col))
                 continue
 
-            # string literal
+            # string literal (adjacent strings are concatenated, C standard)
             if ch == '"':
                 val = self._read_string()
+                self._skip_whitespace_and_comments()
+                while self.pos < len(self.src) and self._cur() == '"':
+                    val = val + self._read_string()
+                    self._skip_whitespace_and_comments()
                 self.tokens.append(Token(TK.STRING_LIT, val, line, col))
                 continue
 
