@@ -23,6 +23,7 @@
 %eval _term_term   _term_base 0x35 +
 %eval _term_hrange _term_base 0x42 +
 %eval _term_vrange _term_base 0x43 +
+%eval _term_cursor _term_base 0x44 +
 %eval _term_nlchar _term_base 0x45 +
 %eval _term_colour _term_base 0x46 +
 
