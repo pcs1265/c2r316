@@ -33,6 +33,7 @@ class IRGen:
         self._locals: set[str] = set()
         # set of param names in current function
         self._params: set[str] = set()
+        self._strings: List = []
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -90,10 +91,6 @@ class IRGen:
         # string literals are collected during generation
         ir.strings = self._strings
         return ir
-
-    _strings: List = []
-
-    def __init_subclass__(cls, **kwargs): pass  # suppress dataclass warning
 
     # re-init strings list per IRGen instance
     def _init_strings(self):

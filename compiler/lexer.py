@@ -77,6 +77,7 @@ class TK(Enum):
     RBRACKET   = auto()   # ]
     SEMICOLON  = auto()   # ;
     COLON      = auto()   # :
+    QUESTION   = auto()   # ?
     COMMA      = auto()   # ,
     DOT        = auto()   # .
 
@@ -296,7 +297,7 @@ class Lexer:
                 '!': TK.BANG,    '<': TK.LT,       '>': TK.GT,
                 '=': TK.ASSIGN,  '(': TK.LPAREN,   ')': TK.RPAREN,
                 '{': TK.LBRACE,  '}': TK.RBRACE,   '[': TK.LBRACKET,
-                ']': TK.RBRACKET, ';': TK.SEMICOLON, ':': TK.COLON,
+                ']': TK.RBRACKET, ';': TK.SEMICOLON, ':': TK.COLON, '?': TK.QUESTION,
                 ',': TK.COMMA,   '.': TK.DOT,
             }
             if ch in one_map:

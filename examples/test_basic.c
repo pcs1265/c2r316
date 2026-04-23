@@ -114,6 +114,8 @@ int main(void) {
     check("||F",    0 || 0,   0);
     check("!0",     !0,       1);
     check("!1",     !1,       0);
+    check("ternary", 1 ? 10 : 20, 10);
+    check("ternary_else", 0 ? 10 : 20, 20);
 
     /* 4. compound assignment */
     int x;

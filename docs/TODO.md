@@ -29,13 +29,12 @@ Completed in commit `89524f0`:
 ## Parser
 
 - **Array initializer syntax** — `int arr[] = {1, 2, 3};` (currently parse error)
-- **Ternary operator** `?:` (currently lex error)
-- **Remove duplicate `_parse_ternary` definition** — delete lines 351–362 (second definition wins)
-- **Remove duplicate `_parse_eq` definition** — delete lines 412–418 (second definition wins)
+- ~~**Ternary operator** `?:` (currently lex error)~~
+- ~~**Remove duplicate `_parse_ternary` definition** — delete lines 351–362 (second definition wins)~~
+- ~~**Remove duplicate `_parse_eq` definition** — delete lines 412–418 (second definition wins)~~
 
 ## Bug Fixes
 
-- **`compiler/irgen.py`**: Change `_strings` from class variable to instance variable
-  (delete line 94 class variable, add `self._strings = []` in `__init__`)
-  (delete line 94 class variable, add `self._strings = []` in `__init__`)
-- **`compiler/irgen.py`**: Remove unnecessary `__init_subclass__` stub (line 96)
+- ~~**`compiler/irgen.py`**: Change `_strings` from class variable to instance variable~~
+- ~~**`compiler/irgen.py`**: Remove unnecessary `__init_subclass__` stub (line 96)~~
+- ~~**`compiler/irgen.py`**: Remove the redundant `_strings: List = []` class attribute (line 94).~~

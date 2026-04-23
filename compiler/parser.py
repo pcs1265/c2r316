@@ -364,23 +364,11 @@ class Parser:
 
     def _parse_ternary(self) -> Expr:
         cond = self._parse_or()
-        if self._try_eat(TK.COLON if False else TK.ASSIGN if False else None.__class__ if False else TK.COLON if False else None.__class__ if False else None.__class__):
-            pass
-        # actual ternary
-        if self._cur().kind == TK.COLON:
-            return cond  # simplified: return cond when ternary unsupported
-        # real ternary handling
-        tok = self._cur()
-        if tok.value == '?' if tok.kind == TK.COLON else False:
-            pass
-        return cond
-
-    def _parse_ternary(self) -> Expr:
-        cond = self._parse_or()
-        # '?' handling — check directly without reusing COLON
-        if self._cur().value == '?' and self._cur().kind not in (TK.EOF,):
-            # '?' not in lexer, skip for now (C ternary to be supported later)
-            pass
+        if self._try_eat(TK.QUESTION):
+            then_expr = self._parse_expr()
+            self._eat(TK.COLON)
+            else_expr = self._parse_expr()
+            return Ternary(cond, then_expr, else_expr)
         return cond
 
     def _parse_or(self) -> Expr:
@@ -421,14 +409,6 @@ class Parser:
             self._eat(TK.AMP)
             right = self._parse_eq()
             left = BinOp('&', left, right)
-        return left
-
-    def _parse_eq(self) -> Expr:
-        left = self._parse_rel()
-        while self._at(TK.EQ, TK.NEQ):
-            op = '==' if self._eat(TK.EQ, TK.NEQ).kind == TK.EQ else '!='
-            right = self._parse_rel()
-            left = BinOp(op, left, right)
         return left
 
     def _parse_eq(self) -> Expr:
