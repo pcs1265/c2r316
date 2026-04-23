@@ -115,6 +115,17 @@ void asm_add(int a, int b, int *out) {
     asm("add %0, %1\nst %0, %2" : "r"(a), "r"(b), "r"(out));
 }
 
+/*
+ * asm_multiline: exercise multi-line ASM using C string concatenation.
+ * This computes (a + b) * c and stores it in *out.
+ */
+void asm_multiline(int a, int b, int c, int *out) {
+    asm("add %0, %1\n"
+        "mul %0, %0, %2\n"
+        "st %0, %3"
+        : "r"(a), "r"(b), "r"(c), "r"(out));
+}
+
 /* ── main ────────────────────────────────────────────────────────────────── */
 int main(void) {
     pass_count = 0;
@@ -163,6 +174,11 @@ int main(void) {
     result = 0;
     asm_add(12, 30, &result);
     check("asm_add", result, 42);
+
+    /* 7. multi-line string concatenation */
+    result = 0;
+    asm_multiline(10, 20, 3, &result);
+    check("asm_multiline", result, 90);
 
     /* summary */
     print_str("================\n");
