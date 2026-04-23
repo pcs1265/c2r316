@@ -162,6 +162,9 @@ class Codegen:
         self._src_lines: list[str] = []
         self._src_name: str = ''
         self._last_src_line: int = 0
+        # scratch-register forwarding: tracks which Temp is live in SCRATCH_A/SCRATCH_C
+        self._scratch_a_temp: Optional[Temp] = None
+        self._scratch_c_temp: Optional[Temp] = None
 
     # ── Source annotation (-g) ────────────────────────────────────────────────
 
@@ -199,25 +202,67 @@ class Codegen:
     def _spill_slot(self, op: Operand) -> int:
         return self._ctx.slot(op)
 
+    def _invalidate_scratch(self):
+        """Call before any instruction that clobbers scratch regs without tracking."""
+        self._scratch_a_temp = None
+        self._scratch_c_temp = None
+
     def _load_op(self, op: Operand, reg: str):
         """Load operand value into physical register."""
         if isinstance(op, ImmInt):
+            if reg == SCRATCH_A and self._scratch_a_temp is not None:
+                self._scratch_a_temp = None
+            elif reg == SCRATCH_C and self._scratch_c_temp is not None:
+                self._scratch_c_temp = None
             self._ins(f'mov {reg}, {op.value & 0xFFFF}')
         elif isinstance(op, StrLabel):
             self._ins(f'mov {reg}, {op.name}')
         elif isinstance(op, Global):
             self._ins(f'ld {reg}, {op.name}')
         elif isinstance(op, (Temp, Var)):
+            # if this temp is already in the target register, skip the load
+            if isinstance(op, Temp):
+                if self._scratch_a_temp == op:
+                    if reg != SCRATCH_A:
+                        self._ins(f'mov {reg}, {SCRATCH_A}')
+                    return
+                if self._scratch_c_temp == op:
+                    if reg != SCRATCH_C:
+                        self._ins(f'mov {reg}, {SCRATCH_C}')
+                    return
             slot = self._spill_slot(op)
             self._ins(f'ld {reg}, {SP}, {slot}')
+            if reg == SCRATCH_A:
+                self._scratch_a_temp = op if isinstance(op, Temp) else None
+            elif reg == SCRATCH_C:
+                self._scratch_c_temp = op if isinstance(op, Temp) else None
         else:
             raise CodegenError(f"Cannot load {op}")
 
-    def _store_op(self, reg: str, op: Operand):
-        """Store physical register into operand's spill slot."""
+    def _store_op(self, reg: str, op: Operand, skip_if_last: bool = False):
+        """Store physical register into operand's spill slot.
+
+        If skip_if_last is True and op is a Temp whose last use is the very
+        next instruction, skip the store — the value will be forwarded from
+        the scratch register instead.
+        """
         if isinstance(op, (Temp, Var)):
+            if skip_if_last and isinstance(op, Temp):
+                last = self._ctx._last_use.get(op.id, -1)
+                if last == self._cur_instr_idx + 1:
+                    # don't spill; track as live in scratch
+                    if reg == SCRATCH_A:
+                        self._scratch_a_temp = op
+                    elif reg == SCRATCH_C:
+                        self._scratch_c_temp = op
+                    return
             slot = self._spill_slot(op)
             self._ins(f'st {reg}, {SP}, {slot}')
+            # track what's in scratch registers after store
+            if reg == SCRATCH_A:
+                self._scratch_a_temp = op if isinstance(op, Temp) else None
+            elif reg == SCRATCH_C:
+                self._scratch_c_temp = op if isinstance(op, Temp) else None
         else:
             raise CodegenError(f"Cannot store into {op}")
 
@@ -261,7 +306,44 @@ class Codegen:
 
     # ── Function ──────────────────────────────────────────────────────────────
 
+    def _peephole(self, instrs: list) -> list:
+        """
+        Collapse ICopy(t, Var) immediately followed by ILoad(t2, t) — where t
+        is not used anywhere else — into ILoad(t2, Var).  This eliminates the
+        store-then-reload round-trip that otherwise occurs for every pointer
+        dereference of a local/param variable.
+        """
+        # count uses of each Temp across the whole instruction list
+        use_count: Dict[int, int] = {}
+        for instr in instrs:
+            for op in instr.uses():
+                if isinstance(op, Temp):
+                    use_count[op.id] = use_count.get(op.id, 0) + 1
+
+        result = []
+        skip = set()
+        for i, instr in enumerate(instrs):
+            if i in skip:
+                continue
+            # look for ICopy(t, Var/ImmInt/StrLabel) followed by ILoad(t2, t)
+            if (isinstance(instr, ICopy)
+                    and isinstance(instr.dst, Temp)
+                    and isinstance(instr.src, (Var, ImmInt, StrLabel, Global))
+                    and use_count.get(instr.dst.id, 0) == 1
+                    and i + 1 < len(instrs)):
+                nxt = instrs[i + 1]
+                if isinstance(nxt, ILoad) and nxt.addr == instr.dst:
+                    result.append(ILoad(nxt.dst, instr.src, nxt.loc))
+                    skip.add(i + 1)
+                    continue
+            result.append(instr)
+        return result
+
     def _gen_func(self, fn: IRFunction):
+        fn = IRFunction(fn.name, fn.params, self._peephole(fn.instrs), fn.local_sizes)
+        self._scratch_a_temp = None
+        self._scratch_c_temp = None
+        self._cur_instr_idx = 0
         # dry run to compute true peak frame size with recycling
         dry = FuncContext(fn.instrs, fn.params, fn.local_sizes)
         for i, instr in enumerate(fn.instrs):
@@ -324,6 +406,7 @@ class Codegen:
 
         # Generate instructions
         for idx, instr in enumerate(fn.instrs):
+            self._cur_instr_idx = idx
             self._gen_instr(instr, lr_slot, total)
             self._ctx.free_dead_temps(idx)
 
@@ -349,9 +432,11 @@ class Codegen:
         self._emit_src_comment(instr)
 
         if isinstance(instr, ILabel):
+            self._invalidate_scratch()
             self._lbl(instr.name)
 
         elif isinstance(instr, IConst):
+            self._scratch_a_temp = None
             self._ins(f'mov {SCRATCH_A}, {instr.value & 0xFFFF}')
             self._store_op(SCRATCH_A, instr.dst)
 
@@ -360,18 +445,29 @@ class Codegen:
             self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, IAddrOf):
+            self._scratch_a_temp = None
             self._load_addr(instr.var, SCRATCH_A)
             self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, ILoad):
             self._load_op(instr.addr, SCRATCH_C)
+            self._scratch_a_temp = None
             self._ins(f'ld {SCRATCH_A}, {SCRATCH_C}')
             self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, IStore):
-            self._load_op(instr.addr, SCRATCH_C)
-            self._load_op(instr.src,  SCRATCH_A)
-            self._ins(f'st {SCRATCH_A}, {SCRATCH_C}')
+            if isinstance(instr.addr, Var):
+                # scalar local/param: direct spill-slot store
+                slot = self._spill_slot(instr.addr)
+                self._load_op(instr.src, SCRATCH_A)
+                self._ins(f'st {SCRATCH_A}, {SP}, {slot}')
+                # update scratch_a tracking: value is the src temp
+                if isinstance(instr.src, Temp):
+                    self._scratch_a_temp = instr.src
+            else:
+                self._load_op(instr.addr, SCRATCH_C)
+                self._load_op(instr.src,  SCRATCH_A)
+                self._ins(f'st {SCRATCH_A}, {SCRATCH_C}')
 
         elif isinstance(instr, IBinOp):
             self._gen_binop(instr)
@@ -381,6 +477,7 @@ class Codegen:
 
         elif isinstance(instr, ICall):
             self._gen_call(instr)
+            self._invalidate_scratch()
 
         elif isinstance(instr, IRet):
             if instr.src is not None:
@@ -388,19 +485,23 @@ class Codegen:
             self._gen_epilogue(lr_slot, frame_size)
 
         elif isinstance(instr, IJump):
+            self._invalidate_scratch()
             self._ins(f'jmp {instr.target}')
 
         elif isinstance(instr, IJumpIf):
             self._load_op(instr.cond, SCRATCH_A)
             self._ins(f'test {SCRATCH_A}, {SCRATCH_A}')
+            self._invalidate_scratch()
             self._ins(f'jnz {instr.target}')
 
         elif isinstance(instr, IJumpIfNot):
             self._load_op(instr.cond, SCRATCH_A)
             self._ins(f'test {SCRATCH_A}, {SCRATCH_A}')
+            self._invalidate_scratch()
             self._ins(f'jz {instr.target}')
 
         elif isinstance(instr, IInlineAsm):
+            self._invalidate_scratch()
             self._gen_inline_asm(instr)
 
         else:
@@ -482,6 +583,7 @@ class Codegen:
         else:
             raise CodegenError(f"Unknown binop: {op!r}")
 
+        self._scratch_a_temp = None
         self._store_op(SCRATCH_A, instr.dst)
 
     def _gen_compare(self, instr: IBinOp):
@@ -515,6 +617,7 @@ class Codegen:
         else:
             raise CodegenError(f"Unknown unary op: {op!r}")
 
+        self._scratch_a_temp = None
         self._store_op(SCRATCH_A, instr.dst)
 
     # ── Call ──────────────────────────────────────────────────────────────────

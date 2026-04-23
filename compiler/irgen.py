@@ -364,7 +364,13 @@ class IRGen:
             self._emit(IAddrOf(t, self._var_operand(name), loc))
             return t
 
-        # load value
+        # scalar local/param: copy directly from spill slot (no address indirection)
+        if name in self._params or name in self._locals:
+            t = self._tmp()
+            self._emit(ICopy(t, Var(name), loc))
+            return t
+
+        # global: load via address
         addr = self._var_addr(name, loc)
         t    = self._tmp()
         self._emit(ILoad(t, addr, loc))
@@ -386,7 +392,11 @@ class IRGen:
         loc = self._loc(expr)
 
         if isinstance(expr, Ident):
-            return self._var_addr(expr.name, loc)
+            name = expr.name
+            # scalar local/param: use Var directly as the address operand
+            if name in self._params or name in self._locals:
+                return Var(name)
+            return self._var_addr(name, loc)
 
         if isinstance(expr, Index):
             arr  = self._gen_expr(expr.array)
@@ -496,7 +506,10 @@ class IRGen:
         if op in ('++pre', '--pre'):
             addr = self._gen_addr(expr.operand)
             old  = self._tmp()
-            self._emit(ILoad(old, addr, loc))
+            if isinstance(addr, Var):
+                self._emit(ICopy(old, addr, loc))
+            else:
+                self._emit(ILoad(old, addr, loc))
             new_ = self._tmp()
             arith_op = '+' if op == '++pre' else '-'
             self._emit(IBinOp(new_, arith_op, old, ImmInt(1), loc))
@@ -506,7 +519,10 @@ class IRGen:
         if op in ('++post', '--post'):
             addr = self._gen_addr(expr.operand)
             old  = self._tmp()
-            self._emit(ILoad(old, addr, loc))
+            if isinstance(addr, Var):
+                self._emit(ICopy(old, addr, loc))
+            else:
+                self._emit(ILoad(old, addr, loc))
             new_ = self._tmp()
             arith_op = '+' if op == '++post' else '-'
             self._emit(IBinOp(new_, arith_op, old, ImmInt(1), loc))
