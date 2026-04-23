@@ -11,6 +11,15 @@ The codegen/runtime has been updated to the new ABI (r1–r6 args, r7–r18 call
 - These two together will eliminate most of the `&var → addr → load` chains
   that currently bloat every variable access into 3-4 instructions
 
+## C Grammar & Semantic Support
+
+- **Struct support**: Allow member access (`.`) and pointer-to-struct access (`->`)
+- **Function Pointers**: Support function pointer syntax and invocation
+- **Type Casting**: Basic implicit/explicit casting support
+- **Storage Classes**: Handle `static`, `extern`, and `volatile` qualifiers
+- **Bitwise Operators**: Ensure complete coverage of bitwise logic (`&`, `|`, `^`, `~`, `<<`, `>>`) in semantic analysis
+- **Multi-declarations**: Support `int x, y, z;` syntax
+
 ## Parser
 
 - **Array initializer syntax** — `int arr[] = {1, 2, 3};` (currently parse error)
