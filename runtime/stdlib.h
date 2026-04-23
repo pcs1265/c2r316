@@ -20,20 +20,36 @@
 /* ── division helpers (called by compiler for / and %) ─────────────────── */
 
 static int __udiv(unsigned int dividend, unsigned int divisor) {
-    unsigned int q;
-    q = 0;
-    while (dividend >= divisor) {
-        dividend = dividend - divisor;
-        q = q + 1;
+    unsigned int remainder;
+    unsigned int i;
+    remainder = 0;
+    i = 0;
+    while (i < 16) {
+        remainder = (remainder << 1) | (dividend >> 15);
+        dividend = dividend << 1;
+        if (remainder >= divisor) {
+            remainder = remainder - divisor;
+            dividend = dividend | 1;
+        }
+        i = i + 1;
     }
-    return q;
+    return dividend;
 }
 
 static int __umod(unsigned int dividend, unsigned int divisor) {
-    while (dividend >= divisor) {
-        dividend = dividend - divisor;
+    unsigned int remainder;
+    unsigned int i;
+    remainder = 0;
+    i = 0;
+    while (i < 16) {
+        remainder = (remainder << 1) | (dividend >> 15);
+        dividend = dividend << 1;
+        if (remainder >= divisor) {
+            remainder = remainder - divisor;
+        }
+        i = i + 1;
     }
-    return dividend;
+    return remainder;
 }
 
 /* ── MMIO primitives ────────────────────────────────────────────────────── */
