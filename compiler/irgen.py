@@ -84,7 +84,7 @@ class IRGen:
 
         for decl in prog.decls:
             if isinstance(decl, VarDecl):
-                ir.globals.append(decl.name)
+                ir.globals.append((decl.name, max(1, decl.ctype.size())))
             elif isinstance(decl, FuncDecl) and decl.body is not None:
                 ir.functions.append(self._gen_func(decl))
 

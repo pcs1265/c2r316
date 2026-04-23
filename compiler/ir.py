@@ -276,13 +276,13 @@ class IRFunction:
 @dataclass
 class IRProgram:
     functions: List[IRFunction] = field(default_factory=list)
-    globals: List[str] = field(default_factory=list)      # global var names
+    globals: List[Tuple[str, int]] = field(default_factory=list)  # (name, word_count)
     strings: List[Tuple[str, List[int]]] = field(default_factory=list)  # (label, chars)
 
     def dump(self) -> str:
         parts = []
         if self.globals:
-            parts.append('globals: ' + ', '.join(self.globals))
+            parts.append('globals: ' + ', '.join(f'{n}[{w}]' for n, w in self.globals))
         for fn in self.functions:
             parts.append(fn.dump())
         return '\n\n'.join(parts)

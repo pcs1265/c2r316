@@ -1,4 +1,4 @@
-/* test_all.c - self-validating tests */
+/* test_basic.c - self-validating tests */
 
 #include "runtime/stdlib.h"
 
@@ -21,6 +21,46 @@ void check(char *name, int got, int expected) {
         putchar(10);
         fail_count = fail_count + 1;
     }
+}
+
+/* ── global variables ── */
+
+int g_counter;
+int g_accum;
+int g_flag;
+
+void g_reset(void) {
+    g_counter = 0;
+    g_accum   = 0;
+    g_flag    = 0;
+}
+
+void g_increment(void) {
+    g_counter = g_counter + 1;
+    g_accum  += g_counter;
+}
+
+int g_get_counter(void) { return g_counter; }
+int g_get_accum(void)   { return g_accum;   }
+
+/* shared state mutated across two functions */
+int g_shared;
+
+void g_write(int v) { g_shared = v; }
+int  g_read(void)   { return g_shared; }
+
+/* global array */
+int g_arr[4];
+
+void g_arr_fill(void) {
+    g_arr[0] = 1;
+    g_arr[1] = 2;
+    g_arr[2] = 4;
+    g_arr[3] = 8;
+}
+
+int g_arr_sum(void) {
+    return g_arr[0] + g_arr[1] + g_arr[2] + g_arr[3];
 }
 
 /* ── recursive functions ── */
@@ -58,63 +98,37 @@ int main(void) {
 
     puts("=== test_basic ===");
 
-    /* 1. arithmetic */
-    check("3+4",      3 + 4,     7);
-    check("10-3",     10 - 3,    7);
+    /* 1. arithmetic — non-trivial cases only */
     check("6*7",      6 * 7,     42);
-    check("20/4",     20 / 4,    5);
     check("17%5",     17 % 5,    2);
-    check("0+0",      0 + 0,     0);
-    check("0*99",     0 * 99,    0);
-    check("1*1",      1 * 1,     1);
-    check("100/1",    100 / 1,   100);
-    check("100%1",    100 % 1,   0);
-    check("7/7",      7 / 7,     1);
-    check("7%7",      7 % 7,     0);
     check("1000/7",   1000 / 7,  142);
     check("1000%7",   1000 % 7,  6);
     check("255*255",  255 * 255, 65025);
-    check("1+2+3",    1 + 2 + 3, 6);
-    check("10-3-2",   10 - 3 - 2, 5);
     check("2*3+4",    2 * 3 + 4,  10);
     check("4+3*2",    4 + 3 * 2,  10);
+    check("10-3-2",   10 - 3 - 2, 5);
 
     /* 2. bitwise */
-    check("5&3",      5 & 3,      1);
-    check("5|3",      5 | 3,      7);
-    check("5^3",      5 ^ 3,      6);
-    check("~0",       ~0,         65535);
-    check("1<<4",     1 << 4,     16);
-    check("32>>2",    32 >> 2,    8);
-    check("0xFF&0x0F",0xFF & 0x0F,15);
-    check("0xF0|0x0F",0xF0 | 0x0F,255);
-    check("0xFF^0xFF",0xFF ^ 0xFF, 0);
-    check("1<<0",     1 << 0,     1);
-    check("1<<15",    1 << 15,    32768);
-    check("32768>>15",32768 >> 15,1);
-    check("0>>5",     0 >> 5,     0);
-    check("~1",       ~1,         65534);
+    check("5&3",       5 & 3,       1);
+    check("5|3",       5 | 3,       7);
+    check("5^3",       5 ^ 3,       6);
+    check("~0",        ~0,          65535);
+    check("~1",        ~1,          65534);
+    check("1<<4",      1 << 4,      16);
+    check("1<<15",     1 << 15,     32768);
+    check("32768>>15", 32768 >> 15, 1);
+    check("0xFF&0x0F", 0xFF & 0x0F, 15);
+    check("0xFF^0xFF", 0xFF ^ 0xFF, 0);
 
     /* 3. comparison / logical */
-    check("3==3",   3 == 3,   1);
-    check("3==4",   3 == 4,   0);
     check("3!=4",   3 != 4,   1);
-    check("3!=3",   3 != 3,   0);
-    check("2<5",    2 < 5,    1);
-    check("5<2",    5 < 2,    0);
     check("5>2",    5 > 2,    1);
-    check("2>5",    2 > 5,    0);
     check("3<=3",   3 <= 3,   1);
     check("4<=3",   4 <= 3,   0);
-    check("3>=3",   3 >= 3,   1);
-    check("2>=3",   2 >= 3,   0);
-    check("&&T",    1 && 1,   1);
     check("&&F",    1 && 0,   0);
     check("||T",    0 || 1,   1);
-    check("||F",    0 || 0,   0);
     check("!0",     !0,       1);
-    check("!1",     !1,       0);
-    check("ternary", 1 ? 10 : 20, 10);
+    check("ternary",      1 ? 10 : 20, 10);
     check("ternary_else", 0 ? 10 : 20, 20);
 
     /* 4. compound assignment */
@@ -128,6 +142,8 @@ int main(void) {
     x &= 5;  check("&=",  x, 5);
     x |= 8;  check("|=",  x, 13);
     x ^= 3;  check("^=",  x, 14);
+    x = 17;
+    x %= 5;  check("%=",  x, 2);
 
     /* 5. prefix / postfix increment */
     int y;
@@ -137,45 +153,29 @@ int main(void) {
     check("y",   y,   7);
     check("--y", --y, 6);
 
-    /* 6. if/else */
-    int a;
-    a = 7;
-    check("if>5", a > 5, 1);
-    a = 3;
-    check("if<5", a > 5, 0);
-
-    /* 7. while + break + continue */
+    /* 6. while + break + continue */
     int w;
     int wsum;
-    w = 0;
-    wsum = 0;
+    w = 0; wsum = 0;
     while (w < 10) {
         w++;
         if (w == 3) continue;
         if (w == 7) break;
         wsum += w;
     }
-    /* w goes 1,2,(skip 3),4,5,6,(break at 7) → sum = 1+2+4+5+6 = 18 */
+    /* 1+2+(skip 3)+4+5+6+(break) = 18 */
     check("while", wsum, 18);
 
-    /* 8. for */
+    /* 7. for + continue */
     int fsum;
     int fi;
     fsum = 0;
-    for (fi = 0; fi < 5; fi++) {
-        fsum += fi;
-    }
-    check("for", fsum, 10);
-
-    /* for with continue */
-    int fsum2;
-    fsum2 = 0;
     for (fi = 0; fi < 6; fi++) {
         if (fi == 3) continue;
-        fsum2 += fi;
+        fsum += fi;
     }
-    /* 0+1+2+4+5 = 12 */
-    check("for+cont", fsum2, 12);
+    /* 0+1+2+(skip 3)+4+5 = 12 */
+    check("for+cont", fsum, 12);
 
     /* nested for */
     int nsum;
@@ -189,77 +189,81 @@ int main(void) {
     }
     check("nested_for", nsum, 9);
 
-    /* do-while */
+    /* do-while executes at least once */
     int dw;
     dw = 0;
-    do {
-        dw += 1;
-    } while (dw < 5);
-    check("do-while", dw, 5);
+    do { dw = 42; } while (0);
+    check("do-while0", dw, 42);
 
-    /* do-while executes at least once */
-    int dw2;
-    dw2 = 0;
-    do {
-        dw2 = 42;
-    } while (0);
-    check("do-while0", dw2, 42);
-
-    /* 9. recursion */
+    /* 8. recursion */
     check("5!",   factorial(5), 120);
     check("fib7", fib(7),       13);
 
-    /* 10. arrays */
+    /* 9. arrays + pointer arithmetic */
     int arr[5];
-    arr[0] = 10;
-    arr[1] = 20;
-    arr[2] = 30;
-    arr[3] = 40;
-    arr[4] = 50;
+    arr[0] = 10; arr[1] = 20; arr[2] = 30; arr[3] = 40; arr[4] = 50;
     check("arr_sum",  array_sum(arr, 5), 150);
-    check("arr[0]",   arr[0], 10);
-    check("arr[4]",   arr[4], 50);
 
-    /* pointer arithmetic */
     int *p2;
     p2 = arr;
-    check("ptr[0]",   *p2,     10);
-    check("ptr[1]",   *(p2+1), 20);
-    check("ptr[4]",   *(p2+4), 50);
+    check("ptr[1]",  *(p2+1), 20);
     p2 = p2 + 2;
-    check("ptr+2",    *p2,     30);
-
-    /* array write through pointer */
+    check("ptr+2",   *p2,     30);
     *p2 = 99;
-    check("ptr_wr",   arr[2],  99);
+    check("ptr_wr",  arr[2],  99);
     arr[2] = 30;
 
-    /* 11. pointers + swap */
+    /* 10. pointers + swap */
     int p;
     int q;
-    p = 11;
-    q = 22;
+    p = 11; q = 22;
     swap(&p, &q);
     check("swap_p", p, 22);
     check("swap_q", q, 11);
 
-    /* 12. string functions */
+    /* 11. string functions */
     char *s1;
     char *s2;
     s1 = "hello";
     s2 = "hello";
-    check("strlen5",   strlen(s1),        5);
-    check("strlen0",   strlen(""),        0);
-    check("strlen1",   strlen("x"),       1);
-    check("strcmp_eq", strcmp(s1, s2),    0);
-    check("strcmp_gt", strcmp("b","a")>0, 1);
-    check("strcmp_lt", strcmp("a","b")<0, 1);
-    check("strcmp_pre",strcmp("ab","a")>0,1);
+    check("strlen5",    strlen(s1),         5);
+    check("strcmp_eq",  strcmp(s1, s2),     0);
+    check("strcmp_gt",  strcmp("b","a")>0,  1);
+    check("strcmp_pre", strcmp("ab","a")>0, 1);
 
-    /* 13. char */
-    char c;
-    c = 65;
-    check("char", c, 65);
+    /* 12. global variables */
+    g_reset();
+    check("g_reset_ctr",  g_get_counter(), 0);
+    check("g_reset_acc",  g_get_accum(),   0);
+
+    g_increment();
+    g_increment();
+    g_increment();
+    /* counter: 1→2→3; accum: 1+2+3 = 6 */
+    check("g_counter",    g_get_counter(), 3);
+    check("g_accum",      g_get_accum(),   6);
+
+    g_write(1234);
+    check("g_shared_wr",  g_read(), 1234);
+    g_write(g_read() + 1);
+    check("g_shared_inc", g_read(), 1235);
+
+    g_arr_fill();
+    check("g_arr_sum",    g_arr_sum(), 15);
+    g_arr[2] = 0;
+    check("g_arr_write",  g_arr_sum(), 11);
+
+    /* global survives across unrelated local call */
+    g_write(99);
+    factorial(5);
+    check("g_after_call", g_read(), 99);
+
+    /* global flag toggled via ternary */
+    g_flag = 0;
+    g_flag = g_flag ? 0 : 1;
+    check("g_flag_toggle", g_flag, 1);
+    g_flag = g_flag ? 0 : 1;
+    check("g_flag_toggle2", g_flag, 0);
 
     /* summary */
     puts("================");

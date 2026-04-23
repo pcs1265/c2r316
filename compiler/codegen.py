@@ -292,8 +292,8 @@ class Codegen:
 
         if prog.globals:
             self._emit('; -- global variables --')
-            for name in prog.globals:
-                self._emit(f'{name}: dw 0')
+            for name, words in prog.globals:
+                self._emit(f'{name}: dw {", ".join(["0"] * words)}')
 
         if prog.strings:
             self._emit('')
