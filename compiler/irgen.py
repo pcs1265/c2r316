@@ -495,7 +495,14 @@ class IRGen:
             return t
 
         if op == '&':
-            return self._gen_addr(expr.operand)
+            addr = self._gen_addr(expr.operand)
+            # If _gen_addr returned a Var directly (scalar local/param), we need
+            # the actual stack address as a value — emit IAddrOf to materialise it.
+            if isinstance(addr, Var):
+                t = self._tmp()
+                self._emit(IAddrOf(t, addr, loc))
+                return t
+            return addr
 
         if op == '*':
             ptr = self._gen_expr(expr.operand)
