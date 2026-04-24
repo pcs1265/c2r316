@@ -554,8 +554,8 @@ class Codegen:
 
         st_pat  = re.compile(r'^(\s*)st (\w+), (r30), (\d+)$')
         ld_pat  = re.compile(r'^(\s*)ld (\w+), (r30), (\d+)$')
-        # Patterns that write a destination register
-        dst_pat = re.compile(r'^\s*(?:ld|mov|add|sub|mul|and|or|xor|adc|not)\s+(\w+)')
+        # Patterns that write a destination register (all ALU/memory ops with a dst)
+        dst_pat = re.compile(r'^\s*(?:ld|mov|add|sub|mul|mulh|and|or|xor|adc|sbb|shl|shr|not)\s+(\w+)')
         label   = re.compile(r'^\s*\.\w+:')
         branch  = re.compile(r'^\s*j')
 

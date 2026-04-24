@@ -119,18 +119,6 @@ def allocate(fn: IRFunction) -> RegMap:
         active.clear()
         active.extend(still_active)
 
-    def _spill_one(active: List, pool: List) -> bool:
-        """Spill the interval with the furthest end to free a register. Return True if spilled."""
-        if not active:
-            return False
-        # find the one with the latest end
-        worst_idx = max(range(len(active)), key=lambda i: active[i][0])
-        end, tid, reg = active.pop(worst_idx)
-        # evict: remove assignment, return reg to pool
-        del assignment[tid]
-        pool.append(reg)
-        return True
-
     for iv in intervals:
         _expire(active_caller, caller_pool, iv.start)
         _expire(active_callee, callee_pool, iv.start)
