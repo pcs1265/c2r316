@@ -62,7 +62,7 @@ static int __umod(unsigned int dividend, unsigned int divisor) {
 
 /* ── MMIO primitives ────────────────────────────────────────────────────── */
 
-static void _term_putch(int c) {
+__attribute__((always_inline)) static void _term_putch(int c) {
     asm("st %0, 0x9FB5" : "r"(c));
 }
 
@@ -79,11 +79,11 @@ static int _term_getch(void) {
 
 /* ── putchar / getchar ──────────────────────────────────────────────────── */
 
-static void putchar(int c) {
+__attribute__((always_inline)) static void putchar(int c) {
     _term_putch(c);
 }
 
-static int getchar(void) {
+__attribute__((always_inline)) static int getchar(void) {
     return _term_getch();
 }
 
