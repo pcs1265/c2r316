@@ -43,6 +43,36 @@ int apply(int (*op)(int, int), int a, int b) {
 
 typedef int (*binop_t)(int, int);
 
+/* ── function returning a function pointer ── */
+
+binop_t get_op(int n) {
+    if (n == 0) return add;
+    if (n == 1) return sub;
+    return mul;
+}
+
+/* ── struct with function pointer field ── */
+
+struct binop_obj {
+    binop_t fn;
+    int bias;
+};
+
+int call_obj(struct binop_obj *obj, int a, int b) {
+    return obj->fn(a, b) + obj->bias;
+}
+
+/* ── fold: apply funcptr over int array ── */
+
+int fold(binop_t op, int *arr, int len, int init) {
+    int acc = init;
+    int i;
+    for (i = 0; i < len; i = i + 1) {
+        acc = op(acc, arr[i]);
+    }
+    return acc;
+}
+
 /* ── global function pointers ── */
 
 binop_t g_op;
@@ -86,8 +116,43 @@ int main(void) {
     check("array_ops[1]", ops[1](10, 20), -10);
     check("array_ops[2]", ops[2](10, 20), 200);
 
-    /* 6. pointer to function returning pointer (more complex) */
-    /* Skipping for now to keep it simple and likely to pass */
+    /* 6. function returning a function pointer */
+    binop_t op6 = get_op(0);
+    check("ret_funcptr_add", op6(3, 4), 7);
+    op6 = get_op(1);
+    check("ret_funcptr_sub", op6(10, 3), 7);
+    op6 = get_op(2);
+    check("ret_funcptr_mul", op6(3, 4), 12);
+
+    /* 7. immediate call of returned function pointer: get_op(n)(a, b) */
+    check("chain_add", get_op(0)(10, 20), 30);
+    check("chain_sub", get_op(1)(10, 20), -10);
+    check("chain_mul", get_op(2)(3,  7),  21);
+
+    /* 8. struct with function pointer field */
+    struct binop_obj obj;
+    obj.fn = add;
+    obj.bias = 100;
+    check("struct_fp_add", call_obj(&obj, 3, 4), 107);
+    obj.fn = mul;
+    obj.bias = 0;
+    check("struct_fp_mul", call_obj(&obj, 5, 6), 30);
+
+    /* 9. fold (apply funcptr over array) */
+    int arr[4];
+    arr[0] = 1; arr[1] = 2; arr[2] = 3; arr[3] = 4;
+    check("fold_add", fold(add, arr, 4, 0),  10);
+    check("fold_mul", fold(mul, arr, 4, 1),  24);
+
+    /* 10. repeated reassignment — pointer tracks latest assignment */
+    binop_t r = add;
+    check("reassign_1", r(2, 3), 5);
+    r = sub;
+    check("reassign_2", r(10, 3), 7);
+    r = mul;
+    check("reassign_3", r(4, 5), 20);
+    r = add;
+    check("reassign_4", r(1, 1), 2);
 
     /* summary */
     puts("================");
