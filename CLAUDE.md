@@ -49,7 +49,6 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 ## Known Issues
 
 - Parser does not support array initializer syntax `{1, 2, 3}`
-- Stack arguments for 7th+ params not implemented (r1–r6 register args work)
 - `long` (32-bit) type has no code generation support
 - `-g` flag produces no source annotations: parser doesn't set `line` attribute on AST nodes, so `irgen._loc()` always returns `None`
 - Integer literals larger than 16 bits are passed through to codegen as-is; codegen does not handle multi-word constants

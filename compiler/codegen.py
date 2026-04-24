@@ -59,15 +59,19 @@ class FuncContext:
     Spill-slot allocator with temp recycling.
     Vars (locals/params) get permanent slots.
     Temps get slots recycled after their last use.
+
+    outgoing_slots: number of words at [sp+0..sp+outgoing_slots-1] reserved
+    for outgoing stack arguments; all other slots start above this area.
     """
 
-    def __init__(self, instrs: list, params: list[str], local_sizes: Dict[str, int] = None):
+    def __init__(self, instrs: list, params: list[str], local_sizes: Dict[str, int] = None,
+                 outgoing_slots: int = 0):
         self._slots:    Dict[str, int] = {}
         self._free:     list[int]      = []   # recycled slots available
-        self._next      = 0
-        self._peak      = 0
+        self._next      = outgoing_slots       # start above the outgoing-arg area
+        self._peak      = outgoing_slots
 
-        # params first — permanent slots 0..len(params)-1
+        # params first — permanent slots starting at outgoing_slots
         for name in params:
             self._alloc_permanent(f'v_{name}')
 
@@ -352,8 +356,13 @@ class Codegen:
         self._scratch_a_temp = None
         self._scratch_c_temp = None
         self._cur_instr_idx = 0
+
+        # Pre-scan: how many outgoing stack-argument words does this function need?
+        # Reserve that many slots at [sp+0..sp+OA-1] so calls can write args there.
+        outgoing_slots = self._max_outgoing_stack_slots(fn)
+
         # dry run to compute true peak frame size with recycling
-        dry = FuncContext(fn.instrs, fn.params, fn.local_sizes)
+        dry = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots)
         for i, instr in enumerate(fn.instrs):
             for op in instr.uses():
                 if isinstance(op, Var):
@@ -364,7 +373,7 @@ class Codegen:
             dry.free_dead_temps(i)
         peak = dry.frame_size
 
-        self._ctx = FuncContext(fn.instrs, fn.params, fn.local_sizes)
+        self._ctx = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots)
 
         # pre-scan: ensure all Var operands get permanent slots
         for instr in fn.instrs:
@@ -381,11 +390,13 @@ class Codegen:
         self._callee_saves = self._detect_callee_saves(fn)
         self._callee_save_n = len(self._callee_saves)
 
-        # Stack frame layout (per docs/ABI.md §4):
-        #   [sp+0 .. sp+F-1]           : local/spill slots (F = peak)
-        #   [sp+F .. sp+F+5]           : arg-reg spill area (variadic only, 6 words)
+        # Stack frame layout (per docs/ABI.md §4 + §2.3):
+        #   [sp+0 .. sp+OA-1]          : outgoing stack-arg area (OA words, caller view)
+        #   [sp+OA .. sp+F-1]          : local variables / spill slots
+        #   [sp+F .. sp+F+VS-1]        : arg-reg spill area (variadic only, 6 words)
         #   [sp+F+VS .. sp+F+VS+CS-1]  : saved callee-saved registers
         #   [sp+F+VS+CS]               : saved LR (non-leaf only)
+        # peak already includes OA (FuncContext starts allocating at outgoing_slots).
         VA_SPILL_N = 6
         VS = VA_SPILL_N if fn.is_variadic else 0
         self._va_spill_n = VS
@@ -419,13 +430,18 @@ class Codegen:
             for i, reg in enumerate(ARG_REGS):
                 self._ins(f'st {reg}, {SP}, {F + i}')
 
-        # Copy register arguments to their named spill slots — §5.2 step 4
-        # (for variadic functions the arg-reg spill above already captured them;
-        # this loop still copies fixed params into named slots for normal use)
+        # Copy arguments to their named spill slots — §5.2 step 4
+        # Params 0..5: from argument registers a0-a5.
+        # Params 6+:   from stack arg area above the callee's frame (§4.3).
+        stack_arg_base = F + VS + CS + (0 if self._is_leaf else 1)
         for i, pname in enumerate(fn.params):
+            slot = self._ctx.slot(Var(pname))
             if i < len(ARG_REGS):
-                slot = self._ctx.slot(Var(pname))
                 self._ins(f'st {ARG_REGS[i]}, {SP}, {slot}')
+            else:
+                overflow_idx = i - len(ARG_REGS)
+                self._ins(f'ld {SCRATCH_A}, {SP}, {stack_arg_base + overflow_idx}')
+                self._ins(f'st {SCRATCH_A}, {SP}, {slot}')
 
         # Generate instructions
         for idx, instr in enumerate(fn.instrs):
@@ -434,6 +450,15 @@ class Codegen:
             self._ctx.free_dead_temps(idx)
 
         self._emit('')
+
+    def _max_outgoing_stack_slots(self, fn: IRFunction) -> int:
+        """Count the max overflow stack arg words needed across all calls."""
+        max_slots = 0
+        for instr in fn.instrs:
+            if isinstance(instr, ICall):
+                overflow = max(0, len(instr.args) - len(ARG_REGS))
+                max_slots = max(max_slots, overflow)
+        return max_slots
 
     def _detect_callee_saves(self, fn: IRFunction) -> List[str]:
         """
@@ -664,14 +689,21 @@ class Codegen:
     # ── Call ──────────────────────────────────────────────────────────────────
 
     def _gen_call(self, instr: ICall):
-        # Load arguments into a0-a5 (r1-r6)
+        # Load first 6 arguments into a0-a5 (r1-r6)
         for i, arg in enumerate(instr.args):
             if i < len(ARG_REGS):
                 self._load_op(arg, ARG_REGS[i])
 
-        # TODO: stack arguments for 7th+ params (see docs/ABI.md §2.3)
-        # When a function has more than 6 arguments, the remaining ones
-        # must be stored on the stack by the caller before the call.
+        # Stack arguments for 7th+ params (§2.3 / §4.4):
+        # The caller reserves [sp+0..sp+OA-1] for outgoing stack args (OA words
+        # pre-allocated in its frame). Store overflow args there so they are at
+        # [caller_sp + overflow_idx]; after the callee's `sub sp, callee_total`
+        # they land at [callee_sp + callee_total + overflow_idx] as §4.3 requires.
+        for i, arg in enumerate(instr.args):
+            if i >= len(ARG_REGS):
+                overflow_idx = i - len(ARG_REGS)
+                self._load_op(arg, SCRATCH_A)
+                self._ins(f'st {SCRATCH_A}, {SP}, {overflow_idx}')
 
         if isinstance(instr.func, Global):
             self._ins(f'jmp {LR}, {instr.func.name}')
