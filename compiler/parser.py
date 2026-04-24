@@ -60,10 +60,12 @@ class Parser:
     _TYPE_IDENTS = {'va_list'}  # va_list is int* alias
 
     def _at_type_start(self) -> bool:
-        """True if current token starts a type (keyword or va_list ident)."""
+        """True if current token starts a type (keyword, va_list, or typedef name)."""
         if self._cur().kind in self.TYPE_STARTS:
             return True
-        return self._cur().kind == TK.IDENT and self._cur().value in self._TYPE_IDENTS
+        if self._cur().kind == TK.IDENT:
+            return self._cur().value in self._TYPE_IDENTS or self._cur().value in self._typedefs
+        return False
 
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
@@ -71,6 +73,8 @@ class Parser:
         # struct/union tag registry: tag → CStruct/CUnion (possibly incomplete)
         self._struct_tags: dict[str, CStruct] = {}
         self._union_tags:  dict[str, CUnion]  = {}
+        # typedef alias registry: name → CType
+        self._typedefs: dict[str, CType] = {}
 
     def _parse_base_type(self) -> CType:
         if self._at(TK.STRUCT):
@@ -81,6 +85,9 @@ class Parser:
         if self._at(TK.IDENT) and self._cur().value == 'va_list':
             self._eat(TK.IDENT)
             return CPointer(CInt())
+        # typedef alias
+        if self._at(TK.IDENT) and self._cur().value in self._typedefs:
+            return self._typedefs[self._eat(TK.IDENT).value]
         unsigned = bool(self._try_eat(TK.UNSIGNED))
         if self._try_eat(TK.INT):
             return CInt(unsigned)
@@ -119,7 +126,7 @@ class Parser:
             if tag:
                 registry[tag] = rec
 
-        # optional body
+        # optional body — mutates rec in-place so typedef aliases see the fields
         if self._at(TK.LBRACE):
             self._eat(TK.LBRACE)
             fields: list[StructField] = []
@@ -179,7 +186,31 @@ class Parser:
             decls.extend(self._parse_top_decl())
         return Program(decls)
 
+    def _parse_typedef(self):
+        """typedef <type> <name>; — registers alias in self._typedefs"""
+        self._eat(TK.TYPEDEF)
+        ret = self._parse_base_type()
+        while self._try_eat(TK.STAR):
+            ret = CPointer(ret)
+        # function pointer typedef: typedef ret (*name)(params);
+        if self._at(TK.LPAREN) and self._peek().kind == TK.STAR:
+            self._eat(TK.LPAREN)
+            self._eat(TK.STAR)
+            alias = self._eat(TK.IDENT).value
+            self._eat(TK.RPAREN)
+            params, variadic = self._parse_params()
+            param_types = [p.ctype for p in params]
+            self._typedefs[alias] = CPointer(CFunction(ret, param_types, variadic))
+        elif self._at(TK.IDENT):
+            alias = self._eat(TK.IDENT).value
+            self._typedefs[alias] = ret
+        self._eat(TK.SEMICOLON)
+
     def _parse_top_decl(self) -> list:
+        if self._at(TK.TYPEDEF):
+            self._parse_typedef()
+            return []
+
         is_static = bool(self._try_eat(TK.STATIC))
         is_extern = bool(self._try_eat(TK.EXTERN))
 
@@ -588,7 +619,8 @@ class Parser:
             return UnaryOp('--pre', self._parse_unary())
         # cast: (type)expr
         if self._at(TK.LPAREN) and (self._peek().kind in self.TYPE_STARTS or
-                (self._peek().kind == TK.IDENT and self._peek().value in self._TYPE_IDENTS)):
+                (self._peek().kind == TK.IDENT and (self._peek().value in self._TYPE_IDENTS
+                                                     or self._peek().value in self._typedefs))):
             self._eat(TK.LPAREN)
             t = self._parse_type()
             self._eat(TK.RPAREN)
