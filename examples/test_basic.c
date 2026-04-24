@@ -265,6 +265,18 @@ int main(void) {
     g_flag = g_flag ? 0 : 1;
     check("g_flag_toggle2", g_flag, 0);
 
+    /* inline regression: putchar with computed (non-constant) arg — exercises
+       Temp-arg inline path that previously caused stale copy-source corruption */
+    {
+        int ch;
+        ch = 60 + 5;    /* 65 = 'A' */
+        putchar(ch);    /* must print 'A', not garbage */
+        putchar(10);
+        ch = ch + 1;    /* 66 = 'B' */
+        putchar(ch);    /* must print 'B' */
+        putchar(10);
+    }
+
     /* summary */
     puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);
