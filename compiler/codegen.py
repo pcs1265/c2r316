@@ -932,7 +932,10 @@ class Codegen:
         op = instr.op
 
         if op == '-':
-            self._ins(f'sub {SCRATCH_A}, r0, {SCRATCH_A}')
+            # Avoid D=S aliasing in sub: copy to SCRATCH_B first so the
+            # hardware reads the old value before the write.
+            self._ins(f'mov {SCRATCH_B}, {SCRATCH_A}')
+            self._ins(f'sub {SCRATCH_A}, r0, {SCRATCH_B}')
         elif op == '~':
             self._ins(f'xor {SCRATCH_A}, 0xFFFF')
         else:
