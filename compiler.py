@@ -17,6 +17,8 @@ from compiler.semantic       import Analyzer, SemanticError
 from compiler.irgen          import IRGen,  IRGenError
 from compiler.codegen        import Codegen, CodegenError
 from compiler.preprocessor   import preprocess, PreprocessorError
+from compiler.dce            import dce
+from compiler.fold           import fold
 
 
 def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
@@ -136,6 +138,12 @@ def compile_c(src: str, src_name: str = '<stdin>',
 
     if stop_after == 'ir':
         raise SystemExit(0)
+
+    # 4.5. Optimization: constant folding → DCE
+    _v('Constant folding + copy propagation ...')
+    fold(ir)
+    _v('Dead code elimination ...')
+    dce(ir)
 
     # 5. code generation (IR → asm)
     _v('Code generation ...')

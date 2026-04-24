@@ -1,5 +1,18 @@
 # TODO
 
+## Optimizations
+
+Current passes: constant folding + copy propagation (`compiler/fold.py`), dead code elimination + dead function elimination (`compiler/dce.py`).
+
+Potential improvements:
+
+- **Copy prop: Var sources** — currently blocked because `Var` in IStore/ILoad address position means "direct slot access" not "load and dereference". Fix requires distinguishing address-position uses from value-position uses before enabling Var propagation.
+- **Common subexpression elimination (CSE)** — `&arr` is recomputed on every array access; CSE would deduplicate these IAddrOf instructions within a basic block.
+- **Register allocation** — the current allocator spills every temp to a stack slot. Even a simple linear-scan allocator over the caller-saved registers (r7–r18) would eliminate most spill/reload pairs.
+- **Peephole: redundant stores** — `st r7, r30, N` immediately followed by `ld r7, r30, N` (or vice versa) can be eliminated at the assembly level.
+- **Dead store elimination** — stores to locals that are never loaded again (requires liveness analysis over Vars, not just Temps).
+- **Inlining** — small leaf functions (e.g. `putchar`) called in hot loops are good candidates.
+
 ## Known Issues
 
 - Parser does not support array initializer syntax `{1, 2, 3}`
