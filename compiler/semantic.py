@@ -299,6 +299,12 @@ class Analyzer:
             expr.ctype = common_type(t1, t2)
             return expr.ctype
 
+        if isinstance(expr, InitList):
+            elem_types = [self._analyze_expr(e) for e in expr.elems]
+            elem_t = elem_types[0] if elem_types else CInt()
+            expr.ctype = CArray(elem_t, len(expr.elems))
+            return expr.ctype
+
         raise SemanticError(f"Unknown expression type: {type(expr)}")
 
     # ── Type Compatibility ───────────────────────────────────────────────────────

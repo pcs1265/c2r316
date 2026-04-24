@@ -216,6 +216,12 @@ class Expr(Node):
     pass
 
 @dataclass
+class InitList(Expr):
+    """Brace-enclosed initializer list: {e0, e1, ...}"""
+    elems: List['Expr']
+    ctype: CType = None
+
+@dataclass
 class IntLit(Expr):
     value: int
     ctype: CType = field(default_factory=CInt)
@@ -375,6 +381,10 @@ def dump_ast(node, indent: int = 0) -> str:
         return f'{prefix}AsmStmt("{node.text}"{", " + inputs if inputs else ""})'
 
     # ── Expressions ──
+
+    if isinstance(node, InitList):
+        elems = ', '.join(dump_ast(e, 0) for e in node.elems)
+        return f'InitList({{{elems}}})'
 
     if isinstance(node, IntLit):
         return f'IntLit({node.value})'

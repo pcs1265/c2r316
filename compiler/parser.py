@@ -202,14 +202,22 @@ class Parser:
 
             init = None
             if self._try_eat(TK.ASSIGN):
-                init = self._parse_expr()
+                if self._at(TK.LBRACE):
+                    init = self._parse_init_list()
+                else:
+                    init = self._parse_expr()
+            if isinstance(vtype, CArray) and vtype.length is None and isinstance(init, InitList):
+                vtype = CArray(vtype.base, len(init.elems))
             results.append(VarDecl(name, vtype, init, is_global=True, is_static=is_static))
 
             while self._try_eat(TK.COMMA):
                 extra_name = self._eat(TK.IDENT).value
                 extra_init = None
                 if self._try_eat(TK.ASSIGN):
-                    extra_init = self._parse_expr()
+                    if self._at(TK.LBRACE):
+                        extra_init = self._parse_init_list()
+                    else:
+                        extra_init = self._parse_expr()
                 results.append(VarDecl(extra_name, vtype, extra_init, is_global=True))
 
             self._eat(TK.SEMICOLON)
@@ -239,7 +247,11 @@ class Parser:
         self._eat(TK.LBRACE)
         stmts = []
         while not self._at(TK.RBRACE, TK.EOF):
-            stmts.append(self._parse_stmt())
+            result = self._parse_stmt()
+            if isinstance(result, list):
+                stmts.extend(result)
+            else:
+                stmts.append(result)
         self._eat(TK.RBRACE)
         return Block(stmts)
 
@@ -345,7 +357,8 @@ class Parser:
             self._eat(TK.SEMICOLON)
             init = None
         elif self._at(*self.TYPE_STARTS):
-            init = self._parse_local_decl()
+            decls = self._parse_local_decl()
+            init = decls[0] if len(decls) == 1 else Block(decls)
         else:
             init = ExprStmt(self._parse_expr())
             self._eat(TK.SEMICOLON)
@@ -364,18 +377,45 @@ class Parser:
         body = self._parse_stmt()
         return ForStmt(init, cond, step, body)
 
-    def _parse_local_decl(self) -> DeclStmt:
+    def _parse_init_list(self) -> InitList:
+        self._eat(TK.LBRACE)
+        elems = []
+        while not self._at(TK.RBRACE, TK.EOF):
+            elems.append(self._parse_assign())
+            if not self._try_eat(TK.COMMA):
+                break
+        self._eat(TK.RBRACE)
+        return InitList(elems)
+
+    def _parse_local_decl(self) -> list:
         vtype, name = self._parse_type_and_name()
         # struct/union type-only declaration inside a block (`struct foo { ... };`)
         if not name and isinstance(vtype, (CStruct, CUnion)):
             self._eat(TK.SEMICOLON)
-            # dummy: nothing to declare, but valid syntax
             raise ParseError(f"Line {self._cur().line}: type-only declaration inside block has no effect")
+        results = []
         init = None
         if self._try_eat(TK.ASSIGN):
-            init = self._parse_expr()
+            if self._at(TK.LBRACE):
+                init = self._parse_init_list()
+            else:
+                init = self._parse_assign()
+        # infer array length from initializer if [] was used
+        if isinstance(vtype, CArray) and vtype.length is None and isinstance(init, InitList):
+            vtype = CArray(vtype.base, len(init.elems))
+        results.append(DeclStmt(VarDecl(name, vtype, init, is_global=False)))
+        # multi-declaration: int x = 1, y, z = 3;
+        while self._try_eat(TK.COMMA):
+            extra_name = self._eat(TK.IDENT).value
+            extra_init = None
+            if self._try_eat(TK.ASSIGN):
+                if self._at(TK.LBRACE):
+                    extra_init = self._parse_init_list()
+                else:
+                    extra_init = self._parse_assign()
+            results.append(DeclStmt(VarDecl(extra_name, vtype, extra_init, is_global=False)))
         self._eat(TK.SEMICOLON)
-        return DeclStmt(VarDecl(name, vtype, init, is_global=False))
+        return results
 
     # ── Expression Parsing (operator precedence) ─────────────────────────────────────────
 

@@ -84,7 +84,13 @@ class IRGen:
 
         for decl in prog.decls:
             if isinstance(decl, VarDecl):
-                ir.globals.append((decl.name, max(1, decl.ctype.size())))
+                words = max(1, decl.ctype.size())
+                init_vals = None
+                if isinstance(decl.init, InitList):
+                    init_vals = [e.value if isinstance(e, IntLit) else 0 for e in decl.init.elems]
+                elif isinstance(decl.init, IntLit):
+                    init_vals = [decl.init.value]
+                ir.globals.append((decl.name, words, init_vals))
             elif isinstance(decl, FuncDecl) and decl.body is not None:
                 ir.functions.append(self._gen_func(decl))
 
@@ -151,9 +157,22 @@ class IRGen:
         elif isinstance(stmt, DeclStmt):
             d = stmt.decl
             if d.init is not None:
-                val = self._gen_expr(d.init)
-                addr = self._var_addr(d.name, self._loc(stmt))
-                self._emit(IStore(addr, val, self._loc(stmt)))
+                loc = self._loc(stmt)
+                if isinstance(d.init, InitList):
+                    elem_sz = d.ctype.base.size() if isinstance(d.ctype, CArray) else 1
+                    base = self._var_addr(d.name, loc)
+                    for i, elem in enumerate(d.init.elems):
+                        val = self._gen_expr(elem)
+                        if i == 0:
+                            self._emit(IStore(base, val, loc))
+                        else:
+                            t_off = self._tmp()
+                            self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
+                            self._emit(IStore(t_off, val, loc))
+                else:
+                    val = self._gen_expr(d.init)
+                    addr = self._var_addr(d.name, loc)
+                    self._emit(IStore(addr, val, loc))
 
         elif isinstance(stmt, ExprStmt):
             self._gen_expr(stmt.expr)
