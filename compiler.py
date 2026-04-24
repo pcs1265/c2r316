@@ -50,7 +50,8 @@ def _print_opt_stats(stats: list):
         sign_i = '+' if di >= 0 else ''
         sign_f = '+' if df >= 0 else ''
         print(f'  {name}:', file=sys.stderr)
-        print(f'    instrs : {bi:4d} -> {ai:4d}  ({sign_i}{di})', file=sys.stderr)
+        label = 'lines ' if name == 'ASM peephole' else 'instrs'
+        print(f'    {label}: {bi:4d} -> {ai:4d}  ({sign_i}{di})', file=sys.stderr)
         if df != 0:
             print(f'    funcs  : {bf:4d} -> {af:4d}  ({sign_f}{df})', file=sys.stderr)
 
@@ -188,11 +189,10 @@ def compile_c(src: str, src_name: str = '<stdin>',
         print(_ir_header('IR (post-optimization)'), file=sys.stderr)
         print(ir.dump(), file=sys.stderr)
 
-    if dump_opt_stats or (verbose and stats):
-        _print_opt_stats(stats)
-
     if stop_after == 'opt':
-        raise SystemExit(0)  # stop after optimization, before codegen
+        if dump_opt_stats or verbose:
+            _print_opt_stats(stats)
+        raise SystemExit(0)
 
     # 5. code generation (IR → asm)
     _v('Code generation ...')
@@ -203,6 +203,13 @@ def compile_c(src: str, src_name: str = '<stdin>',
         asm = gen.generate(ir)
     except CodegenError as e:
         raise SystemExit(f"Codegen error: {e}")
+
+    asm_lines = asm.count('\n') + 1
+    elim = gen._peephole_eliminated
+    stats.append(('ASM peephole', 0, 0, asm_lines + elim, asm_lines))
+
+    if dump_opt_stats or (verbose and stats):
+        _print_opt_stats(stats)
 
     if stop_after == 'codegen':
         return asm

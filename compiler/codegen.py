@@ -178,6 +178,8 @@ class Codegen:
         # variadic support
         self._va_spill_base: int = 0   # frame offset where arg-reg spill starts
         self._va_spill_n:    int = 0   # number of arg-reg spill slots (0 or 6)
+        # ASM peephole stats
+        self._peephole_eliminated: int = 0
 
     # ── Source annotation (-g) ────────────────────────────────────────────────
 
@@ -644,11 +646,13 @@ class Codegen:
                 j += 1
 
         # Apply passes 1 & 2 before pass 3 so mov chains are visible
+        _before = len(lines)
         for i in sorted(drop | set(patch.keys()), reverse=True):
             if i in drop:
                 lines.pop(i)
             elif i in patch:
                 lines[i] = patch[i]
+        self._peephole_eliminated += _before - len(lines)
         drop.clear()
         patch.clear()
         n = len(lines)
@@ -711,11 +715,13 @@ class Codegen:
                 drop.add(i)
                 changed = True
 
+            _before = len(lines)
             for idx in sorted(drop | set(patch.keys()), reverse=True):
                 if idx in drop:
                     lines.pop(idx)
                 elif idx in patch:
                     lines[idx] = patch[idx]
+            self._peephole_eliminated += _before - len(lines)
             drop.clear()
             patch.clear()
 
