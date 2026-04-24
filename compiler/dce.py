@@ -132,9 +132,28 @@ def eliminate_dead_functions(program: IRProgram, entry: str = 'main') -> IRProgr
     return program
 
 
+def verify_temps(program: IRProgram) -> None:
+    """Assert every Temp used in each function is also defined in that function.
+    Raises AssertionError on violation — meant to catch compiler bugs early."""
+    for fn in program.functions:
+        defs: Set[int] = set()
+        for instr in fn.instrs:
+            d = instr.defs()
+            if isinstance(d, Temp):
+                defs.add(d.id)
+        for instr in fn.instrs:
+            for op in instr.uses():
+                if isinstance(op, Temp) and op.id not in defs:
+                    raise AssertionError(
+                        f"[verify] {fn.name}: t{op.id} used but never defined\n"
+                        f"  in: {instr}"
+                    )
+
+
 def dce(program: IRProgram, entry: str = 'main') -> IRProgram:
     """Run dead function elimination then per-function DCE."""
     eliminate_dead_functions(program, entry)
     for fn in program.functions:
         dce_function(fn)
+    verify_temps(program)
     return program
