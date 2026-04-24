@@ -4,6 +4,8 @@
 
 Current passes: constant folding + copy propagation (`compiler/fold.py`), dead code elimination + dead function elimination (`compiler/dce.py`).
 
+Both passes are internally iterative (run until stable), so one fold→DCE cycle already reaches a fixed point on the current pass set. A second cycle produces zero additional reductions on all test files. Multi-cycle would become necessary if **inlining** is added — inlining exposes callee bodies to the caller's fold/DCE context and would require repeating the cycle until no more inlining is profitable.
+
 Potential improvements:
 
 - **Copy prop: Var sources** — currently blocked because `Var` in IStore/ILoad address position means "direct slot access" not "load and dereference". Fix requires distinguishing address-position uses from value-position uses before enabling Var propagation.
