@@ -11,14 +11,24 @@ The compiler utilizes a strict six-stage transformation process to lower C sourc
 3.  **Parser**: A recursive descent parser that constructs an Abstract Syntax Tree (AST), supporting standard C operator precedence and control flow.
 4.  **Semantic Analyzer**: Manages symbol tables and nested scopes. It enforces C type safety, handles integer promotions, and calculates initial stack offsets for local variables.
 5.  **IR Generator**: Lowers the AST into a linear **Three-Address Code** Intermediate Representation. Complex expressions (like short-circuiting `&&`/`||`) are expanded into explicit jumps and virtual temporaries.
-6.  **Code Generator**: Translates IR into R316 assembly. It manages the function lifecycle (prologue/epilogue), saves the link register for non-leaf functions, and performs basic peephole optimizations to eliminate redundant load/store cycles.
+6.  **IR Optimizer**: A multi-pass optimizer that runs before code generation:
+    - **Constant folding & copy propagation** — folds constant expressions and eliminates single-use copies (`x + 0 → x`, `t1 = 5; t2 = t1 → t2 = 5`).
+    - **Dead code elimination** — removes instructions that produce unused results, and eliminates unreachable functions via call-graph reachability analysis from `main`.
+7.  **Code Generator**: Translates IR into R316 assembly, with several backend optimizations:
+    - **Linear-scan register allocation** — assigns IR temporaries to physical registers (r10–r18 caller-saved, r19–r29 callee-saved), reducing stack traffic by ~45% on typical programs.
+    - **Compare-branch fusion** — folds `t = a < b; if t goto L` into a single `sub r0, a, b; jl L` without materializing the boolean.
+    - **3-operand arithmetic** — emits `add dst, src1, src2` directly when the destination differs from the right operand, avoiding an extra move.
+    - **Assembly peephole** — replaces `st Rx, r30, N; ld Ry, r30, N` pairs with `mov Ry, Rx`, turning stack reloads into register moves.
 
 ## R316 Architecture & Runtime
 
 ### Hardware Specifications
 - **Registers**: 32 general-purpose 32-bit registers (`r0`–`r31`).
   - `r0`: Hardware-wired to zero.
-  - `r7`–`r9`: Reserved as volatile scratchpads by the compiler.
+  - `r1`–`r6`: Argument / return value registers (caller-saved).
+  - `r7`–`r9`: Compiler scratch registers (never allocated to user temporaries).
+  - `r10`–`r18`: Caller-saved temporaries (allocated by the register allocator).
+  - `r19`–`r29`: Callee-saved registers (allocated for values that must survive calls).
   - `r30` (sp): Stack Pointer.
   - `r31` (lr): Link Register.
 - **Memory**: 16-bit word-addressed space (0x0000–0xFFFF).
@@ -49,16 +59,28 @@ python compiler.py examples/hello.c -o output.asm -v -g
 
 ### CLI Options
 - `-o <file>`: Output assembly path.
-- `-v, --verbose`: Print pipeline stages.
-- `-g, --annotate`: Add C source lines as comments in the assembly.
-- `--dump-ir`: View the Intermediate Representation before final codegen.
+- `-v, --verbose`: Print pipeline stages to stderr.
+- `-g, --annotate`: Embed C source lines as comments in the output assembly.
+- `--dump-tokens`: Dump lexer token stream to stderr.
+- `--dump-ast`: Dump the parsed AST to stderr.
+- `--dump-ir`: Dump the IR (after optimization) to stderr.
+- `--stop-after {lex,parse,semantic,ir,codegen}`: Stop after the named stage.
 
 ## Project Structure
 
-- `compiler.py`: CLI entry point.
-- `compiler/`: Frontend, Semantic analysis, and IR/Code generation logic.
-- `runtime/`: `stdlib.h` (C primitives) and `runtime.asm` (Low-level bootstrap).
-- `docs/ABI.md`: Full specification of calling conventions and register usage.
+- `compiler.py` — CLI entry point.
+- `compiler/lexer.py` — Tokenizer.
+- `compiler/parser.py` — Recursive descent parser (tokens → AST).
+- `compiler/semantic.py` — Type checking and symbol table.
+- `compiler/irgen.py` — AST → Three-Address Code IR.
+- `compiler/fold.py` — Constant folding and copy propagation pass.
+- `compiler/dce.py` — Dead code and dead function elimination pass.
+- `compiler/regalloc.py` — Linear-scan register allocator.
+- `compiler/codegen.py` — IR → R316 assembly with backend optimizations.
+- `runtime/stdlib.h` — C standard library declarations.
+- `runtime/runtime.asm` — Bootstrap and runtime helpers (putchar, print_int, etc.).
+- `docs/ABI.md` — Full calling convention and register usage specification.
+- `docs/TODO.md` — Planned and completed optimization work.
 
 ## License
 Provided "as-is" for educational and hobbyist use in The Powder Toy community.
