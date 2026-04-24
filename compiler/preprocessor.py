@@ -112,7 +112,7 @@ def _process(src: str, filename: str, inc_dirs: list,
 
     for lineno, line in enumerate(lines, 1):
         # Update __FILE__ and __LINE__ dynamically
-        defines['__FILE__'] = _Macro(None, False, f'"{filename}"')
+        defines['__FILE__'] = _Macro(None, False, '"{}"'.format(filename.replace('\\', '\\\\')))
         defines['__LINE__'] = _Macro(None, False, str(lineno))
 
         stripped = line.strip()
