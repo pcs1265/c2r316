@@ -129,11 +129,12 @@ def _fold_function(fn: IRFunction) -> None:
                 if isinstance(src, (ImmInt, StrLabel, Global, Temp)):
                     copy_src[tid] = (i, src)
 
-    def _subst_scalar(op: Operand) -> Operand:
-        """Substitute scalars (ImmInt/StrLabel/Global) only — safe in addr position."""
+    def _subst_addr(op: Operand) -> Operand:
+        """Substitute in address position: safe for ImmInt/StrLabel/Global/Temp.
+        Var is NOT safe in addr position (would change pointer-deref to slot access)."""
         if isinstance(op, Temp) and op.id in copy_src:
             s = copy_src[op.id][1]
-            if isinstance(s, (ImmInt, StrLabel, Global)):
+            if isinstance(s, (ImmInt, StrLabel, Global, Temp)):
                 return s
         return op
 
@@ -148,7 +149,7 @@ def _fold_function(fn: IRFunction) -> None:
         uses = instr.uses()
         if not any(isinstance(op, Temp) and op.id in copy_src for op in uses):
             continue
-        new_instr = _subst_instr(instr, _subst_scalar, _subst_all)
+        new_instr = _subst_instr(instr, _subst_addr, _subst_all)
         instrs[i] = new_instr
         for op in uses:
             if isinstance(op, Temp) and op.id in copy_src:
@@ -236,9 +237,52 @@ def _remove_trivial_jumps(fn: IRFunction) -> None:
         instrs = fn.instrs
 
 
+def _var_load_cse(fn: IRFunction) -> None:
+    """Replace redundant Var loads within a basic block.
+
+    When ICopy(tA, Var('x')) is followed by ICopy(tB, Var('x')) with no
+    intervening store to x, call, or label (control-flow boundary), replace
+    the second copy with ICopy(tB, tA).  The existing copy-propagation pass
+    then folds the tA→tB chain away, eliminating the redundant load entirely.
+
+    Invalidation rules (conservative):
+      - IStore(Var('x'), _)  — direct write to the variable
+      - ICall                — may modify globals / any var
+      - ILabel               — control-flow merge; prior value may not dominate
+    """
+    # var_name → Temp that currently holds its value
+    available: Dict[str, Temp] = {}
+    instrs = fn.instrs
+    for i, instr in enumerate(instrs):
+        if isinstance(instr, ILabel):
+            available.clear()
+            continue
+        if isinstance(instr, ICall):
+            available.clear()
+            continue
+        if isinstance(instr, IStore) and isinstance(instr.addr, Var):
+            available.pop(instr.addr.name, None)
+            continue
+        if isinstance(instr, ICopy) and isinstance(instr.dst, Temp):
+            src = instr.src
+            if isinstance(src, Var):
+                name = src.name
+                if name in available:
+                    # Replace with copy from the already-loaded temp
+                    instrs[i] = ICopy(instr.dst, available[name], instr.loc)
+                else:
+                    available[name] = instr.dst
+            elif isinstance(src, Temp):
+                # Track that dst now holds the same value as any var src held
+                for vname, t in list(available.items()):
+                    if t == src:
+                        available[vname] = instr.dst
+
+
 def fold(program: IRProgram) -> IRProgram:
     """Run constant folding + copy propagation on every function until stable."""
     for fn in program.functions:
+        _var_load_cse(fn)
         prev_len = -1
         while len(fn.instrs) != prev_len:
             prev_len = len(fn.instrs)
