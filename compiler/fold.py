@@ -206,6 +206,36 @@ def _subst_instr(instr: Instr, addr_sub, val_sub) -> Instr:
     return instr
 
 
+def _remove_trivial_jumps(fn: IRFunction) -> None:
+    """Remove IJump(L) where the next non-label instruction is ILabel(L)."""
+    instrs = fn.instrs
+    changed = True
+    while changed:
+        changed = False
+        new = []
+        i = 0
+        while i < len(instrs):
+            instr = instrs[i]
+            if isinstance(instr, IJump):
+                # find the next label, skipping no instructions in between
+                j = i + 1
+                while j < len(instrs) and isinstance(instrs[j], ILabel):
+                    if instrs[j].name == instr.target:
+                        break
+                    j += 1
+                else:
+                    j = len(instrs)   # didn't find it immediately
+                # only remove if target label is the very next instruction
+                if i + 1 < len(instrs) and isinstance(instrs[i + 1], ILabel) and instrs[i + 1].name == instr.target:
+                    changed = True
+                    i += 1
+                    continue
+            new.append(instr)
+            i += 1
+        fn.instrs = new
+        instrs = fn.instrs
+
+
 def fold(program: IRProgram) -> IRProgram:
     """Run constant folding + copy propagation on every function until stable."""
     for fn in program.functions:
@@ -213,4 +243,5 @@ def fold(program: IRProgram) -> IRProgram:
         while len(fn.instrs) != prev_len:
             prev_len = len(fn.instrs)
             _fold_function(fn)
+        _remove_trivial_jumps(fn)
     return program
