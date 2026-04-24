@@ -172,6 +172,9 @@ class Codegen:
         self._scratch_c_temp: Optional[Temp] = None
         # register allocation map for current function
         self._regmap: Optional[RegMap] = None
+        # fused compare-branch indices for current function
+        self._fused_cmp: dict = {}
+        self._fused_branch_idxs: set = set()
         # variadic support
         self._va_spill_base: int = 0   # frame offset where arg-reg spill starts
         self._va_spill_n:    int = 0   # number of arg-reg spill slots (0 or 6)
@@ -328,6 +331,20 @@ class Codegen:
             if preg is not None:
                 return preg
         return SCRATCH_A
+
+    def _src_reg(self, op: Operand, scratch: str) -> str:
+        """Return the register that holds op's value, loading into scratch if needed.
+
+        If op is a Temp with an allocated register, return that register directly
+        (no load emitted).  Otherwise load into scratch and return scratch.
+        Avoids a mov when the value is already in a physical register.
+        """
+        if isinstance(op, Temp) and self._regmap:
+            preg = self._regmap.reg(op.id)
+            if preg is not None:
+                return preg
+        self._load_op(op, scratch)
+        return scratch
 
     def _load_addr(self, op: Operand, reg: str):
         """Load the *address* of an operand into a register."""
@@ -500,6 +517,13 @@ class Codegen:
                 self._ins(f'ld {SCRATCH_A}, {SP}, {stack_arg_base + overflow_idx}')
                 self._ins(f'st {SCRATCH_A}, {SP}, {slot}')
 
+        # Pre-scan: find compare instructions whose result is used only in
+        # the immediately following JumpIf/JumpIfNot — these can be fused
+        # into a single conditional branch without materializing 0/1.
+        self._fused_cmp = self._find_fused_cmps(fn.instrs)
+        # Set of branch instruction indices suppressed because their compare was fused
+        self._fused_branch_idxs = {v[0] for v in self._fused_cmp.values()}
+
         # Generate instructions
         for idx, instr in enumerate(fn.instrs):
             self._cur_instr_idx = idx
@@ -520,6 +544,45 @@ class Codegen:
     def _detect_callee_saves(self, fn: IRFunction) -> List[str]:
         """Return the callee-saved registers assigned by the register allocator."""
         return list(self._regmap.callee_used) if self._regmap else []
+
+    # ── Compare-branch fusion ─────────────────────────────────────────────────
+
+    def _find_fused_cmps(self, instrs: list) -> dict:
+        """Return mapping: cmp_instr_idx → (branch_instr_idx, jump_op, target).
+
+        A compare IBinOp at index i can be fused with the branch at i+1 when:
+          - The cmp result Temp is used only in that one branch (use_count == 1)
+          - The next instruction is IJumpIf or IJumpIfNot
+          - The branch condition is exactly the cmp result Temp
+        """
+        from .ir import IBinOp, IJumpIf, IJumpIfNot, Temp as IRTemp
+
+        # count uses of each temp
+        use_count: Dict[int, int] = {}
+        for instr in instrs:
+            for op in instr.uses():
+                if isinstance(op, IRTemp):
+                    use_count[op.id] = use_count.get(op.id, 0) + 1
+
+        fused = {}
+        for i, instr in enumerate(instrs):
+            if not isinstance(instr, IBinOp) or instr.op not in self._CMP_JMP:
+                continue
+            if not isinstance(instr.dst, IRTemp):
+                continue
+            if use_count.get(instr.dst.id, 0) != 1:
+                continue
+            if i + 1 >= len(instrs):
+                continue
+            nxt = instrs[i + 1]
+            if isinstance(nxt, IJumpIf) and nxt.cond == instr.dst:
+                fused[i] = (i + 1, self._CMP_JMP[instr.op], nxt.target)
+            elif isinstance(nxt, IJumpIfNot) and nxt.cond == instr.dst:
+                # invert the jump condition
+                inv = {'jz': 'jnz', 'jnz': 'jz', 'jl': 'jge', 'jge': 'jl',
+                       'jg': 'jle', 'jle': 'jg'}
+                fused[i] = (i + 1, inv[self._CMP_JMP[instr.op]], nxt.target)
+        return fused
 
     # ── Instructions ──────────────────────────────────────────────────────────
 
@@ -560,10 +623,10 @@ class Codegen:
                 self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, ILoad):
-            dst = self._dst_reg(instr.dst)
-            self._load_op(instr.addr, SCRATCH_C)
+            dst  = self._dst_reg(instr.dst)
+            areg = self._src_reg(instr.addr, SCRATCH_C)
             self._scratch_a_temp = None
-            self._ins(f'ld {dst}, {SCRATCH_C}')
+            self._ins(f'ld {dst}, {areg}')
             if dst == SCRATCH_A:
                 self._store_op(SCRATCH_A, instr.dst)
 
@@ -577,12 +640,22 @@ class Codegen:
                 if isinstance(instr.src, Temp):
                     self._scratch_a_temp = instr.src
             else:
-                self._load_op(instr.addr, SCRATCH_C)
-                self._load_op(instr.src,  SCRATCH_A)
-                self._ins(f'st {SCRATCH_A}, {SCRATCH_C}')
+                areg = self._src_reg(instr.addr, SCRATCH_C)
+                sreg = self._src_reg(instr.src,  SCRATCH_A)
+                self._ins(f'st {sreg}, {areg}')
 
         elif isinstance(instr, IBinOp):
-            self._gen_binop(instr)
+            fused = self._fused_cmp.get(self._cur_instr_idx)
+            if fused:
+                # Emit compare + direct branch; skip materializing 0/1
+                _, jmp_op, target = fused
+                lreg = self._src_reg(instr.left,  SCRATCH_A)
+                rreg = self._src_reg(instr.right, SCRATCH_B)
+                self._ins(f'sub r0, {lreg}, {rreg}')
+                self._invalidate_scratch()
+                self._ins(f'{jmp_op} {target}')
+            else:
+                self._gen_binop(instr)
 
         elif isinstance(instr, IUnaryOp):
             self._gen_unaryop(instr)
@@ -593,7 +666,9 @@ class Codegen:
 
         elif isinstance(instr, IRet):
             if instr.src is not None:
-                self._load_op(instr.src, RET_REG)
+                lreg = self._src_reg(instr.src, RET_REG)
+                if lreg != RET_REG:
+                    self._ins(f'mov {RET_REG}, {lreg}')
             self._gen_epilogue(lr_slot, frame_size)
 
         elif isinstance(instr, IJump):
@@ -601,16 +676,22 @@ class Codegen:
             self._ins(f'jmp {instr.target}')
 
         elif isinstance(instr, IJumpIf):
-            cr = self._cond_reg(instr.cond)
-            self._ins(f'test {cr}, {cr}')
-            self._invalidate_scratch()
-            self._ins(f'jnz {instr.target}')
+            if self._cur_instr_idx in self._fused_branch_idxs:
+                pass  # emitted by the preceding fused IBinOp
+            else:
+                cr = self._cond_reg(instr.cond)
+                self._ins(f'test {cr}, {cr}')
+                self._invalidate_scratch()
+                self._ins(f'jnz {instr.target}')
 
         elif isinstance(instr, IJumpIfNot):
-            cr = self._cond_reg(instr.cond)
-            self._ins(f'test {cr}, {cr}')
-            self._invalidate_scratch()
-            self._ins(f'jz {instr.target}')
+            if self._cur_instr_idx in self._fused_branch_idxs:
+                pass  # emitted by the preceding fused IBinOp
+            else:
+                cr = self._cond_reg(instr.cond)
+                self._ins(f'test {cr}, {cr}')
+                self._invalidate_scratch()
+                self._ins(f'jz {instr.target}')
 
         elif isinstance(instr, IInlineAsm):
             self._invalidate_scratch()
@@ -696,45 +777,47 @@ class Codegen:
             self._gen_compare(instr, dst)
             return
 
-        # For ops that have a 3-operand form (add, sub, mul), emit
-        # `op dst, left, right` directly when possible to avoid a mov.
-        # For others, load left into SCRATCH_A, operate, then move to dst.
-        self._load_op(instr.left,  SCRATCH_A)
-        self._load_op(instr.right, SCRATCH_B)
+        # Get source registers without unnecessary loads.
+        # _src_reg returns the allocated reg if available, else loads into scratch.
+        # We must pick scratches carefully to avoid src/dst aliasing.
+        lreg = self._src_reg(instr.left,  SCRATCH_A)
+        # For right, avoid using same scratch as left if left used SCRATCH_A
+        rreg = self._src_reg(instr.right, SCRATCH_B)
 
+        # Three-operand instructions: add/sub/mul dst, lreg, rreg
+        # Safe as long as dst != rreg (would clobber right before reading it)
+        # or dst == lreg (in-place update is fine).
         THREE_OP = {'+': 'add', '-': 'sub', '*': 'mul'}
-        if op in THREE_OP and dst != SCRATCH_B:
-            mnemonic = THREE_OP[op]
+        if op in THREE_OP and dst != rreg:
             if op == '*':
-                self._ins(f'mul {dst}, {SCRATCH_A}, {SCRATCH_B}')
+                self._ins(f'mul {dst}, {lreg}, {rreg}')
             else:
-                self._ins(f'{mnemonic} {dst}, {SCRATCH_A}, {SCRATCH_B}')
-        elif op == '+':
-            self._ins(f'add {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
-        elif op == '-':
-            self._ins(f'sub {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
-        elif op == '*':
-            self._ins(f'mul {SCRATCH_A}, {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
-        elif op == '&':
-            self._ins(f'and {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
-        elif op == '|':
-            self._ins(f'or  {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
-        elif op == '^':
-            self._ins(f'xor {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
-        elif op == '<<':
-            self._ins(f'shl {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
-        elif op == '>>':
-            self._ins(f'shr {SCRATCH_A}, {SCRATCH_B}')
-            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
+                self._ins(f'{THREE_OP[op]} {dst}, {lreg}, {rreg}')
         else:
-            raise CodegenError(f"Unknown binop: {op!r}")
+            # Fall back: load left into SCRATCH_A if not already there, operate 2-op
+            acc = lreg if lreg != rreg else SCRATCH_A
+            if acc != lreg:
+                self._ins(f'mov {acc}, {lreg}')
+            if op == '+':
+                self._ins(f'add {acc}, {rreg}')
+            elif op == '-':
+                self._ins(f'sub {acc}, {rreg}')
+            elif op == '*':
+                self._ins(f'mul {acc}, {acc}, {rreg}')
+            elif op == '&':
+                self._ins(f'and {acc}, {rreg}')
+            elif op == '|':
+                self._ins(f'or  {acc}, {rreg}')
+            elif op == '^':
+                self._ins(f'xor {acc}, {rreg}')
+            elif op == '<<':
+                self._ins(f'shl {acc}, {rreg}')
+            elif op == '>>':
+                self._ins(f'shr {acc}, {rreg}')
+            else:
+                raise CodegenError(f"Unknown binop: {op!r}")
+            if dst != acc:
+                self._ins(f'mov {dst}, {acc}')
 
         self._scratch_a_temp = None
         if dst == SCRATCH_A:
