@@ -58,8 +58,8 @@ struct binop_obj {
     int bias;
 };
 
-int call_obj(struct binop_obj *obj, int a, int b) {
-    return obj->fn(a, b) + obj->bias;
+int call_obj(struct binop_obj obj, int a, int b) {
+    return obj.fn(a, b) + obj.bias;
 }
 
 /* ── fold: apply funcptr over int array ── */
@@ -133,10 +133,10 @@ int main(void) {
     struct binop_obj obj;
     obj.fn = add;
     obj.bias = 100;
-    check("struct_fp_add", call_obj(&obj, 3, 4), 107);
+    check("struct_fp_add", call_obj(obj, 3, 4), 107);
     obj.fn = mul;
     obj.bias = 0;
-    check("struct_fp_mul", call_obj(&obj, 5, 6), 30);
+    check("struct_fp_mul", call_obj(obj, 5, 6), 30);
 
     /* 9. fold (apply funcptr over array) */
     int arr[4];

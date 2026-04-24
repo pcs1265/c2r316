@@ -341,6 +341,9 @@ class Analyzer:
             # for pointers, check base type compatibility
             if isinstance(src, CPointer) and isinstance(dst, CPointer):
                 return self._is_assignable(src.base, dst.base)
+            # struct/union: must be the same named type
+            if isinstance(src, (CStruct, CUnion)):
+                return src.name == dst.name
             return True
         # int/char/long are interchangeable (integer promotions)
         if is_integer(src) and is_integer(dst):

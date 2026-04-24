@@ -126,9 +126,24 @@ class IRGen:
         self._num_fixed_params = len(func.params)
         self._stmt_loc = None
 
+        # Struct return: inject hidden first param '__ret' (pointer to caller's
+        # return slot).  The callee writes the struct there and returns the ptr.
+        self._struct_ret_type = None
+        # Struct params: received as hidden pointers; dereferenced on access.
+        self._struct_params: dict[str, CType] = {}
+        if isinstance(func.ret_type, (CStruct, CUnion)):
+            self._struct_ret_type = func.ret_type
+            param_names = ['__ret'] + [p.name for p in func.params]
+            self._params.add('__ret')
+        else:
+            param_names = [p.name for p in func.params]
+        for p in func.params:
+            if isinstance(p.ctype, (CStruct, CUnion)):
+                self._struct_params[p.name] = p.ctype
+
         self._fn = IRFunction(
             name=func.name,
-            params=[p.name for p in func.params],
+            params=param_names,
             is_variadic=func.is_variadic,
             is_static=func.is_static,
             is_always_inline=func.is_always_inline,
@@ -220,7 +235,34 @@ class IRGen:
             self._gen_expr(stmt.expr)
 
         elif isinstance(stmt, ReturnStmt):
-            if stmt.expr is not None:
+            if self._struct_ret_type is not None and stmt.expr is not None:
+                # Struct return: copy struct value word-by-word into *__ret,
+                # then return the hidden pointer (already in __ret param slot).
+                loc = self._loc(stmt)
+                src_addr = self._gen_addr(stmt.expr)
+                if isinstance(src_addr, Var):
+                    t = self._tmp()
+                    self._emit(IAddrOf(t, src_addr, loc))
+                    src_addr = t
+                ret_ptr = self._tmp()
+                self._emit(ICopy(ret_ptr, Var('__ret'), loc))
+                size = self._struct_ret_type.size()
+                for i in range(size):
+                    word = self._tmp()
+                    if i == 0:
+                        self._emit(ILoad(word, src_addr, loc))
+                    else:
+                        src_i = self._tmp()
+                        self._emit(IBinOp(src_i, '+', src_addr, ImmInt(i), loc))
+                        self._emit(ILoad(word, src_i, loc))
+                    if i == 0:
+                        self._emit(IStore(ret_ptr, word, loc))
+                    else:
+                        dst_i = self._tmp()
+                        self._emit(IBinOp(dst_i, '+', ret_ptr, ImmInt(i), loc))
+                        self._emit(IStore(dst_i, word, loc))
+                self._emit(IRet(ret_ptr, loc))
+            elif stmt.expr is not None:
                 val = self._gen_expr(stmt.expr)
                 self._emit(IRet(val, self._loc(stmt)))
             else:
@@ -418,6 +460,12 @@ class IRGen:
             self._emit(IAddrOf(t, Global(name), loc))
             return t
 
+        # struct param received as hidden pointer — the slot holds the pointer value
+        if name in self._struct_params:
+            t = self._tmp()
+            self._emit(ICopy(t, Var(name), loc))
+            return t   # caller treats this as the struct's address
+
         # local array/struct/union decays to its base address
         if isinstance(expr.ctype, (CArray, CStruct, CUnion)) and name not in self._params:
             t = self._tmp()
@@ -453,6 +501,11 @@ class IRGen:
 
         if isinstance(expr, Ident):
             name = expr.name
+            # struct param: slot holds the hidden pointer — load it as the address
+            if name in self._struct_params:
+                t = self._tmp()
+                self._emit(ICopy(t, Var(name), loc))
+                return t
             # scalar local/param: use Var directly as the address operand
             if name in self._params or name in self._locals:
                 return Var(name)
@@ -668,17 +721,75 @@ class IRGen:
         if isinstance(expr.func, Ident) and expr.func.name == 'va_end':
             return ImmInt(0)
 
-        args = [self._gen_expr(a) for a in expr.args]
+        # Determine the called function's type to check for struct args/return
+        func_ctype = getattr(expr.func, 'ctype', None)
+        if isinstance(func_ctype, CPointer) and isinstance(func_ctype.base, CFunction):
+            func_ctype = func_ctype.base
+
+        ir_args = []
+
+        # Struct return: allocate a local slot and prepend its address as hidden arg
+        ret_type = getattr(expr, 'ctype', None)
+        struct_ret_slot = None
+        if isinstance(ret_type, (CStruct, CUnion)):
+            struct_ret_slot = self._alloc_struct_slot(ret_type, loc)
+            ir_args.append(struct_ret_slot)
+
+        # Evaluate each argument; struct args are copied to a temp slot and
+        # their address is passed instead of the value
+        param_types = func_ctype.params if isinstance(func_ctype, CFunction) else []
+        for i, arg_expr in enumerate(expr.args):
+            param_t = param_types[i] if i < len(param_types) else None
+            if isinstance(param_t, (CStruct, CUnion)):
+                slot_addr = self._alloc_struct_slot(param_t, loc)
+                self._copy_struct(arg_expr, slot_addr, param_t, loc)
+                ir_args.append(slot_addr)
+            else:
+                ir_args.append(self._gen_expr(arg_expr))
 
         if isinstance(expr.func, Ident) and isinstance(expr.func.ctype, CFunction):
             func_op = Global(expr.func.name)
         else:
             func_op = self._gen_expr(expr.func)
 
-        is_void = isinstance(getattr(expr, 'ctype', None), CVoid)
+        is_void = isinstance(ret_type, CVoid)
         dst = None if is_void else self._tmp()
-        self._emit(ICall(dst, func_op, args, loc))
+        self._emit(ICall(dst, func_op, ir_args, loc))
+
+        # Struct return: dst holds the hidden pointer; load the struct address
+        if struct_ret_slot is not None:
+            return struct_ret_slot
+
         return dst if dst is not None else ImmInt(0)
+
+    def _alloc_struct_slot(self, ctype, loc) -> Temp:
+        """Allocate an anonymous local slot for a struct copy; return its address."""
+        slot_name = f'__sv_{self._tmp_cnt}'
+        self._locals.add(slot_name)
+        self._fn.local_sizes[slot_name] = ctype.size()
+        addr = self._tmp()
+        self._emit(IAddrOf(addr, Var(slot_name), loc))
+        return addr
+
+    def _copy_struct(self, src_expr: 'Expr', dst_addr: Operand, ctype, loc):
+        """Copy a struct value from src_expr into the memory at dst_addr."""
+        src_addr = self._gen_addr(src_expr)
+        if isinstance(src_addr, Var):
+            t = self._tmp()
+            self._emit(IAddrOf(t, src_addr, loc))
+            src_addr = t
+        for i in range(ctype.size()):
+            word = self._tmp()
+            if i == 0:
+                self._emit(ILoad(word, src_addr, loc))
+                self._emit(IStore(dst_addr, word, loc))
+            else:
+                src_i = self._tmp()
+                self._emit(IBinOp(src_i, '+', src_addr, ImmInt(i), loc))
+                self._emit(ILoad(word, src_i, loc))
+                dst_i = self._tmp()
+                self._emit(IBinOp(dst_i, '+', dst_addr, ImmInt(i), loc))
+                self._emit(IStore(dst_i, word, loc))
 
     # ── VaArg ────────────────────────────────────────────────────────────────
 
