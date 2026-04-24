@@ -291,6 +291,8 @@ class IRFunction:
     instrs: List[Instr] = field(default_factory=list)
     local_sizes: Dict[str, int] = field(default_factory=dict)  # name → slot count
     is_variadic: bool = False
+    is_static: bool = False
+    is_always_inline: bool = False
     # va_spill_base is set by codegen: frame offset where arg-reg spill area begins
     va_spill_base: int = 0
 

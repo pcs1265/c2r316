@@ -117,6 +117,8 @@ class IRGen:
             name=func.name,
             params=[p.name for p in func.params],
             is_variadic=func.is_variadic,
+            is_static=func.is_static,
+            is_always_inline=func.is_always_inline,
         )
 
         self._collect_locals(func.body)
