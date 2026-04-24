@@ -130,6 +130,32 @@ int main(void) {
     g_arr[2] = 0;
     check("g_arr_wr", g_arr_sum(), 70);
 
+    /* 14. global partial initializer: trailing elements zero */
+    /* g[5] = {1} declared globally — [1]..[4] must be zero */
+    int g[5] = {1};
+    check("g_part[0]", g[0], 1);
+    check("g_part[1]", g[1], 0);
+    check("g_part[2]", g[2], 0);
+    check("g_part[3]", g[3], 0);
+    check("g_part[4]", g[4], 0);
+
+    /* 15. initializer with expressions (not just literals) */
+    int base;
+    base = 10;
+    int expr_arr[3] = {base, base + 1, base * 2};
+    check("expr[0]", expr_arr[0], 10);
+    check("expr[1]", expr_arr[1], 11);
+    check("expr[2]", expr_arr[2], 20);
+
+    /* 16. char array initializer from string literal */
+    char s[] = "hello";
+    check("str[0]", s[0], 'h');
+    check("str[1]", s[1], 'e');
+    check("str[2]", s[2], 'l');
+    check("str[3]", s[3], 'l');
+    check("str[4]", s[4], 'o');
+    check("str[5]", s[5], 0);
+
     /* summary */
     puts("=================");
     print_str("PASS: "); print_int(pass_count); putchar(10);
