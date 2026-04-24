@@ -43,7 +43,7 @@
 - Member access `.` and `->` (with field offset arithmetic)
 - Function calls (≤6 args in registers, 7th+ via stack)
 - Variadic calls via `va_start` / `va_arg` / `va_end`
-- Function pointer calls
+- Function pointer calls (typedef, local declarator `int (*fp)(int)`, global, array of function pointers, passing as argument)
 
 ### Preprocessor
 - `#include "file"` and `#include <file>`
@@ -62,6 +62,12 @@
 - Linear-scan register allocator (`compiler/regalloc.py`): Temps → r10–r18 (caller-saved) and r19–r29 (call-crossing, callee-saved)
 - Compare-branch fusion: `t = a < b; if t goto L` → `sub r0,a,b; jl L`
 - Peephole: `st Rx,r30,N` + `ld Ry,r30,N` → `mov Ry,Rx`
+
+---
+
+## Code Generation Notes
+
+- **Symbol naming**: all user-defined C symbols (functions and global variables) are emitted with a `_C_` prefix (e.g. `main` → `_C_main`) to avoid collisions with TPTASM reserved mnemonics (`add`, `sub`, `mul`, `or`, etc.). `runtime.asm` calls `_C_main` as the program entry point.
 
 ---
 
@@ -91,7 +97,7 @@
 | Multi-dimensional arrays | `int a[3][4]` is not parsed |
 | Struct/union pass-by-value | Hidden pointer not generated |
 | `typedef` | Token exists; no parse branch |
-| Function pointer declarator syntax | `int (*fp)(int)` not parsed; call-through works via cast |
+| Function pointer declarator syntax | Implemented — `int (*fp)(int)` parsed in params, locals, globals |
 | `__func__` / `__FUNCTION__` | C99 implicit per-function string variable; not yet implemented |
 | Designated initializers (`{.field = val}`) | Not supported |
 | Compound literals (`(Type){...}`) | Not supported |

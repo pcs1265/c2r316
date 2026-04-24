@@ -36,6 +36,10 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 
 - **Analyze in small steps**: When analyzing code or assembly output, break the analysis into small, focused steps. Read or examine one section at a time, confirm each step before proceeding to the next. Do NOT attempt to analyze everything in a single pass — this causes errors and omissions.
 
+## Symbol Naming Convention
+
+All user-defined C symbols (functions and global variables) are emitted with a `_C_` prefix in the output assembly (e.g. C `main` → `_C_main`, C `add` → `_C_add`). This avoids collisions with TPTASM reserved mnemonics. `runtime/runtime.asm` calls `_C_main` as the entry point. Runtime helper names (e.g. `__stack_init`, `__term_init`) are defined in `runtime.asm` and are **not** prefixed by the compiler.
+
 ## Debugging
 
 - `--dump-tokens` — dump lexer tokens to stderr
