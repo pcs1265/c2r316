@@ -206,13 +206,29 @@ class Parser:
             self._typedefs[alias] = ret
         self._eat(TK.SEMICOLON)
 
+    def _parse_attribute(self) -> Optional[str]:
+        """Consume __attribute__((name)) if present and return the attribute name."""
+        if not (self._at(TK.IDENT) and self._cur().value == '__attribute__'):
+            return None
+        self._eat(TK.IDENT)
+        self._eat(TK.LPAREN)
+        self._eat(TK.LPAREN)
+        name = self._eat(TK.IDENT).value
+        self._eat(TK.RPAREN)
+        self._eat(TK.RPAREN)
+        return name
+
     def _parse_top_decl(self) -> list:
         if self._at(TK.TYPEDEF):
             self._parse_typedef()
             return []
 
+        # __attribute__((always_inline)) may appear before or after storage class
+        attr1 = self._parse_attribute()
         is_static = bool(self._try_eat(TK.STATIC))
         is_extern = bool(self._try_eat(TK.EXTERN))
+        attr2 = self._parse_attribute()
+        is_always_inline = (attr1 == 'always_inline' or attr2 == 'always_inline')
 
         ret_type = self._parse_base_type()
 
@@ -236,7 +252,7 @@ class Parser:
                 body = None
             else:
                 body = self._parse_block()
-            return [FuncDecl(name, ret_type, params, body, is_static, is_variadic)]
+            return [FuncDecl(name, ret_type, params, body, is_static, is_variadic, is_always_inline)]
         else:
             # global variable
             results = []

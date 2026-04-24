@@ -138,6 +138,7 @@ class FuncDecl(Node):
     body: Optional['Block']    # None means declaration only (extern)
     is_static: bool = False
     is_variadic: bool = False
+    is_always_inline: bool = False
 
 @dataclass
 class ParamDecl(Node):
