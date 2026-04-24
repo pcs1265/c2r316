@@ -152,12 +152,27 @@ class Parser:
         return base
 
     def _parse_type_and_name(self) -> tuple[CType, str]:
-        """Type + optional identifier. Also handles array brackets."""
+        """Type + optional identifier. Also handles array brackets and function pointer declarators."""
         base = self._parse_base_type()
         # pointer modifiers
         stars = 0
         while self._try_eat(TK.STAR):
             stars += 1
+        # function pointer declarator: ret (*name)(params)
+        if self._at(TK.LPAREN) and self._peek().kind == TK.STAR:
+            self._eat(TK.LPAREN)
+            self._eat(TK.STAR)
+            name = ''
+            if self._at(TK.IDENT):
+                name = self._eat(TK.IDENT).value
+            self._eat(TK.RPAREN)
+            params, variadic = self._parse_params()
+            ret = base
+            for _ in range(stars):
+                ret = CPointer(ret)
+            param_types = [p.ctype for p in params]
+            t = CPointer(CFunction(ret, param_types, variadic))
+            return t, name
         name = ''
         if self._at(TK.IDENT):
             name = self._eat(TK.IDENT).value
