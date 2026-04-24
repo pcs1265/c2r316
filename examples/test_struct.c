@@ -38,6 +38,29 @@ union Val {
     char c;
 };
 
+/* ── global structs ── */
+
+struct Point g_origin;
+struct Point g_cursor;
+struct Rect  g_viewport;
+
+void g_cursor_move(int dx, int dy) {
+    g_cursor.x = g_cursor.x + dx;
+    g_cursor.y = g_cursor.y + dy;
+}
+
+struct Point g_pts[3];
+
+void g_pts_init(void) {
+    g_pts[0].x = 5;  g_pts[0].y = 6;
+    g_pts[1].x = 7;  g_pts[1].y = 8;
+    g_pts[2].x = 9;  g_pts[2].y = 10;
+}
+
+int g_pts_xsum(void) {
+    return g_pts[0].x + g_pts[1].x + g_pts[2].x;
+}
+
 /* ── helper functions ── */
 
 int point_sum(struct Point *p) {
@@ -128,6 +151,45 @@ int main(void) {
     v.c = 65;
     check("union.c", v.c, 65);
     check("union_overlap", v.i, 65);
+
+    /* 12. global structs */
+    g_origin.x = 0;
+    g_origin.y = 0;
+    check("g_origin.x", g_origin.x, 0);
+    check("g_origin.y", g_origin.y, 0);
+
+    g_cursor.x = 10;
+    g_cursor.y = 20;
+    g_cursor_move(3, -5);
+    check("g_cursor.x", g_cursor.x, 13);
+    check("g_cursor.y", g_cursor.y, 15);
+
+    /* mutation through pointer to global */
+    struct Point *gp;
+    gp = &g_cursor;
+    gp->x = 100;
+    check("g_cursor_ptr", g_cursor.x, 100);
+
+    /* global nested struct */
+    g_viewport.tl.x = 0;
+    g_viewport.tl.y = 0;
+    g_viewport.br.x = 12;
+    g_viewport.br.y = 8;
+    check("g_vp_area", rect_area(&g_viewport), 96);
+    g_viewport.br.x = 6;
+    check("g_vp_mutate", rect_area(&g_viewport), 48);
+
+    /* global array of structs */
+    g_pts_init();
+    check("g_pts_xsum",   g_pts_xsum(), 21);
+    check("g_pts[1].y",   g_pts[1].y,   8);
+    g_pts[1].x = 0;
+    check("g_pts_xsum2",  g_pts_xsum(), 14);
+
+    /* global struct survives unrelated call */
+    g_cursor.x = 55;
+    point_sum(&a);
+    check("g_after_call", g_cursor.x, 55);
 
     /* summary */
     puts("==================");
