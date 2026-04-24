@@ -118,6 +118,11 @@ def _reachable_functions(program: IRProgram, roots: set) -> set:
                 callee = instr.func.name
                 if callee not in reachable:
                     worklist.append(callee)
+            # IAddrOf(t, Global('fn')) keeps function pointer targets alive
+            if isinstance(instr, IAddrOf) and isinstance(instr.var, Global):
+                callee = instr.var.name
+                if callee in func_instrs and callee not in reachable:
+                    worklist.append(callee)
     return reachable
 
 

@@ -412,9 +412,11 @@ class IRGen:
         loc  = self._loc(expr)
         name = expr.name
 
-        # function name → just a label operand (no load)
+        # function name → its address (label value, not a memory load)
         if isinstance(expr.ctype, CFunction):
-            return Global(name)
+            t = self._tmp()
+            self._emit(IAddrOf(t, Global(name), loc))
+            return t
 
         # local array/struct/union decays to its base address
         if isinstance(expr.ctype, (CArray, CStruct, CUnion)) and name not in self._params:
@@ -668,7 +670,7 @@ class IRGen:
 
         args = [self._gen_expr(a) for a in expr.args]
 
-        if isinstance(expr.func, Ident):
+        if isinstance(expr.func, Ident) and isinstance(expr.func.ctype, CFunction):
             func_op = Global(expr.func.name)
         else:
             func_op = self._gen_expr(expr.func)
