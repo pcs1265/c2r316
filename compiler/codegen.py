@@ -32,7 +32,7 @@ from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
-    IInlineAsm, IRFunction, IRProgram, Instr,
+    IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
 )
 
 
@@ -165,6 +165,9 @@ class Codegen:
         # scratch-register forwarding: tracks which Temp is live in SCRATCH_A/SCRATCH_C
         self._scratch_a_temp: Optional[Temp] = None
         self._scratch_c_temp: Optional[Temp] = None
+        # variadic support
+        self._va_spill_base: int = 0   # frame offset where arg-reg spill starts
+        self._va_spill_n:    int = 0   # number of arg-reg spill slots (0 or 6)
 
     # ── Source annotation (-g) ────────────────────────────────────────────────
 
@@ -344,7 +347,8 @@ class Codegen:
         return result
 
     def _gen_func(self, fn: IRFunction):
-        fn = IRFunction(fn.name, fn.params, self._peephole(fn.instrs), fn.local_sizes)
+        fn = IRFunction(fn.name, fn.params, self._peephole(fn.instrs), fn.local_sizes,
+                        is_variadic=fn.is_variadic)
         self._scratch_a_temp = None
         self._scratch_c_temp = None
         self._cur_instr_idx = 0
@@ -379,13 +383,21 @@ class Codegen:
 
         # Stack frame layout (per docs/ABI.md §4):
         #   [sp+0 .. sp+F-1]           : local/spill slots (F = peak)
-        #   [sp+F .. sp+F+CS-1]        : saved callee-saved registers
-        #   [sp+F+CS]                  : saved LR (non-leaf only)
+        #   [sp+F .. sp+F+5]           : arg-reg spill area (variadic only, 6 words)
+        #   [sp+F+VS .. sp+F+VS+CS-1]  : saved callee-saved registers
+        #   [sp+F+VS+CS]               : saved LR (non-leaf only)
+        VA_SPILL_N = 6
+        VS = VA_SPILL_N if fn.is_variadic else 0
+        self._va_spill_n = VS
         F = peak
         CS = self._callee_save_n
-        total = F + CS + (1 if not self._is_leaf else 0)
+        total = F + VS + CS + (1 if not self._is_leaf else 0)
         self._frame_size = total
-        lr_slot = F + CS  # LR is saved right after callee-saved area
+        self._va_spill_base = F   # arg-reg spill area starts right after local slots
+        lr_slot = F + VS + CS    # LR is saved after callee-saved area
+
+        # Record va_spill_base on the IRFunction so IVaStart can use it
+        fn.va_spill_base = self._va_spill_base
 
         self._emit(f'; function {fn.name}')
         self._lbl(fn.name)
@@ -394,15 +406,22 @@ class Codegen:
         if total > 0:
             self._ins(f'sub {SP}, {total}')
 
-        # Save callee-saved registers
-        for i, reg in enumerate(self._callee_saves):
-            self._ins(f'st {reg}, {SP}, {F + i}')
-
-        # Save link register (non-leaf only)
+        # Save link register (non-leaf only) — §5.2 step 2
         if not self._is_leaf:
             self._ins(f'st {LR}, {SP}, {lr_slot}')
 
-        # Copy register arguments to their spill slots
+        # Save callee-saved registers — §5.2 step 3
+        for i, reg in enumerate(self._callee_saves):
+            self._ins(f'st {reg}, {SP}, {F + VS + i}')
+
+        # Variadic: spill all 6 argument registers to the dedicated spill area — §10
+        if fn.is_variadic:
+            for i, reg in enumerate(ARG_REGS):
+                self._ins(f'st {reg}, {SP}, {F + i}')
+
+        # Copy register arguments to their named spill slots — §5.2 step 4
+        # (for variadic functions the arg-reg spill above already captured them;
+        # this loop still copies fixed params into named slots for normal use)
         for i, pname in enumerate(fn.params):
             if i < len(ARG_REGS):
                 slot = self._ctx.slot(Var(pname))
@@ -508,6 +527,23 @@ class Codegen:
             self._invalidate_scratch()
             self._gen_inline_asm(instr)
 
+        elif isinstance(instr, IVaStart):
+            # Compute: dst = sp + va_spill_base + num_fixed
+            offset = self._va_spill_base + instr.num_fixed
+            self._scratch_a_temp = None
+            if offset == 0:
+                self._ins(f'mov {SCRATCH_A}, {SP}')
+            else:
+                self._ins(f'add {SCRATCH_A}, {SP}, {offset}')
+            self._store_op(SCRATCH_A, instr.dst, skip_if_last=True)
+
+        elif isinstance(instr, IVaArg):
+            # Load ap pointer, dereference to get value
+            self._load_op(instr.ap, SCRATCH_C)
+            self._scratch_a_temp = None
+            self._ins(f'ld {SCRATCH_A}, {SCRATCH_C}')
+            self._store_op(SCRATCH_A, instr.dst)
+
         else:
             raise CodegenError(f"Unhandled IR instruction: {type(instr)}")
 
@@ -535,9 +571,10 @@ class Codegen:
 
     def _gen_epilogue(self, lr_slot: int, frame_size: int):
         # Restore callee-saved registers
-        F = self._frame_size - self._callee_save_n - (1 if not self._is_leaf else 0)
+        F = self._frame_size - self._va_spill_n - self._callee_save_n - (1 if not self._is_leaf else 0)
+        VS = self._va_spill_n
         for i, reg in enumerate(self._callee_saves):
-            self._ins(f'ld {reg}, {SP}, {F + i}')
+            self._ins(f'ld {reg}, {SP}, {F + VS + i}')
 
         # Restore link register (non-leaf only)
         if not self._is_leaf:
