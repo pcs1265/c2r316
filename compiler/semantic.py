@@ -82,7 +82,8 @@ class Analyzer:
         for decl in prog.decls:
             if isinstance(decl, FuncDecl):
                 ftype = CFunction(decl.ret_type,
-                                  [p.ctype for p in decl.params])
+                                  [p.ctype for p in decl.params],
+                                  is_variadic=decl.is_variadic)
                 self._define(decl.name, ftype, is_global=True, is_func=True)
             elif isinstance(decl, VarDecl):
                 self._define(decl.name, decl.ctype, is_global=True)
@@ -228,18 +229,33 @@ class Analyzer:
             return expr.ctype
 
         if isinstance(expr, Call):
+            # va_start(ap, last) and va_end(ap) are built-in void operations
+            if isinstance(expr.func, Ident) and expr.func.name in ('va_start', 'va_end'):
+                for a in expr.args:
+                    self._analyze_expr(a)
+                expr.func.ctype = CFunction(CVoid(), [])
+                expr.ctype = CVoid()
+                return expr.ctype
+
             ft = self._analyze_expr(expr.func)
             arg_types = [self._analyze_expr(a) for a in expr.args]
             if isinstance(ft, CFunction):
-                # argument count check
-                if len(expr.args) != len(ft.params):
-                    name = expr.func.name if isinstance(expr.func, Ident) else '<expr>'
-                    raise SemanticError(
-                        f"Function '{name}' expects {len(ft.params)} argument(s), "
-                        f"but {len(expr.args)} given"
-                    )
-                # argument type check
                 name = expr.func.name if isinstance(expr.func, Ident) else '<expr>'
+                if ft.is_variadic:
+                    # variadic: must supply at least the fixed params
+                    if len(expr.args) < len(ft.params):
+                        raise SemanticError(
+                            f"Function '{name}' expects at least {len(ft.params)} argument(s), "
+                            f"but {len(expr.args)} given"
+                        )
+                else:
+                    # argument count check
+                    if len(expr.args) != len(ft.params):
+                        raise SemanticError(
+                            f"Function '{name}' expects {len(ft.params)} argument(s), "
+                            f"but {len(expr.args)} given"
+                        )
+                # type check fixed params only
                 for i, (arg_t, param_t) in enumerate(zip(arg_types, ft.params)):
                     if not self._is_assignable(arg_t, param_t):
                         raise SemanticError(
@@ -303,6 +319,11 @@ class Analyzer:
             elem_types = [self._analyze_expr(e) for e in expr.elems]
             elem_t = elem_types[0] if elem_types else CInt()
             expr.ctype = CArray(elem_t, len(expr.elems))
+            return expr.ctype
+
+        if isinstance(expr, VaArg):
+            self._analyze_expr(expr.ap)
+            expr.ctype = expr.arg_type
             return expr.ctype
 
         raise SemanticError(f"Unknown expression type: {type(expr)}")
