@@ -27,9 +27,10 @@ def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
     result = []
     for i in range(start, end):
         marker = '>' if i == line - 1 else ' '
-        result.append(f'  {marker} {i+1:4d} | {lines[i]}')
+        prefix = f'  {marker} {i+1:4d} | '
+        result.append(f'{prefix}{lines[i]}')
         if i == line - 1 and col > 0:
-            result.append(f'        {" " * col}^')
+            result.append(f'{" " * len(prefix)}{" " * (col - 1)}^')
     return '\n'.join(result)
 
 
@@ -60,7 +61,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
 
     # 2. lexing
     try:
-        lexer = Lexer(src)
+        lexer = Lexer(src, filename=src_name)
     except LexError as e:
         ctx = _source_context(src, e.line if hasattr(e, 'line') else 0,
                               e.col if hasattr(e, 'col') else 0)
@@ -80,10 +81,15 @@ def compile_c(src: str, src_name: str = '<stdin>',
         parser = Parser(lexer.tokens)
         ast    = parser.parse()
     except ParseError as e:
-        # ParseError messages already include line:col
-        ctx = _source_context(src,
-                              _extract_line(e),
-                              _extract_col(e))
+        err_file, err_line, err_col = _parse_error_location(e)
+        if err_file and os.path.isfile(err_file):
+            try:
+                err_src = open(err_file, encoding='utf-8').read()
+            except OSError:
+                err_src = src
+        else:
+            err_src = src
+        ctx = _source_context(err_src, err_line, err_col)
         raise SystemExit(f"Parse error: {e}\n{ctx}")
 
     if dump_ast:
@@ -137,20 +143,30 @@ def compile_c(src: str, src_name: str = '<stdin>',
     return asm
 
 
-def _extract_line(e: Exception) -> int:
-    """Try to extract line number from an error message like 'Line 5:...'"""
-    msg = str(e)
+def _parse_error_location(e: Exception):
+    """Return (filename, line, col) from a ParseError message.
+
+    Handles both old-style 'Line N:col:' and new-style 'file:N:col:' formats.
+    """
     import re
-    m = re.match(r'Line (\d+)', msg)
-    return int(m.group(1)) if m else 0
+    msg = str(e)
+    # new style: path/file.c:N:col:
+    m = re.match(r'^(.+):(\d+):(\d+):', msg)
+    if m:
+        return m.group(1), int(m.group(2)), int(m.group(3))
+    # old style: Line N:col:
+    m = re.match(r'Line (\d+):(\d+):', msg)
+    if m:
+        return '', int(m.group(1)), int(m.group(2))
+    return '', 0, 0
+
+
+def _extract_line(e: Exception) -> int:
+    return _parse_error_location(e)[1]
 
 
 def _extract_col(e: Exception) -> int:
-    """Try to extract column number from an error message like '...:9:...'"""
-    msg = str(e)
-    import re
-    m = re.search(r':(\d+):', msg)
-    return int(m.group(1)) if m else 0
+    return _parse_error_location(e)[2]
 
 
 def main():

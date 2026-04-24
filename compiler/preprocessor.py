@@ -118,7 +118,9 @@ def _process(src: str, filename: str, inc_dirs: list,
             inc_file_dir = os.path.dirname(os.path.abspath(inc_path))
             child_dirs = [inc_file_dir] + [d for d in inc_dirs if d != inc_file_dir]
             expanded = _process(inc_src, inc_path, child_dirs, defines, new_stack)
+            out.append(f'#line 1 "{inc_path}"')
             out.append(expanded)
+            out.append(f'#line {lineno + 1} "{filename}"')
 
         elif directive == 'define':
             parts = rest.split(None, 1)

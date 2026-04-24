@@ -111,11 +111,12 @@ KEYWORDS = {
 
 
 class Token:
-    def __init__(self, kind, value, line, col):
-        self.kind  = kind
-        self.value = value
-        self.line  = line
-        self.col   = col
+    def __init__(self, kind, value, line, col, filename=''):
+        self.kind     = kind
+        self.value    = value
+        self.line     = line
+        self.col      = col
+        self.filename = filename
 
     def __repr__(self):
         return f'Token({self.kind}, {self.value!r}, {self.line}:{self.col})'
@@ -126,12 +127,13 @@ class LexError(Exception):
 
 
 class Lexer:
-    def __init__(self, src: str):
-        self.src   = src
-        self.pos   = 0
-        self.line  = 1
-        self.col   = 1
-        self.tokens = []
+    def __init__(self, src: str, filename: str = ''):
+        self.src      = src
+        self.pos      = 0
+        self.line     = 1
+        self.col      = 1
+        self.filename = filename
+        self.tokens   = []
         self._tokenize()
 
     def _cur(self):
@@ -160,6 +162,19 @@ class Lexer:
             ch = self._cur()
             if ch in ' \t\r\n':
                 self._advance()
+            elif ch == '#' and self.col == 1:
+                # consume the full line
+                start = self.pos
+                while self.pos < len(self.src) and self._cur() != '\n':
+                    self.pos += 1
+                directive = self.src[start:self.pos]
+                import re as _re
+                m = _re.match(r'#line\s+(\d+)\s+"([^"]*)"', directive)
+                if m:
+                    # set to N-1: the \n we're about to consume will increment to N
+                    self.line     = int(m.group(1)) - 1
+                    self.filename = m.group(2)
+                    self.col      = 1
             elif ch == '/' and self._peek() == '/':
                 # single-line comment
                 while self.pos < len(self.src) and self._cur() != '\n':
@@ -235,16 +250,19 @@ class Lexer:
         while True:
             self._skip_whitespace_and_comments()
             if self.pos >= len(self.src):
-                self.tokens.append(Token(TK.EOF, None, self.line, self.col))
+                self.tokens.append(Token(TK.EOF, None, self.line, self.col, self.filename))
                 break
 
-            line, col = self.line, self.col
+            line, col, fname = self.line, self.col, self.filename
             ch = self._cur()
+
+            def _tok(kind, value):
+                return Token(kind, value, line, col, fname)
 
             # number
             if ch.isdigit():
                 val = self._read_int()
-                self.tokens.append(Token(TK.INT_LIT, val, line, col))
+                self.tokens.append(_tok(TK.INT_LIT, val))
                 continue
 
             # identifier / keyword
@@ -254,13 +272,13 @@ class Lexer:
                     self._advance()
                 word = self.src[start:self.pos]
                 kind = KEYWORDS.get(word, TK.IDENT)
-                self.tokens.append(Token(kind, word, line, col))
+                self.tokens.append(_tok(kind, word))
                 continue
 
             # char literal
             if ch == "'":
                 val = self._read_char()
-                self.tokens.append(Token(TK.CHAR_LIT, val, line, col))
+                self.tokens.append(_tok(TK.CHAR_LIT, val))
                 continue
 
             # string literal (adjacent strings are concatenated, C standard)
@@ -270,13 +288,13 @@ class Lexer:
                 while self.pos < len(self.src) and self._cur() == '"':
                     val = val + self._read_string()
                     self._skip_whitespace_and_comments()
-                self.tokens.append(Token(TK.STRING_LIT, val, line, col))
+                self.tokens.append(_tok(TK.STRING_LIT, val))
                 continue
 
             # three-character: ellipsis
             if ch == '.' and self._peek() == '.' and self._peek(2) == '.':
                 self._advance(); self._advance(); self._advance()
-                self.tokens.append(Token(TK.ELLIPSIS, '...', line, col))
+                self.tokens.append(_tok(TK.ELLIPSIS, '...'))
                 continue
 
             # two-character operators first
@@ -295,7 +313,7 @@ class Lexer:
             }
             if two in two_map:
                 self._advance(); self._advance()
-                self.tokens.append(Token(two_map[two], two, line, col))
+                self.tokens.append(_tok(two_map[two], two))
                 continue
 
             # single-character operators
@@ -311,7 +329,7 @@ class Lexer:
             }
             if ch in one_map:
                 self._advance()
-                self.tokens.append(Token(one_map[ch], ch, line, col))
+                self.tokens.append(_tok(one_map[ch], ch))
                 continue
 
             raise LexError(f"Line {line}:{col}: Unexpected character {ch!r}")

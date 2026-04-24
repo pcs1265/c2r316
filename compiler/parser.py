@@ -34,8 +34,9 @@ class Parser:
         tok = self._cur()
         if tok.kind not in kinds:
             exp = ', '.join(k.name for k in kinds)
+            loc = f'{tok.filename}:{tok.line}' if tok.filename else f'Line {tok.line}'
             raise ParseError(
-                f"Line {tok.line}:{tok.col}: Expected {exp}, got {tok.kind.name} ({tok.value!r})"
+                f"{loc}:{tok.col}: Expected {exp}, got {tok.kind.name} ({tok.value!r})"
             )
         self.pos += 1
         return tok
@@ -652,6 +653,7 @@ class Parser:
             self._eat(TK.RPAREN)
             return expr
 
+        loc = f'{tok.filename}:{tok.line}' if tok.filename else f'Line {tok.line}'
         raise ParseError(
-            f"Line {tok.line}:{tok.col}: Unexpected token {tok.kind.name} ({tok.value!r})"
+            f"{loc}:{tok.col}: Unexpected token {tok.kind.name} ({tok.value!r})"
         )
