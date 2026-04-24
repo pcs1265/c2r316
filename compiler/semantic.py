@@ -239,6 +239,9 @@ class Analyzer:
                 return expr.ctype
 
             ft = self._analyze_expr(expr.func)
+            # function pointer: unwrap CPointer(CFunction(...))
+            if isinstance(ft, CPointer) and isinstance(ft.base, CFunction):
+                ft = ft.base
             arg_types = [self._analyze_expr(a) for a in expr.args]
             if isinstance(ft, CFunction):
                 name = expr.func.name if isinstance(expr.func, Ident) else '<expr>'
@@ -350,4 +353,7 @@ class Analyzer:
         # array decays to pointer (e.g., char[] → char*)
         if isinstance(src, CArray) and isinstance(dst, CPointer):
             return self._is_assignable(src.base, dst.base)
+        # function decays to function pointer (e.g., int(int) → int(*)(int))
+        if isinstance(src, CFunction) and isinstance(dst, CPointer) and isinstance(dst.base, CFunction):
+            return True
         return False
