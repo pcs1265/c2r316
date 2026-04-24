@@ -537,14 +537,23 @@ class Codegen:
     def _asm_peephole(self, func_start: int):
         """Post-process emitted assembly lines for a function.
 
-        Eliminates st Rx, r30, N followed by ld Ry, r30, N (possibly with
-        transparent intervening instructions), replacing the ld with mov Ry, Rx.
+        Pass 1 — st→ld forwarding:
+          Eliminates st Rx, r30, N followed by ld Ry, r30, N (possibly with
+          transparent intervening instructions), replacing the ld with mov Ry, Rx.
 
-        Transparent instructions: source comments, stores to other offsets,
-        movs or loads whose destination is not Rx (the tracked source register).
+        Pass 2 — ld→ld forwarding (redundant reload):
+          If a slot is loaded into Rx and the same slot is loaded again before
+          Rx or the slot is clobbered, replace the second ld with mov Ry, Rx.
 
-        Stops at: labels, branches, store to the same offset, or any instruction
-        that writes Rx (which would make Rx no longer hold the stored value).
+        Pass 3 — mov chain collapsing:
+          mov rA, rX; mov rB, rA  →  mov rB, rX  (drop first if rA unused after)
+          Only when rA is a pure scratch register (r7–r18): those are caller-saved
+          temporaries with no ABI significance between instructions.
+          Also drops mov rX, rX (self-move) unconditionally.
+
+        Transparent instructions for passes 1 & 2: source comments, stores to
+        other offsets, and instructions that don't write the tracked register.
+        Stops at: labels, branches, store/write to the tracked register or slot.
         """
         import re
         lines = self._out
@@ -554,11 +563,17 @@ class Codegen:
 
         st_pat  = re.compile(r'^(\s*)st (\w+), (r30), (\d+)$')
         ld_pat  = re.compile(r'^(\s*)ld (\w+), (r30), (\d+)$')
+        mov_pat = re.compile(r'^(\s*)mov (r\d+), (r\d+)$')
         # Patterns that write a destination register (all ALU/memory ops with a dst)
         dst_pat = re.compile(r'^\s*(?:ld|mov|add|sub|mul|mulh|and|or|xor|adc|sbb|shl|shr|not)\s+(\w+)')
         label   = re.compile(r'^\s*\.\w+:')
         branch  = re.compile(r'^\s*j')
 
+        # Pure scratch registers: caller-saved, not arg/return, not special.
+        # Safe to use as collapsible intermediates in mov chains.
+        SCRATCH_REGS = {f'r{i}' for i in range(7, 19)}
+
+        # Pass 1: st Rx, r30, N  →  forward to subsequent ld _, r30, N
         for i in range(func_start, n):
             if i in drop or i in patch:
                 continue
@@ -571,39 +586,138 @@ class Codegen:
             while j < n:
                 ln = lines[j]
                 stripped = ln.lstrip()
-                # Source annotation comment — transparent
                 if stripped.startswith('; '):
                     j += 1
                     continue
-                # Label or branch: control-flow boundary, stop
                 if label.match(ln) or branch.match(ln):
                     break
-                # Store to the same slot: clobbers the spill, stop
                 ms2 = st_pat.match(ln)
                 if ms2 and ms2.group(4) == offset:
                     break
-                # Any instruction that writes st_src: value no longer valid, stop
                 dm = dst_pat.match(ln)
                 if dm and dm.group(1) == st_src:
                     break
-                # Check for the matching load
                 ml = ld_pat.match(ln)
                 if ml and ml.group(4) == offset:
                     ld_dst = ml.group(2)
                     if ld_dst == st_src:
-                        drop.add(j)   # ld is a no-op: value already in st_src
+                        drop.add(j)
                     else:
                         patch[j] = f'{indent}mov {ld_dst}, {st_src}'
                     break
-                # All other instructions are transparent
                 j += 1
 
-        # Apply in reverse order to preserve indices
+        # Pass 2: ld Rx, r30, N  →  forward to subsequent ld _, r30, N
+        for i in range(func_start, n):
+            if i in drop or i in patch:
+                continue
+            ml = ld_pat.match(lines[i])
+            if not ml:
+                continue
+            indent, ld_src, offset = ml.group(1), ml.group(2), ml.group(4)
+
+            j = i + 1
+            while j < n:
+                ln = lines[j]
+                stripped = ln.lstrip()
+                if stripped.startswith('; '):
+                    j += 1
+                    continue
+                if label.match(ln) or branch.match(ln):
+                    break
+                # Store to the same slot clobbers it
+                ms2 = st_pat.match(ln)
+                if ms2 and ms2.group(4) == offset:
+                    break
+                # Any write to ld_src invalidates the cached value
+                dm = dst_pat.match(ln)
+                if dm and dm.group(1) == ld_src:
+                    break
+                ml2 = ld_pat.match(ln)
+                if ml2 and ml2.group(4) == offset:
+                    ld_dst = ml2.group(2)
+                    if ld_dst == ld_src:
+                        drop.add(j)
+                    else:
+                        patch[j] = f'{indent}mov {ld_dst}, {ld_src}'
+                    break
+                j += 1
+
+        # Apply passes 1 & 2 before pass 3 so mov chains are visible
         for i in sorted(drop | set(patch.keys()), reverse=True):
             if i in drop:
                 lines.pop(i)
             elif i in patch:
                 lines[i] = patch[i]
+        drop.clear()
+        patch.clear()
+        n = len(lines)
+
+        # Pass 3: mov chain collapsing (only scratch intermediates, r7–r18)
+        # Also eliminates mov rX, rX.
+        # Repeat until stable (handles 3+ hop chains).
+        changed = True
+        while changed:
+            changed = False
+            n = len(lines)
+            for i in range(func_start, n - 1):
+                if i in drop:
+                    continue
+                # Drop self-moves unconditionally
+                ms = mov_pat.match(lines[i])
+                if ms and ms.group(2) == ms.group(3):
+                    drop.add(i)
+                    changed = True
+                    continue
+                # Collapse: mov rA, rX; mov rB, rA  →  mov rB, rX  (drop first)
+                # Only when rA is a pure scratch register
+                ms1 = mov_pat.match(lines[i])
+                if not ms1:
+                    continue
+                rA, rX = ms1.group(2), ms1.group(3)
+                if rA not in SCRATCH_REGS:
+                    continue
+                j = i + 1
+                # Skip source annotation comments
+                while j < n and lines[j].lstrip().startswith('; '):
+                    j += 1
+                if j >= n:
+                    continue
+                ms2 = mov_pat.match(lines[j])
+                if not ms2 or ms2.group(3) != rA:
+                    continue
+                rB = ms2.group(2)
+                # Verify rA is not used again after line j within this function
+                # (scan forward until end, label, branch, or write to rA)
+                rA_used_after = False
+                for k in range(j + 1, n):
+                    lk = lines[k].strip()
+                    if not lk or lk.startswith('; '):
+                        continue
+                    if label.match(lines[k]) or branch.match(lines[k]):
+                        break
+                    # Write to rA ends its live range (check before use check)
+                    dm = dst_pat.match(lines[k])
+                    if dm and dm.group(1) == rA:
+                        break
+                    # Any use of rA as a source operand
+                    if re.search(rf'\b{rA}\b', lk):
+                        rA_used_after = True
+                        break
+                if rA_used_after:
+                    continue
+                indent = ms1.group(1)
+                patch[j] = f'{indent}mov {rB}, {rX}'
+                drop.add(i)
+                changed = True
+
+            for idx in sorted(drop | set(patch.keys()), reverse=True):
+                if idx in drop:
+                    lines.pop(idx)
+                elif idx in patch:
+                    lines[idx] = patch[idx]
+            drop.clear()
+            patch.clear()
 
     def _max_outgoing_stack_slots(self, fn: IRFunction) -> int:
         """Count the max overflow stack arg words needed across all calls."""
