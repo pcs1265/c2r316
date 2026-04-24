@@ -46,10 +46,15 @@
 - Function pointer calls
 
 ### Preprocessor
-- `#include "file"` (relative path)
-- `#define NAME` (flag) and `#define NAME value` (single-token object-like macros)
+- `#include "file"` and `#include <file>`
+- Object macros: `#define NAME` and `#define NAME value`
+- Function-like macros: `#define F(a,b) ...` including variadic `...` / `__VA_ARGS__`
+- Stringification (`#arg`) and token pasting (`a##b`)
 - `#undef`
-- `#ifdef` / `#ifndef` / `#else` / `#endif`
+- `#ifdef` / `#ifndef` / `#if <expr>` / `#elif <expr>` / `#else` / `#endif`
+- `defined(NAME)` and `defined NAME` in `#if`/`#elif`
+- `#error`, `#warning`, `#pragma` (ignored)
+- Predefined macros: `__FILE__`, `__LINE__`, `__DATE__`, `__TIME__`, `__STDC__`
 
 ### Optimizations
 - Constant folding + copy propagation (`compiler/fold.py`)
@@ -87,11 +92,7 @@
 | Struct/union pass-by-value | Hidden pointer not generated |
 | `typedef` | Token exists; no parse branch |
 | Function pointer declarator syntax | `int (*fp)(int)` not parsed; call-through works via cast |
-| `#define` function-like macros | Preprocessor only does text replacement |
-| `#elif` | Not implemented in preprocessor |
-| `#pragma`, `#error`, `#warning` | Not implemented |
-| Predefined macros (`__FILE__`, `__LINE__`, etc.) | Not implemented |
-| `<system>` includes | No angle-bracket include support |
+| `__func__` / `__FUNCTION__` | C99 implicit per-function string variable; not yet implemented |
 | Designated initializers (`{.field = val}`) | Not supported |
 | Compound literals (`(Type){...}`) | Not supported |
 | Inline asm output operands / clobbers | Input-only `asm()` |

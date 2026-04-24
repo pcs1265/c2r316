@@ -17,10 +17,15 @@ C Source
 ```
 
 1. **Preprocessor**
-   - `#include "file"` (prepends `runtime/stdlib.h` automatically)
-   - `#define NAME` / `#define NAME value`
+   - `#include "file"` and `#include <file>`
+   - Object macros: `#define NAME` / `#define NAME value`
+   - Function-like macros: `#define F(a,b) ...` with variadic `...`/`__VA_ARGS__`
+   - Stringification (`#arg`) and token pasting (`a##b`)
    - `#undef`
-   - `#ifdef` / `#ifndef` / `#else` / `#endif`
+   - `#ifdef` / `#ifndef` / `#if <expr>` / `#elif <expr>` / `#else` / `#endif`
+   - `defined(NAME)` / `defined NAME` in `#if`/`#elif`
+   - `#error`, `#warning`, `#pragma` (ignored)
+   - Predefined macros: `__FILE__`, `__LINE__`, `__DATE__`, `__TIME__`, `__STDC__`
 
 2. **Lexer**
    - All C operators and punctuation
@@ -120,10 +125,16 @@ Provided library functions: `putchar`, `getchar`, `puts`, `print_int`, `print_ui
 - Function pointer calls (call-through; declarator syntax requires cast)
 
 ### Preprocessor
-- `#include "file"` (relative path; no angle-bracket system includes)
-- `#define NAME` and `#define NAME value` (single-token object-like macros)
+- `#include "file"` and `#include <file>`
+- Object macros: `#define NAME` and `#define NAME value`
+- Function-like macros: `#define F(a,b) ...` including variadic `...`/`__VA_ARGS__`
+- Stringification (`#arg`) and token pasting (`a##b`) with correct prescan rules
 - `#undef`
-- `#ifdef` / `#ifndef` / `#else` / `#endif`
+- `#ifdef` / `#ifndef` / `#if <expr>` / `#elif <expr>` / `#else` / `#endif`
+- `defined(NAME)` and `defined NAME` in `#if`/`#elif` expressions
+- Full `#if` expression evaluator: arithmetic, bitwise, logical, relational, ternary `?:`, char/hex/octal/binary literals
+- `#error`, `#warning`, `#pragma` (ignored)
+- Predefined macros: `__FILE__`, `__LINE__`, `__DATE__`, `__TIME__`, `__STDC__`
 
 ## Limitations
 
@@ -136,7 +147,7 @@ See [TODO.md](TODO.md) for the full list. Key gaps:
 - **`short`, `const`, `volatile`, `float`, `double`** — no lexer tokens; not supported
 - **Multi-dimensional arrays** — `int a[3][4]` not parsed
 - **Struct pass-by-value** — use pointers; hidden-pointer ABI not generated
-- **`#define` function-like macros**, **`#elif`** — not implemented
+- **`__func__` / `__FUNCTION__`** — C99 implicit per-function string; not yet implemented
 - **Signed division** — `__udiv`/`__umod` are unsigned helpers; no signed division
 
 ## Usage
