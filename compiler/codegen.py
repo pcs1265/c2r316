@@ -484,6 +484,7 @@ class Codegen:
         # Record va_spill_base on the IRFunction so IVaStart can use it
         fn.va_spill_base = self._va_spill_base
 
+        func_start = len(self._out)
         self._emit(f'; function {fn.name}')
         self._lbl(fn.name)
 
@@ -530,7 +531,79 @@ class Codegen:
             self._gen_instr(instr, lr_slot, total)
             self._ctx.free_dead_temps(idx)
 
+        self._asm_peephole(func_start)
         self._emit('')
+
+    def _asm_peephole(self, func_start: int):
+        """Post-process emitted assembly lines for a function.
+
+        Eliminates st Rx, r30, N followed (possibly after other st r30 to
+        different offsets or source comments) by ld Ry, r30, N, replacing
+        the ld with mov Ry, Rx.  Stops at labels, branches, or a second
+        store to the same offset.
+        """
+        import re
+        lines = self._out
+        n = len(lines)
+        drop = set()
+        patch: dict = {}  # index → replacement string
+
+        st_pat = re.compile(r'^(\s*)st (\w+), (r30), (\d+)$')
+        ld_pat = re.compile(r'^(\s*)ld (\w+), (r30), (\d+)$')
+        label  = re.compile(r'^\s*\.\w+:')
+        branch = re.compile(r'^\s*j')
+
+        for i in range(func_start, n):
+            if i in drop or i in patch:
+                continue
+            ms = st_pat.match(lines[i])
+            if not ms:
+                continue
+            indent, st_src, offset = ms.group(1), ms.group(2), ms.group(4)
+
+            j = i + 1
+            while j < n:
+                ln = lines[j]
+                stripped = ln.lstrip()
+                # Source annotation comment — transparent
+                if stripped.startswith('; '):
+                    j += 1
+                    continue
+                # Store to a different slot — transparent
+                ms2 = st_pat.match(ln)
+                if ms2 and ms2.group(4) != offset:
+                    j += 1
+                    continue
+                # mov or ld to a different slot — transparent
+                if stripped.startswith('mov '):
+                    j += 1
+                    continue
+                ml2 = ld_pat.match(ln)
+                if ml2 and ml2.group(4) != offset:
+                    j += 1
+                    continue
+                # Label or branch: control-flow boundary, stop
+                if label.match(ln) or branch.match(ln):
+                    break
+                # Store to the same slot: clobbers our value, stop
+                if ms2:
+                    break
+                # Check for the matching load
+                ml = ld_pat.match(ln)
+                if ml and ml.group(4) == offset:
+                    ld_dst = ml.group(2)
+                    if ld_dst == st_src:
+                        drop.add(j)   # ld is a no-op: value already in st_src
+                    else:
+                        patch[j] = f'{indent}mov {ld_dst}, {st_src}'
+                break
+
+        # Apply in reverse order to preserve indices
+        for i in sorted(drop | set(patch.keys()), reverse=True):
+            if i in drop:
+                lines.pop(i)
+            elif i in patch:
+                lines[i] = patch[i]
 
     def _max_outgoing_stack_slots(self, fn: IRFunction) -> int:
         """Count the max overflow stack arg words needed across all calls."""
