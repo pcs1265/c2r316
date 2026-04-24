@@ -81,6 +81,7 @@ class TK(Enum):
     QUESTION   = auto()   # ?
     COMMA      = auto()   # ,
     DOT        = auto()   # .
+    ELLIPSIS   = auto()   # ...
 
     EOF        = auto()
 
@@ -270,6 +271,12 @@ class Lexer:
                     val = val + self._read_string()
                     self._skip_whitespace_and_comments()
                 self.tokens.append(Token(TK.STRING_LIT, val, line, col))
+                continue
+
+            # three-character: ellipsis
+            if ch == '.' and self._peek() == '.' and self._peek(2) == '.':
+                self._advance(); self._advance(); self._advance()
+                self.tokens.append(Token(TK.ELLIPSIS, '...', line, col))
                 continue
 
             # two-character operators first

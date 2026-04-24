@@ -49,6 +49,15 @@ class Parser:
 
     TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION}
 
+    # identifiers that act as type names
+    _TYPE_IDENTS = {'va_list'}  # va_list is int* alias
+
+    def _at_type_start(self) -> bool:
+        """True if current token starts a type (keyword or va_list ident)."""
+        if self._cur().kind in self.TYPE_STARTS:
+            return True
+        return self._cur().kind == TK.IDENT and self._cur().value in self._TYPE_IDENTS
+
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
         self.pos    = 0
@@ -61,6 +70,10 @@ class Parser:
             return self._parse_struct_or_union(is_union=False)
         if self._at(TK.UNION):
             return self._parse_struct_or_union(is_union=True)
+        # va_list is an alias for int* (pointer to variadic spill area)
+        if self._at(TK.IDENT) and self._cur().value == 'va_list':
+            self._eat(TK.IDENT)
+            return CPointer(CInt())
         unsigned = bool(self._try_eat(TK.UNSIGNED))
         if self._try_eat(TK.INT):
             return CInt(unsigned)
@@ -180,12 +193,12 @@ class Parser:
 
         if self._at(TK.LPAREN):
             # function declaration or definition
-            params = self._parse_params()
+            params, is_variadic = self._parse_params()
             if self._try_eat(TK.SEMICOLON):
                 body = None
             else:
                 body = self._parse_block()
-            return [FuncDecl(name, ret_type, params, body, is_static)]
+            return [FuncDecl(name, ret_type, params, body, is_static, is_variadic)]
         else:
             # global variable
             results = []
@@ -226,12 +239,17 @@ class Parser:
     def _parse_params(self) -> list[ParamDecl]:
         self._eat(TK.LPAREN)
         params = []
+        is_variadic = False
         if self._try_eat(TK.VOID) and self._at(TK.RPAREN):
             self._eat(TK.RPAREN)
-            return params
+            return params, False
         if not self._at(TK.RPAREN):
             while True:
-                if self._at(*self.TYPE_STARTS):
+                if self._at(TK.ELLIPSIS):
+                    self._eat(TK.ELLIPSIS)
+                    is_variadic = True
+                    break
+                elif self._at_type_start():
                     ptype, pname = self._parse_type_and_name()
                     params.append(ParamDecl(pname or f'_p{len(params)}', ptype))
                     if not self._try_eat(TK.COMMA):
@@ -239,7 +257,7 @@ class Parser:
                 else:
                     break
         self._eat(TK.RPAREN)
-        return params
+        return params, is_variadic
 
     # ── Statement Parsing ─────────────────────────────────────────────────────────────
 
@@ -292,7 +310,7 @@ class Parser:
             return self._parse_asm()
 
         # local variable declaration
-        if self._at(*self.TYPE_STARTS):
+        if self._at_type_start():
             return self._parse_local_decl()
 
         # expression statement
@@ -356,7 +374,7 @@ class Parser:
         if self._at(TK.SEMICOLON):
             self._eat(TK.SEMICOLON)
             init = None
-        elif self._at(*self.TYPE_STARTS):
+        elif self._at_type_start():
             decls = self._parse_local_decl()
             init = decls[0] if len(decls) == 1 else Block(decls)
         else:
@@ -556,7 +574,8 @@ class Parser:
             self._eat(TK.DEC)
             return UnaryOp('--pre', self._parse_unary())
         # cast: (type)expr
-        if self._at(TK.LPAREN) and self._peek().kind in self.TYPE_STARTS:
+        if self._at(TK.LPAREN) and (self._peek().kind in self.TYPE_STARTS or
+                (self._peek().kind == TK.IDENT and self._peek().value in self._TYPE_IDENTS)):
             self._eat(TK.LPAREN)
             t = self._parse_type()
             self._eat(TK.RPAREN)
@@ -617,6 +636,14 @@ class Parser:
 
         if tok.kind == TK.IDENT:
             self._eat(TK.IDENT)
+            # va_arg(ap, type) is a built-in that takes a type argument
+            if tok.value == 'va_arg' and self._at(TK.LPAREN):
+                self._eat(TK.LPAREN)
+                ap = self._parse_assign()
+                self._eat(TK.COMMA)
+                arg_type = self._parse_type()
+                self._eat(TK.RPAREN)
+                return VaArg(ap, arg_type)
             return Ident(tok.value)
 
         if tok.kind == TK.LPAREN:

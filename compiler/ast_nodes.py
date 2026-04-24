@@ -54,7 +54,8 @@ class CArray(CType):
 class CFunction(CType):
     ret: CType
     params: List[CType]
-    def __repr__(self): return f"{self.ret}({', '.join(map(str, self.params))})"
+    is_variadic: bool = False
+    def __repr__(self): return f"{self.ret}({', '.join(map(str, self.params))}{',...' if self.is_variadic else ''})"
     def size(self): return 0
 
 
@@ -136,6 +137,7 @@ class FuncDecl(Node):
     params: List['ParamDecl']
     body: Optional['Block']    # None means declaration only (extern)
     is_static: bool = False
+    is_variadic: bool = False
 
 @dataclass
 class ParamDecl(Node):
@@ -302,6 +304,13 @@ class SizeOf(Expr):
     target: Any               # CType or Expr
     ctype: CType = field(default_factory=CInt)
 
+@dataclass
+class VaArg(Expr):
+    """va_arg(ap, type) — fetch next variadic argument of given type"""
+    ap: Expr                  # the va_list variable
+    arg_type: CType           # type to extract
+    ctype: CType = None
+
 
 # ── AST Pretty-Printer ──────────────────────────────────────────────────────────
 
@@ -430,5 +439,8 @@ def dump_ast(node, indent: int = 0) -> str:
     if isinstance(node, SizeOf):
         t = node.target if isinstance(node.target, CType) else dump_ast(node.target)
         return f'sizeof({t})'
+
+    if isinstance(node, VaArg):
+        return f'va_arg({dump_ast(node.ap)}, {node.arg_type})'
 
     return f'{prefix}Unknown({type(node).__name__})'
