@@ -9,7 +9,7 @@ Potential improvements:
 - **Copy prop: Var sources** — currently blocked because `Var` in IStore/ILoad address position means "direct slot access" not "load and dereference". Fix requires distinguishing address-position uses from value-position uses before enabling Var propagation.
 - **Common subexpression elimination (CSE)** — `&arr` is recomputed on every array access; CSE would deduplicate these IAddrOf instructions within a basic block.
 - **Register allocation** ✓ done — linear-scan allocator in `compiler/regalloc.py` assigns Temps to r10–r18 (caller-saved) and r19–r29 (callee-saved for call-crossing intervals); r7–r9 remain codegen scratch. Codegen emits 3-operand add/sub/mul and uses allocated regs directly in comparisons and branches. Total reduction from baseline: 855 → 617 instructions on hello.c (−28%).
-- **Peephole: redundant stores** — `st r7, r30, N` immediately followed by `ld r7, r30, N` (or vice versa) can be eliminated at the assembly level.
+- **Peephole: st/ld pairs** ✓ done — `st Rx, r30, N` followed by `ld Ry, r30, N` (possibly across other stores/moves) replaced with `mov Ry, Rx`. Reduces stack loads to register moves; instruction count unchanged but memory traffic reduced.
 - **Dead store elimination** — stores to locals that are never loaded again (requires liveness analysis over Vars, not just Temps).
 - **Inlining** — small leaf functions (e.g. `putchar`) called in hot loops are good candidates.
 
