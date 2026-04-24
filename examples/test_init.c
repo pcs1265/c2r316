@@ -100,6 +100,16 @@ int main(void) {
     int crr[4] = {7, 8};
     check("crr[0]", crr[0], 7);
     check("crr[1]", crr[1], 8);
+    check("crr[2]", crr[2], 0);
+    check("crr[3]", crr[3], 0);
+
+    /* 10b. {0} zero-fills entire array */
+    int zerr[5] = {0};
+    check("zerr[0]", zerr[0], 0);
+    check("zerr[1]", zerr[1], 0);
+    check("zerr[2]", zerr[2], 0);
+    check("zerr[3]", zerr[3], 0);
+    check("zerr[4]", zerr[4], 0);
 
     /* 11. initializer + mutation */
     int drr[] = {100, 200, 300};

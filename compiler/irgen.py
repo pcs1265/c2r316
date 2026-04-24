@@ -169,7 +169,9 @@ class IRGen:
                 loc = self._loc(stmt)
                 if isinstance(d.init, InitList):
                     elem_sz = d.ctype.base.size() if isinstance(d.ctype, CArray) else 1
+                    arr_len = d.ctype.length if isinstance(d.ctype, CArray) else 1
                     base = self._var_addr(d.name, loc)
+                    # write explicit initializer elements
                     for i, elem in enumerate(d.init.elems):
                         val = self._gen_expr(elem)
                         if i == 0:
@@ -178,6 +180,11 @@ class IRGen:
                             t_off = self._tmp()
                             self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
                             self._emit(IStore(t_off, val, loc))
+                    # zero-fill remaining elements (standard C partial initializer rule)
+                    for i in range(len(d.init.elems), arr_len):
+                        t_off = self._tmp()
+                        self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
+                        self._emit(IStore(t_off, ImmInt(0), loc))
                 else:
                     val = self._gen_expr(d.init)
                     addr = self._var_addr(d.name, loc)
