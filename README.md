@@ -63,8 +63,12 @@ python compiler.py examples/hello.c -o output.asm -v -g
 - `-g, --annotate`: Embed C source lines as comments in the output assembly.
 - `--dump-tokens`: Dump lexer token stream to stderr.
 - `--dump-ast`: Dump the parsed AST to stderr.
-- `--dump-ir`: Dump the IR (after optimization) to stderr.
-- `--stop-after {lex,parse,semantic,ir,codegen}`: Stop after the named stage.
+- `--dump-ir`: Dump IR both before and after optimization (shorthand for `--dump-ir-pre --dump-ir-post`).
+- `--dump-ir-pre`: Dump IR before optimization passes only.
+- `--dump-ir-post`: Dump IR after optimization passes only.
+- `--dump-opt-stats`: Print instruction and function count changes for each optimization pass.
+- `--dump-opt-stats`: Print instruction and function count changes for each optimization pass.
+- `--stop-after {lex,parse,semantic,ir,opt,codegen}`: Stop after the named stage (`ir` = pre-opt, `opt` = post-opt).
 
 ## Project Structure
 

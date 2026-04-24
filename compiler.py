@@ -36,12 +36,33 @@ def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
     return '\n'.join(result)
 
 
+def _ir_header(title: str) -> str:
+    bar = '-' * 60
+    return f'\n{bar}\n  {title}\n{bar}'
+
+
+def _print_opt_stats(stats: list):
+    print('\n  Optimization pass results:', file=sys.stderr)
+    for name, bf, af, bi, ai in stats:
+        di = ai - bi
+        df = af - bf
+        sign_i = '+' if di >= 0 else ''
+        sign_f = '+' if df >= 0 else ''
+        print(f'  {name}:', file=sys.stderr)
+        print(f'    instrs : {bi:4d} -> {ai:4d}  ({sign_i}{di})', file=sys.stderr)
+        if df != 0:
+            print(f'    funcs  : {bf:4d} -> {af:4d}  ({sign_f}{df})', file=sys.stderr)
+
+
 def compile_c(src: str, src_name: str = '<stdin>',
               src_path: str = '',
               include_dirs: list = None,
               dump_tokens: bool = False,
               dump_ast: bool = False,
               dump_ir: bool = False,
+              dump_ir_pre: bool = False,
+              dump_ir_post: bool = False,
+              dump_opt_stats: bool = False,
               stop_after: str = None,
               verbose: bool = False,
               annotate_asm: bool = False) -> str:
@@ -133,17 +154,43 @@ def compile_c(src: str, src_name: str = '<stdin>',
     except IRGenError as e:
         raise SystemExit(f"IR error: {e}")
 
-    if dump_ir:
+    if dump_ir_pre or dump_ir:
+        print(_ir_header('IR (pre-optimization)'), file=sys.stderr)
         print(ir.dump(), file=sys.stderr)
 
     if stop_after == 'ir':
-        raise SystemExit(0)
+        raise SystemExit(0)  # stop before optimization
 
-    # 4.5. Optimization: constant folding → DCE
-    _v('Constant folding + copy propagation ...')
-    fold(ir)
-    _v('Dead code elimination ...')
-    dce(ir)
+    # 4.5. Optimization passes
+    def _instr_count(prog):
+        return sum(len(fn.instrs) for fn in prog.functions)
+
+    def _func_count(prog):
+        return len(prog.functions)
+
+    stats = []
+
+    def _run_pass(name, fn):
+        before_i = _instr_count(ir)
+        before_f = _func_count(ir)
+        fn(ir)
+        after_i  = _instr_count(ir)
+        after_f  = _func_count(ir)
+        stats.append((name, before_f, after_f, before_i, after_i))
+        _v(f'{name}: {before_i} -> {after_i} instrs, {before_f} -> {after_f} fns')
+
+    _run_pass('Constant folding + copy propagation', fold)
+    _run_pass('Dead code / dead function elimination', dce)
+
+    if dump_ir_post or dump_ir:
+        print(_ir_header('IR (post-optimization)'), file=sys.stderr)
+        print(ir.dump(), file=sys.stderr)
+
+    if dump_opt_stats or (verbose and stats):
+        _print_opt_stats(stats)
+
+    if stop_after == 'opt':
+        raise SystemExit(0)  # stop after optimization, before codegen
 
     # 5. code generation (IR → asm)
     _v('Code generation ...')
@@ -213,10 +260,16 @@ def main():
     ap.add_argument('--dump-ast', action='store_true',
                     help='Dump AST to stderr')
     ap.add_argument('--dump-ir', action='store_true',
-                    help='Dump IR to stderr before codegen')
+                    help='Dump IR before and after optimization (shorthand for --dump-ir-pre --dump-ir-post)')
+    ap.add_argument('--dump-ir-pre', action='store_true',
+                    help='Dump IR before optimization passes')
+    ap.add_argument('--dump-ir-post', action='store_true',
+                    help='Dump IR after optimization passes')
+    ap.add_argument('--dump-opt-stats', action='store_true',
+                    help='Print instruction/function count changes for each optimization pass')
     ap.add_argument('--stop-after',
-                    choices=['lex', 'parse', 'semantic', 'ir', 'codegen'],
-                    help='Stop after the given compilation stage')
+                    choices=['lex', 'parse', 'semantic', 'ir', 'opt', 'codegen'],
+                    help='Stop after the given stage: ir=pre-opt IR, opt=post-opt IR, codegen=final asm')
     ap.add_argument('-g', '--annotate', action='store_true',
                     help='Annotate ASM output with source line comments')
     ap.add_argument('-I', dest='include_dirs', action='append', default=[],
@@ -238,6 +291,9 @@ def main():
                         dump_tokens=args.dump_tokens,
                         dump_ast=args.dump_ast,
                         dump_ir=args.dump_ir,
+                        dump_ir_pre=args.dump_ir_pre,
+                        dump_ir_post=args.dump_ir_post,
+                        dump_opt_stats=args.dump_opt_stats,
                         stop_after=args.stop_after,
                         verbose=args.verbose,
                         annotate_asm=args.annotate)
