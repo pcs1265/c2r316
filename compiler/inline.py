@@ -154,7 +154,15 @@ def _clone_instrs(
             out.append(ICall(new_dst, instr.func, new_args, instr.loc))
 
         elif isinstance(instr, IInlineAsm):
-            out.append(IInlineAsm(instr.text, [_ro(s) for s in instr.srcs], instr.loc))
+            # Rename any local labels (words starting with '.') in the asm
+            # template so they get a unique suffix at each inline site.
+            import re
+            renamed_text = re.sub(
+                r'(?<!\w)(\.[A-Za-z_][A-Za-z0-9_]*)',
+                lambda m: _rl(m.group(1)),
+                instr.text,
+            )
+            out.append(IInlineAsm(renamed_text, [_ro(s) for s in instr.srcs], instr.loc))
 
         elif isinstance(instr, IVaStart):
             out.append(IVaStart(Temp(instr.dst.id + temp_offset), instr.num_fixed, instr.loc))
