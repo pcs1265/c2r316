@@ -172,6 +172,37 @@ static void print_hex(unsigned int n) {
     }
 }
 
+/* ── printf ─────────────────────────────────────────────────────────────── */
+/* Supports: %d %u %x %c %s %% — no width/precision/length modifiers.      */
+
+static void printf(char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    while (*fmt) {
+        if (*fmt != '%') {
+            _term_putch(*fmt);
+            fmt++;
+        } else {
+            fmt++;
+            if (*fmt == 'd') {
+                print_int(va_arg(ap, int));
+            } else if (*fmt == 'u') {
+                print_uint(va_arg(ap, int));
+            } else if (*fmt == 'x') {
+                print_hex(va_arg(ap, int));
+            } else if (*fmt == 'c') {
+                _term_putch(va_arg(ap, int));
+            } else if (*fmt == 's') {
+                print_str(va_arg(ap, char *));
+            } else if (*fmt == '%') {
+                _term_putch('%');
+            }
+            fmt++;
+        }
+    }
+    va_end(ap);
+}
+
 /* ── memset / memcpy ────────────────────────────────────────────────────── */
 
 static void memset(char *dst, int val, int n) {
