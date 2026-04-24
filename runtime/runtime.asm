@@ -35,7 +35,7 @@
 start:
     jmp r31, __stack_init
     jmp r31, __term_init
-    jmp r31, main
+    jmp r31, _C_main
     hlt
 
 ; ── __term_init ──────────────────────────────────────────────────────────────

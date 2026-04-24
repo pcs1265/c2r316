@@ -48,6 +48,7 @@ LR         = 'r31'
 SCRATCH_A  = 'r7'   # primary scratch / result
 SCRATCH_B  = 'r8'   # secondary scratch
 SCRATCH_C  = 'r9'   # address scratch
+
 ARG_REGS   = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
 RET_REG    = 'r1'
 
@@ -246,7 +247,7 @@ class Codegen:
         elif isinstance(op, StrLabel):
             self._ins(f'mov {reg}, {op.name}')
         elif isinstance(op, Global):
-            self._ins(f'ld {reg}, {op.name}')
+            self._ins(f'ld {reg}, {self._mangle_global(op.name)}')
         elif isinstance(op, (Temp, Var)):
             # if this temp is already in the target register, skip the load
             if isinstance(op, Temp):
@@ -348,10 +349,14 @@ class Codegen:
         self._load_op(op, scratch)
         return scratch
 
+    def _mangle_global(self, name: str) -> str:
+        """All user-defined names are prefixed with _C_ to avoid assembler conflicts."""
+        return f'_C_{name}'
+
     def _load_addr(self, op: Operand, reg: str):
         """Load the *address* of an operand into a register."""
         if isinstance(op, Global):
-            self._ins(f'mov {reg}, {op.name}')
+            self._ins(f'mov {reg}, {self._mangle_global(op.name)}')
         elif isinstance(op, (Temp, Var)):
             slot = self._spill_slot(op)
             if slot == 0:
@@ -379,7 +384,7 @@ class Codegen:
                     vals = [str(v) for v in init_vals] + ['0'] * (words - len(init_vals))
                 else:
                     vals = ['0'] * words
-                self._emit(f'{name}: dw {", ".join(vals)}')
+                self._emit(f'{self._mangle_global(name)}: dw {", ".join(vals)}')
 
         if prog.strings:
             self._emit('')
@@ -488,7 +493,7 @@ class Codegen:
 
         func_start = len(self._out)
         self._emit(f'; function {fn.name}')
-        self._lbl(fn.name)
+        self._lbl(self._mangle_global(fn.name))
 
         # Prologue: allocate stack frame
         if total > 0:
@@ -1087,7 +1092,7 @@ class Codegen:
                 self._ins(f'st {SCRATCH_A}, {SP}, {overflow_idx}')
 
         if isinstance(instr.func, Global):
-            self._ins(f'jmp {LR}, {instr.func.name}')
+            self._ins(f'jmp {LR}, {self._mangle_global(instr.func.name)}')
         else:
             # function pointer in a temp
             self._load_op(instr.func, SCRATCH_A)
