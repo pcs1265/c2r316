@@ -178,20 +178,33 @@ class Codegen:
     def set_source(self, src: str, src_name: str):
         """Enable source annotation for -g flag."""
         self._annotate = True
-        self._src_lines = src.split('\n')
         self._src_name = src_name
-        self._last_src_line = 0
+        self._file_lines: dict = {}   # filename -> list[str]
+        self._last_loc = None
+
+    def _get_file_lines(self, filename: str):
+        if filename not in self._file_lines:
+            try:
+                import os
+                with open(filename, encoding='utf-8') as f:
+                    self._file_lines[filename] = f.read().split('\n')
+            except OSError:
+                self._file_lines[filename] = []
+        return self._file_lines[filename]
 
     def _emit_src_comment(self, instr: Instr):
         """Emit a source line comment if annotation is enabled and line changed."""
         if not self._annotate or not instr.loc:
             return
-        _, line = instr.loc
-        if line != self._last_src_line and 1 <= line <= len(self._src_lines):
-            src_text = self._src_lines[line - 1].strip()
+        fname, line = instr.loc
+        if (fname, line) == self._last_loc:
+            return
+        lines = self._get_file_lines(fname)
+        if 1 <= line <= len(lines):
+            src_text = lines[line - 1].strip()
             if src_text:
-                self._emit(f'    ; {self._src_name}:{line}: {src_text}')
-            self._last_src_line = line
+                self._emit(f'    ; {fname}:{line}: {src_text}')
+        self._last_loc = (fname, line)
 
     # ── Output ────────────────────────────────────────────────────────────────
 

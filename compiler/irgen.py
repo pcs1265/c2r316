@@ -48,7 +48,10 @@ class IRGen:
 
     def _loc(self, node: Node):
         line = getattr(node, 'line', None)
-        return (self._filename, line) if line else None
+        if not line:
+            return self._stmt_loc
+        fname = getattr(node, 'filename', None) or self._filename
+        return (fname, line)
 
     def _emit(self, instr):
         self._fn.instrs.append(instr)
@@ -108,6 +111,7 @@ class IRGen:
         self._break_stack = []
         self._cont_stack  = []
         self._num_fixed_params = len(func.params)
+        self._stmt_loc = None
 
         self._fn = IRFunction(
             name=func.name,
@@ -153,6 +157,9 @@ class IRGen:
             self._gen_stmt(stmt)
 
     def _gen_stmt(self, stmt: Stmt):
+        loc = self._loc(stmt)
+        if loc:
+            self._stmt_loc = loc
         if isinstance(stmt, Block):
             self._gen_block(stmt)
 

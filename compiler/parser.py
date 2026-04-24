@@ -18,6 +18,12 @@ class Parser:
 
     # ── Basic Utilities ──────────────────────────────────────────────────────────────
 
+    def _stamp(self, node, tok: Token):
+        """Attach source location from tok onto node."""
+        node.line     = tok.line
+        node.filename = tok.filename
+        return node
+
     def _cur(self) -> Token:
         return self.tokens[self.pos]
 
@@ -275,49 +281,52 @@ class Parser:
         return Block(stmts)
 
     def _parse_stmt(self) -> Stmt:
-        cur = self._cur()
+        tok = self._cur()
 
         if self._at(TK.LBRACE):
             return self._parse_block()
 
         if self._at(TK.IF):
-            return self._parse_if()
+            return self._stamp(self._parse_if(), tok)
 
         if self._at(TK.WHILE):
-            return self._parse_while()
+            return self._stamp(self._parse_while(), tok)
 
         if self._at(TK.DO):
-            return self._parse_do_while()
+            return self._stamp(self._parse_do_while(), tok)
 
         if self._at(TK.FOR):
-            return self._parse_for()
+            return self._stamp(self._parse_for(), tok)
 
         if self._try_eat(TK.RETURN):
             expr = None
             if not self._at(TK.SEMICOLON):
                 expr = self._parse_expr()
             self._eat(TK.SEMICOLON)
-            return ReturnStmt(expr)
+            return self._stamp(ReturnStmt(expr), tok)
 
         if self._try_eat(TK.BREAK):
             self._eat(TK.SEMICOLON)
-            return BreakStmt()
+            return self._stamp(BreakStmt(), tok)
 
         if self._try_eat(TK.CONTINUE):
             self._eat(TK.SEMICOLON)
-            return ContinueStmt()
+            return self._stamp(ContinueStmt(), tok)
 
         if self._at(TK.ASM):
-            return self._parse_asm()
+            return self._stamp(self._parse_asm(), tok)
 
         # local variable declaration
         if self._at_type_start():
-            return self._parse_local_decl()
+            decls = self._parse_local_decl()
+            for d in decls:
+                self._stamp(d, tok)
+            return decls
 
         # expression statement
         expr = self._parse_expr()
         self._eat(TK.SEMICOLON)
-        return ExprStmt(expr)
+        return self._stamp(ExprStmt(expr), tok)
 
     def _parse_if(self) -> IfStmt:
         self._eat(TK.IF)
