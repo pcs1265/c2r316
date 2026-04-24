@@ -9,6 +9,7 @@
  */
 
 #include "runtime/stdlib.h"
+#include "runtime/stdio.h"
 
 int pass_count;
 int fail_count;

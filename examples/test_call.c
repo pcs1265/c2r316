@@ -2,7 +2,7 @@
    Covers: register args, stack args (7th+), variadics, struct pass-by-value,
    struct return. */
 
-#include "runtime/stdlib.h"
+#include "runtime/stdio.h"
 
 int pass_count;
 int fail_count;

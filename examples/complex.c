@@ -1,4 +1,4 @@
-#include "runtime/stdlib.h"
+#include "runtime/stdio.h"
 
 /*
  * Super complex test case:

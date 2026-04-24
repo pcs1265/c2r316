@@ -1,12 +1,13 @@
 /* First C program running on R316 */
 
-#include "runtime/stdlib.h"
+#include "runtime/stdio.h"
+
+
 
 int main() {
     printf("Hello, R316!\n");
-    int i;
-    for (i = 0; i < 10; i++) {
-        printf("%d\n", i);
+    for (int i = 0; i < 1024; i++) {
+        putchar(*(char*)i);
     }
 
     return 0;

@@ -1,6 +1,6 @@
 // Test printf format specifiers: %d %u %x %c %s %%
 
-#include "runtime/stdlib.h"
+#include "runtime/stdio.h"
 
 int main() {
     printf("%d\n", 42);

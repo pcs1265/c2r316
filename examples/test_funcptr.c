@@ -1,6 +1,6 @@
 /* test_funcptr.c - self-validating tests for function pointers */
 
-#include "runtime/stdlib.h"
+#include "runtime/stdio.h"
 
 int pass_count;
 int fail_count;

@@ -1,6 +1,7 @@
 /* test_basic.c - self-validating tests */
 
 #include "runtime/stdlib.h"
+#include "runtime/stdio.h"
 
 /* ── test helpers ── */
 
