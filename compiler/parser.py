@@ -57,7 +57,7 @@ class Parser:
     TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION}
 
     # identifiers that act as type names
-    _TYPE_IDENTS = {'va_list'}  # va_list is int* alias
+    _TYPE_IDENTS = {'__builtin_va_list'}  # __builtin_va_list is int* alias
 
     def _at_type_start(self) -> bool:
         """True if current token starts a type (keyword, va_list, or typedef name)."""
@@ -81,8 +81,8 @@ class Parser:
             return self._parse_struct_or_union(is_union=False)
         if self._at(TK.UNION):
             return self._parse_struct_or_union(is_union=True)
-        # va_list is an alias for int* (pointer to variadic spill area)
-        if self._at(TK.IDENT) and self._cur().value == 'va_list':
+        # __builtin_va_list is an alias for int* (pointer to variadic spill area)
+        if self._at(TK.IDENT) and self._cur().value == '__builtin_va_list':
             self._eat(TK.IDENT)
             return CPointer(CInt())
         # typedef alias
@@ -712,8 +712,8 @@ class Parser:
 
         if tok.kind == TK.IDENT:
             self._eat(TK.IDENT)
-            # va_arg(ap, type) is a built-in that takes a type argument
-            if tok.value == 'va_arg' and self._at(TK.LPAREN):
+            # __builtin_va_arg(ap, type) is a built-in that takes a type argument
+            if tok.value == '__builtin_va_arg' and self._at(TK.LPAREN):
                 self._eat(TK.LPAREN)
                 ap = self._parse_assign()
                 self._eat(TK.COMMA)

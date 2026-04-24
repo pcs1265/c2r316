@@ -722,16 +722,16 @@ class IRGen:
     def _gen_call(self, expr: Call) -> Operand:
         loc  = self._loc(expr)
 
-        # va_start(ap, last): store va_start address into ap
-        if isinstance(expr.func, Ident) and expr.func.name == 'va_start':
+        # __builtin_va_start(ap, last): store va_start address into ap
+        if isinstance(expr.func, Ident) and expr.func.name == '__builtin_va_start':
             ap_addr = self._gen_addr(expr.args[0])
             t = self._tmp()
             self._emit(IVaStart(t, self._num_fixed_params, loc))
             self._emit(IStore(ap_addr, t, loc))
             return ImmInt(0)
 
-        # va_end(ap): no-op at IR level
-        if isinstance(expr.func, Ident) and expr.func.name == 'va_end':
+        # __builtin_va_end(ap): no-op at IR level
+        if isinstance(expr.func, Ident) and expr.func.name == '__builtin_va_end':
             return ImmInt(0)
 
         # Determine the called function's type to check for struct args/return

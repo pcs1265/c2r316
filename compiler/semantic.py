@@ -230,8 +230,8 @@ class Analyzer:
             return expr.ctype
 
         if isinstance(expr, Call):
-            # va_start(ap, last) and va_end(ap) are built-in void operations
-            if isinstance(expr.func, Ident) and expr.func.name in ('va_start', 'va_end'):
+            # __builtin_va_start(ap, last) and __builtin_va_end(ap) are built-in void operations
+            if isinstance(expr.func, Ident) and expr.func.name in ('__builtin_va_start', '__builtin_va_end'):
                 for a in expr.args:
                     self._analyze_expr(a)
                 expr.func.ctype = CFunction(CVoid(), [])
