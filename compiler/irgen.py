@@ -226,6 +226,9 @@ class IRGen:
                         t_off = self._tmp()
                         self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
                         self._emit(IStore(t_off, ImmInt(0), loc))
+                elif isinstance(d.ctype, (CStruct, CUnion)):
+                    addr = self._var_addr(d.name, loc)
+                    self._copy_struct(d.init, addr, d.ctype, loc)
                 else:
                     val = self._gen_expr(d.init)
                     addr = self._var_addr(d.name, loc)
@@ -687,6 +690,16 @@ class IRGen:
         loc = self._loc(expr)
 
         if expr.op == '=':
+            # Struct assignment: copy word-by-word from src address to dst address
+            if isinstance(getattr(expr, 'ctype', None), (CStruct, CUnion)):
+                ctype = expr.ctype
+                dst_addr = self._gen_addr(expr.target)
+                if isinstance(dst_addr, Var):
+                    t = self._tmp()
+                    self._emit(IAddrOf(t, dst_addr, loc))
+                    dst_addr = t
+                self._copy_struct(expr.value, dst_addr, ctype, loc)
+                return dst_addr
             val = self._gen_expr(expr.value)
             self._gen_store_to(val, expr.target)
             return val
@@ -773,7 +786,12 @@ class IRGen:
 
     def _copy_struct(self, src_expr: 'Expr', dst_addr: Operand, ctype, loc):
         """Copy a struct value from src_expr into the memory at dst_addr."""
-        src_addr = self._gen_addr(src_expr)
+        # For struct-returning calls, _gen_expr already returns the slot address.
+        # For lvalues (Ident, Member, Index), use _gen_addr.
+        if isinstance(src_expr, Call) and isinstance(getattr(src_expr, 'ctype', None), (CStruct, CUnion)):
+            src_addr = self._gen_expr(src_expr)
+        else:
+            src_addr = self._gen_addr(src_expr)
         if isinstance(src_addr, Var):
             t = self._tmp()
             self._emit(IAddrOf(t, src_addr, loc))
