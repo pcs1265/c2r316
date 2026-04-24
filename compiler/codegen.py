@@ -537,10 +537,14 @@ class Codegen:
     def _asm_peephole(self, func_start: int):
         """Post-process emitted assembly lines for a function.
 
-        Eliminates st Rx, r30, N followed (possibly after other st r30 to
-        different offsets or source comments) by ld Ry, r30, N, replacing
-        the ld with mov Ry, Rx.  Stops at labels, branches, or a second
-        store to the same offset.
+        Eliminates st Rx, r30, N followed by ld Ry, r30, N (possibly with
+        transparent intervening instructions), replacing the ld with mov Ry, Rx.
+
+        Transparent instructions: source comments, stores to other offsets,
+        movs or loads whose destination is not Rx (the tracked source register).
+
+        Stops at: labels, branches, store to the same offset, or any instruction
+        that writes Rx (which would make Rx no longer hold the stored value).
         """
         import re
         lines = self._out
@@ -548,10 +552,12 @@ class Codegen:
         drop = set()
         patch: dict = {}  # index → replacement string
 
-        st_pat = re.compile(r'^(\s*)st (\w+), (r30), (\d+)$')
-        ld_pat = re.compile(r'^(\s*)ld (\w+), (r30), (\d+)$')
-        label  = re.compile(r'^\s*\.\w+:')
-        branch = re.compile(r'^\s*j')
+        st_pat  = re.compile(r'^(\s*)st (\w+), (r30), (\d+)$')
+        ld_pat  = re.compile(r'^(\s*)ld (\w+), (r30), (\d+)$')
+        # Patterns that write a destination register
+        dst_pat = re.compile(r'^\s*(?:ld|mov|add|sub|mul|and|or|xor|adc|not)\s+(\w+)')
+        label   = re.compile(r'^\s*\.\w+:')
+        branch  = re.compile(r'^\s*j')
 
         for i in range(func_start, n):
             if i in drop or i in patch:
@@ -569,24 +575,16 @@ class Codegen:
                 if stripped.startswith('; '):
                     j += 1
                     continue
-                # Store to a different slot — transparent
-                ms2 = st_pat.match(ln)
-                if ms2 and ms2.group(4) != offset:
-                    j += 1
-                    continue
-                # mov or ld to a different slot — transparent
-                if stripped.startswith('mov '):
-                    j += 1
-                    continue
-                ml2 = ld_pat.match(ln)
-                if ml2 and ml2.group(4) != offset:
-                    j += 1
-                    continue
                 # Label or branch: control-flow boundary, stop
                 if label.match(ln) or branch.match(ln):
                     break
-                # Store to the same slot: clobbers our value, stop
-                if ms2:
+                # Store to the same slot: clobbers the spill, stop
+                ms2 = st_pat.match(ln)
+                if ms2 and ms2.group(4) == offset:
+                    break
+                # Any instruction that writes st_src: value no longer valid, stop
+                dm = dst_pat.match(ln)
+                if dm and dm.group(1) == st_src:
                     break
                 # Check for the matching load
                 ml = ld_pat.match(ln)
@@ -596,7 +594,9 @@ class Codegen:
                         drop.add(j)   # ld is a no-op: value already in st_src
                     else:
                         patch[j] = f'{indent}mov {ld_dst}, {st_src}'
-                break
+                    break
+                # All other instructions are transparent
+                j += 1
 
         # Apply in reverse order to preserve indices
         for i in sorted(drop | set(patch.keys()), reverse=True):
