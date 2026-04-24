@@ -19,6 +19,7 @@ from compiler.codegen        import Codegen, CodegenError
 from compiler.preprocessor   import preprocess, PreprocessorError
 from compiler.dce            import dce
 from compiler.fold           import fold
+from compiler.inline         import inline
 
 
 def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
@@ -179,6 +180,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
         stats.append((name, before_f, after_f, before_i, after_i))
         _v(f'{name}: {before_i} -> {after_i} instrs, {before_f} -> {after_f} fns')
 
+    _run_pass('Inlining', inline)
     _run_pass('Constant folding + copy propagation', fold)
     _run_pass('Dead code / dead function elimination', dce)
 
