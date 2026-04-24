@@ -90,9 +90,22 @@ class IRGen:
                 words = max(1, decl.ctype.size())
                 init_vals = None
                 if isinstance(decl.init, InitList):
-                    init_vals = [e.value if isinstance(e, IntLit) else 0 for e in decl.init.elems]
+                    init_vals = []
+                    for e in decl.init.elems:
+                        if isinstance(e, (IntLit, CharLit)):
+                            init_vals.append(e.value)
+                        elif isinstance(e, StringLit):
+                            lbl = f'_cstr_{len(self._strings) + 1}'
+                            self._strings.append((lbl, e.chars))
+                            init_vals.append(lbl)
+                        else:
+                            init_vals.append(0)
                 elif isinstance(decl.init, IntLit):
                     init_vals = [decl.init.value]
+                elif isinstance(decl.init, StringLit):
+                    lbl = f'_cstr_{len(self._strings) + 1}'
+                    self._strings.append((lbl, decl.init.chars))
+                    init_vals = [lbl]
                 ir.globals.append((decl.name, words, init_vals))
             elif isinstance(decl, FuncDecl) and decl.body is not None:
                 ir.functions.append(self._gen_func(decl))

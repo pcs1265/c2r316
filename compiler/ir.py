@@ -306,7 +306,7 @@ class IRFunction:
 @dataclass
 class IRProgram:
     functions: List[IRFunction] = field(default_factory=list)
-    globals: List[Tuple[str, int, Optional[List[int]]]] = field(default_factory=list)  # (name, word_count, init_vals|None)
+    globals: List[Tuple[str, int, Optional[List[Union[int, str]]]]] = field(default_factory=list)  # (name, word_count, init_vals|None); str entries are label names
     strings: List[Tuple[str, List[int]]] = field(default_factory=list)  # (label, chars)
 
     def dump(self) -> str:
