@@ -5,22 +5,53 @@ c2r316 is a C-to-R316 assembly cross-compiler written in Python. It compiles a s
 ## Compilation Pipeline
 
 ```
-C Source → Preprocessor → Lexer → Parser → Semantic → IRGen → Optimizer → Codegen → R316 ASM
+C Source
+  → Preprocessor
+  → Lexer
+  → Parser
+  → Semantic Analyzer
+  → IR Generator
+  → Optimizer
+  → Code Generator
+  → R316 ASM
 ```
 
-1. **Preprocessor** — `#include "file"`, object-like `#define`, `#undef`, `#ifdef`/`#ifndef`/`#else`/`#endif`. Automatically prepends `runtime/stdlib.h`.
-2. **Lexer** — Hand-written tokenizer. All C operators, integer/char/string literals, adjacent string literal concatenation.
-3. **Parser** — Recursive descent parser producing an AST. Full C operator precedence, all standard control flow, struct/union declarations, pointer/array declarators.
-4. **Semantic Analyzer** — Symbol tables, nested block scopes, type annotation, integer promotion (`int`/`char` → `long` widening via `common_type`), function call type checking (fixed-arity and variadic).
-5. **IR Generator** — Lowers the AST to Three-Address Code IR. Short-circuit `&&`/`||`, compound assignments, pre/post increment, struct field offset arithmetic, array index scaling, `va_start`/`va_arg`/`va_end`.
-6. **Optimizer** — Two-pass loop (fold→DCE) run until stable:
-   - **Constant folding + copy propagation** (`compiler/fold.py`) — `x + 0 → x`, `t1 = 5; use(t1) → use(5)`.
-   - **Dead code elimination + dead function elimination** (`compiler/dce.py`) — removes unused temporaries and functions unreachable from `main`.
-7. **Code Generator** — IR → R316 assembly with backend optimizations:
-   - **Linear-scan register allocator** — assigns IR temporaries to r10–r18 (caller-saved) and r19–r29 (call-crossing, callee-saved); r7–r9 remain codegen scratch.
-   - **Compare-branch fusion** — `t = a < b; if t goto L` → `sub r0, a, b; jl L`.
-   - **3-operand arithmetic** — `add dst, src1, src2` when destination ≠ right operand.
-   - **Assembly peephole** — `st Rx, r30, N; ld Ry, r30, N` → `mov Ry, Rx`.
+1. **Preprocessor**
+   - `#include "file"` (prepends `runtime/stdlib.h` automatically)
+   - `#define NAME` / `#define NAME value`
+   - `#undef`
+   - `#ifdef` / `#ifndef` / `#else` / `#endif`
+
+2. **Lexer**
+   - All C operators and punctuation
+   - Integer, character, and string literals
+   - Adjacent string literal concatenation
+
+3. **Parser**
+   - Recursive descent, full C operator precedence
+   - All standard control flow and declarations
+   - Struct/union, pointer/array declarators, typedef
+
+4. **Semantic Analyzer**
+   - Symbol tables and nested block scopes
+   - Type annotation and integer promotion
+   - Function call type checking (fixed-arity and variadic)
+
+5. **IR Generator**
+   - Lowers AST to Three-Address Code IR
+   - Short-circuit `&&`/`||`, compound assignments, pre/post increment
+   - Struct field offset arithmetic, array index scaling
+   - `va_start` / `va_arg` / `va_end`
+
+6. **Optimizer**
+   - **Constant folding + copy propagation** — `x + 0 → x`, `t1 = 5; use(t1) → use(5)`
+   - **Dead code elimination** — removes unused temporaries and functions unreachable from `main`
+
+7. **Code Generator**
+   - **Linear-scan register allocator** — r10–r18 (caller-saved), r19–r29 (callee-saved)
+   - **Compare-branch fusion** — `t = a < b; if t goto L` → `sub r0, a, b; jl L`
+   - **3-operand arithmetic** — `add dst, src1, src2` when dst ≠ src
+   - **Assembly peephole** — `st Rx, r30, N; ld Ry, r30, N` → `mov Ry, Rx`
 
 ## R316 Architecture
 
