@@ -34,6 +34,7 @@ from .ir import (
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
 )
+from .regalloc import allocate, RegMap
 
 
 class CodegenError(Exception):
@@ -169,6 +170,8 @@ class Codegen:
         # scratch-register forwarding: tracks which Temp is live in SCRATCH_A/SCRATCH_C
         self._scratch_a_temp: Optional[Temp] = None
         self._scratch_c_temp: Optional[Temp] = None
+        # register allocation map for current function
+        self._regmap: Optional[RegMap] = None
         # variadic support
         self._va_spill_base: int = 0   # frame offset where arg-reg spill starts
         self._va_spill_n:    int = 0   # number of arg-reg spill slots (0 or 6)
@@ -242,6 +245,17 @@ class Codegen:
         elif isinstance(op, (Temp, Var)):
             # if this temp is already in the target register, skip the load
             if isinstance(op, Temp):
+                # check register allocator assignment
+                preg = self._regmap.reg(op.id) if self._regmap else None
+                if preg is not None:
+                    if preg != reg:
+                        self._ins(f'mov {reg}, {preg}')
+                    # invalidate scratch tracking if we wrote to a scratch reg
+                    if reg == SCRATCH_A:
+                        self._scratch_a_temp = None
+                    elif reg == SCRATCH_C:
+                        self._scratch_c_temp = None
+                    return
                 if self._scratch_a_temp == op:
                     if reg != SCRATCH_A:
                         self._ins(f'mov {reg}, {SCRATCH_A}')
@@ -271,6 +285,18 @@ class Codegen:
         the scratch register instead.
         """
         if isinstance(op, (Temp, Var)):
+            if isinstance(op, Temp):
+                preg = self._regmap.reg(op.id) if self._regmap else None
+                if preg is not None:
+                    # Temp lives in a physical register — emit mov if needed
+                    if reg != preg:
+                        self._ins(f'mov {preg}, {reg}')
+                    # invalidate scratch tracking for the destination
+                    if reg == SCRATCH_A:
+                        self._scratch_a_temp = None
+                    elif reg == SCRATCH_C:
+                        self._scratch_c_temp = None
+                    return
             if skip_if_last and isinstance(op, Temp):
                 last = self._ctx._last_use.get(op.id, -1)
                 if last == self._cur_instr_idx + 1:
@@ -289,6 +315,19 @@ class Codegen:
                 self._scratch_c_temp = op if isinstance(op, Temp) else None
         else:
             raise CodegenError(f"Cannot store into {op}")
+
+    def _dst_reg(self, op: Operand) -> str:
+        """Return the physical register to compute a result into.
+
+        If op is a Temp with an allocated register, return that register so
+        the computation lands there directly (no mov needed after).
+        Otherwise return SCRATCH_A.
+        """
+        if isinstance(op, Temp) and self._regmap:
+            preg = self._regmap.reg(op.id)
+            if preg is not None:
+                return preg
+        return SCRATCH_A
 
     def _load_addr(self, op: Operand, reg: str):
         """Load the *address* of an operand into a register."""
@@ -373,6 +412,7 @@ class Codegen:
         self._scratch_a_temp = None
         self._scratch_c_temp = None
         self._cur_instr_idx = 0
+        self._regmap = allocate(fn)
 
         # Pre-scan: how many outgoing stack-argument words does this function need?
         # Reserve that many slots at [sp+0..sp+OA-1] so calls can write args there.
@@ -478,20 +518,19 @@ class Codegen:
         return max_slots
 
     def _detect_callee_saves(self, fn: IRFunction) -> List[str]:
-        """
-        Detect which callee-saved registers are used by the function.
-        
-        With the current spill-only allocator, no callee-saved registers
-        are allocated to temporaries, so this returns an empty list.
-        When a register allocator is added, this should scan the function's
-        register assignments and return the set of callee-saved regs used.
-        """
-        # TODO: implement when register allocator is added
-        # For now, all values are spilled to stack slots, so no callee-saved
-        # registers are used beyond their spill-slot storage.
-        return []
+        """Return the callee-saved registers assigned by the register allocator."""
+        return list(self._regmap.callee_used) if self._regmap else []
 
     # ── Instructions ──────────────────────────────────────────────────────────
+
+    def _cond_reg(self, cond: Operand) -> str:
+        """Return a register holding the condition value, loading if necessary."""
+        if isinstance(cond, Temp) and self._regmap:
+            preg = self._regmap.reg(cond.id)
+            if preg is not None:
+                return preg
+        self._load_op(cond, SCRATCH_A)
+        return SCRATCH_A
 
     def _gen_instr(self, instr: Instr, lr_slot: int, frame_size: int):
         self._emit_src_comment(instr)
@@ -501,24 +540,32 @@ class Codegen:
             self._lbl(instr.name)
 
         elif isinstance(instr, IConst):
+            dst = self._dst_reg(instr.dst)
             self._scratch_a_temp = None
-            self._ins(f'mov {SCRATCH_A}, {instr.value & 0xFFFF}')
-            self._store_op(SCRATCH_A, instr.dst)
+            self._ins(f'mov {dst}, {instr.value & 0xFFFF}')
+            if dst == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, ICopy):
-            self._load_op(instr.src, SCRATCH_A)
-            self._store_op(SCRATCH_A, instr.dst)
+            dst = self._dst_reg(instr.dst)
+            self._load_op(instr.src, dst)
+            if dst == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, IAddrOf):
+            dst = self._dst_reg(instr.dst)
             self._scratch_a_temp = None
-            self._load_addr(instr.var, SCRATCH_A)
-            self._store_op(SCRATCH_A, instr.dst)
+            self._load_addr(instr.var, dst)
+            if dst == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, ILoad):
+            dst = self._dst_reg(instr.dst)
             self._load_op(instr.addr, SCRATCH_C)
             self._scratch_a_temp = None
-            self._ins(f'ld {SCRATCH_A}, {SCRATCH_C}')
-            self._store_op(SCRATCH_A, instr.dst)
+            self._ins(f'ld {dst}, {SCRATCH_C}')
+            if dst == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst)
 
         elif isinstance(instr, IStore):
             if isinstance(instr.addr, Var):
@@ -554,14 +601,14 @@ class Codegen:
             self._ins(f'jmp {instr.target}')
 
         elif isinstance(instr, IJumpIf):
-            self._load_op(instr.cond, SCRATCH_A)
-            self._ins(f'test {SCRATCH_A}, {SCRATCH_A}')
+            cr = self._cond_reg(instr.cond)
+            self._ins(f'test {cr}, {cr}')
             self._invalidate_scratch()
             self._ins(f'jnz {instr.target}')
 
         elif isinstance(instr, IJumpIfNot):
-            self._load_op(instr.cond, SCRATCH_A)
-            self._ins(f'test {SCRATCH_A}, {SCRATCH_A}')
+            cr = self._cond_reg(instr.cond)
+            self._ins(f'test {cr}, {cr}')
             self._invalidate_scratch()
             self._ins(f'jz {instr.target}')
 
@@ -572,19 +619,23 @@ class Codegen:
         elif isinstance(instr, IVaStart):
             # Compute: dst = sp + va_spill_base + num_fixed
             offset = self._va_spill_base + instr.num_fixed
+            dst = self._dst_reg(instr.dst)
             self._scratch_a_temp = None
             if offset == 0:
-                self._ins(f'mov {SCRATCH_A}, {SP}')
+                self._ins(f'mov {dst}, {SP}')
             else:
-                self._ins(f'add {SCRATCH_A}, {SP}, {offset}')
-            self._store_op(SCRATCH_A, instr.dst, skip_if_last=True)
+                self._ins(f'add {dst}, {SP}, {offset}')
+            if dst == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst, skip_if_last=True)
 
         elif isinstance(instr, IVaArg):
             # Load ap pointer, dereference to get value
+            dst = self._dst_reg(instr.dst)
             self._load_op(instr.ap, SCRATCH_C)
             self._scratch_a_temp = None
-            self._ins(f'ld {SCRATCH_A}, {SCRATCH_C}')
-            self._store_op(SCRATCH_A, instr.dst)
+            self._ins(f'ld {dst}, {SCRATCH_C}')
+            if dst == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst)
 
         else:
             raise CodegenError(f"Unhandled IR instruction: {type(instr)}")
@@ -638,58 +689,89 @@ class Codegen:
     }
 
     def _gen_binop(self, instr: IBinOp):
-        op = instr.op
+        op  = instr.op
+        dst = self._dst_reg(instr.dst)
 
         if op in self._CMP_JMP:
-            self._gen_compare(instr)
+            self._gen_compare(instr, dst)
             return
 
+        # For ops that have a 3-operand form (add, sub, mul), emit
+        # `op dst, left, right` directly when possible to avoid a mov.
+        # For others, load left into SCRATCH_A, operate, then move to dst.
         self._load_op(instr.left,  SCRATCH_A)
         self._load_op(instr.right, SCRATCH_B)
 
-        if op == '+':
+        THREE_OP = {'+': 'add', '-': 'sub', '*': 'mul'}
+        if op in THREE_OP and dst != SCRATCH_B:
+            mnemonic = THREE_OP[op]
+            if op == '*':
+                self._ins(f'mul {dst}, {SCRATCH_A}, {SCRATCH_B}')
+            else:
+                self._ins(f'{mnemonic} {dst}, {SCRATCH_A}, {SCRATCH_B}')
+        elif op == '+':
             self._ins(f'add {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         elif op == '-':
             self._ins(f'sub {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         elif op == '*':
             self._ins(f'mul {SCRATCH_A}, {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         elif op == '&':
             self._ins(f'and {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         elif op == '|':
             self._ins(f'or  {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         elif op == '^':
             self._ins(f'xor {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         elif op == '<<':
             self._ins(f'shl {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         elif op == '>>':
             self._ins(f'shr {SCRATCH_A}, {SCRATCH_B}')
+            if dst != SCRATCH_A: self._ins(f'mov {dst}, {SCRATCH_A}')
         else:
             raise CodegenError(f"Unknown binop: {op!r}")
 
         self._scratch_a_temp = None
-        self._store_op(SCRATCH_A, instr.dst)
+        if dst == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst)
 
-    def _gen_compare(self, instr: IBinOp):
+    def _gen_compare(self, instr: IBinOp, dst: str):
         """Materialise comparison result as 0 or 1."""
-        self._load_op(instr.left,  SCRATCH_A)
+        # Use the allocated register of the left operand directly if possible,
+        # otherwise load into SCRATCH_A.
+        left_reg = SCRATCH_A
+        if isinstance(instr.left, Temp) and self._regmap:
+            preg = self._regmap.reg(instr.left.id)
+            if preg is not None and preg != SCRATCH_B and preg != dst:
+                left_reg = preg
+        if left_reg == SCRATCH_A:
+            self._load_op(instr.left, SCRATCH_A)
         self._load_op(instr.right, SCRATCH_B)
-        self._ins(f'sub r0, {SCRATCH_A}, {SCRATCH_B}')
+        self._ins(f'sub r0, {left_reg}, {SCRATCH_B}')
 
-        j       = self._CMP_JMP[instr.op]
+        j        = self._CMP_JMP[instr.op]
         true_lbl = f'._cmp_t_{id(instr)}'
         end_lbl  = f'._cmp_e_{id(instr)}'
 
         self._ins(f'{j} {true_lbl}')
-        self._ins(f'mov {SCRATCH_A}, 0')
+        self._ins(f'mov {dst}, 0')
         self._ins(f'jmp {end_lbl}')
         self._lbl(true_lbl)
-        self._ins(f'mov {SCRATCH_A}, 1')
+        self._ins(f'mov {dst}, 1')
         self._lbl(end_lbl)
-        self._store_op(SCRATCH_A, instr.dst)
+        self._scratch_a_temp = None
+        if dst == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst)
 
     # ── UnaryOp instruction selection ─────────────────────────────────────────
 
     def _gen_unaryop(self, instr: IUnaryOp):
+        dst = self._dst_reg(instr.dst)
         self._load_op(instr.src, SCRATCH_A)
         op = instr.op
 
@@ -701,7 +783,10 @@ class Codegen:
             raise CodegenError(f"Unknown unary op: {op!r}")
 
         self._scratch_a_temp = None
-        self._store_op(SCRATCH_A, instr.dst)
+        if dst != SCRATCH_A:
+            self._ins(f'mov {dst}, {SCRATCH_A}')
+        else:
+            self._store_op(SCRATCH_A, instr.dst)
 
     # ── Call ──────────────────────────────────────────────────────────────────
 
@@ -730,4 +815,8 @@ class Codegen:
             self._ins(f'jmp {LR}, {SCRATCH_A}')
 
         if instr.dst is not None:
-            self._store_op(RET_REG, instr.dst)
+            preg = self._regmap.reg(instr.dst.id) if self._regmap else None
+            if preg is not None and preg != RET_REG:
+                self._ins(f'mov {preg}, {RET_REG}')
+            elif preg is None:
+                self._store_op(RET_REG, instr.dst)
