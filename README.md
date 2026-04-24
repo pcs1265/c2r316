@@ -1,90 +1,161 @@
 # c2r316: C to R316 Assembly Compiler
 
-c2r316 is a robust C-to-R316 assembly cross-compiler written in Python. It compiles a subset of C into TPTASM assembly, specifically optimized for the **R316 virtual machine** (a 16-bit architecture with 32-bit registers commonly used in *The Powder Toy*).
+c2r316 is a C-to-R316 assembly cross-compiler written in Python. It compiles a subset of C into TPTASM assembly for the **R316 virtual machine** (16-bit ALU, 32-bit registers) used in *The Powder Toy*.
 
 ## Compilation Pipeline
 
-The compiler utilizes a strict six-stage transformation process to lower C source code into R316 machine instructions:
+```
+C Source → Preprocessor → Lexer → Parser → Semantic → IRGen → Optimizer → Codegen → R316 ASM
+```
 
-1.  **Preprocessor**: Handles `#include` and `#define`. It automatically prepends `runtime/stdlib.h` to every compilation unit to provide a standard execution environment.
-2.  **Lexer**: A hand-written tokenizer that supports C standard literals, multi-character operators (e.g., `->`, `>>=`), and adjacent string literal concatenation.
-3.  **Parser**: A recursive descent parser that constructs an Abstract Syntax Tree (AST), supporting standard C operator precedence and control flow.
-4.  **Semantic Analyzer**: Manages symbol tables and nested scopes. It enforces C type safety, handles integer promotions, and calculates initial stack offsets for local variables.
-5.  **IR Generator**: Lowers the AST into a linear **Three-Address Code** Intermediate Representation. Complex expressions (like short-circuiting `&&`/`||`) are expanded into explicit jumps and virtual temporaries.
-6.  **IR Optimizer**: A multi-pass optimizer that runs before code generation:
-    - **Constant folding & copy propagation** — folds constant expressions and eliminates single-use copies (`x + 0 → x`, `t1 = 5; t2 = t1 → t2 = 5`).
-    - **Dead code elimination** — removes instructions that produce unused results, and eliminates unreachable functions via call-graph reachability analysis from `main`.
-7.  **Code Generator**: Translates IR into R316 assembly, with several backend optimizations:
-    - **Linear-scan register allocation** — assigns IR temporaries to physical registers (r10–r18 caller-saved, r19–r29 callee-saved), reducing stack traffic by ~45% on typical programs.
-    - **Compare-branch fusion** — folds `t = a < b; if t goto L` into a single `sub r0, a, b; jl L` without materializing the boolean.
-    - **3-operand arithmetic** — emits `add dst, src1, src2` directly when the destination differs from the right operand, avoiding an extra move.
-    - **Assembly peephole** — replaces `st Rx, r30, N; ld Ry, r30, N` pairs with `mov Ry, Rx`, turning stack reloads into register moves.
+1. **Preprocessor** — `#include "file"`, object-like `#define`, `#undef`, `#ifdef`/`#ifndef`/`#else`/`#endif`. Automatically prepends `runtime/stdlib.h`.
+2. **Lexer** — Hand-written tokenizer. All C operators, integer/char/string literals, adjacent string literal concatenation.
+3. **Parser** — Recursive descent parser producing an AST. Full C operator precedence, all standard control flow, struct/union declarations, pointer/array declarators.
+4. **Semantic Analyzer** — Symbol tables, nested block scopes, type annotation, integer promotion (`int`/`char` → `long` widening via `common_type`), function call type checking (fixed-arity and variadic).
+5. **IR Generator** — Lowers the AST to Three-Address Code IR. Short-circuit `&&`/`||`, compound assignments, pre/post increment, struct field offset arithmetic, array index scaling, `va_start`/`va_arg`/`va_end`.
+6. **Optimizer** — Two-pass loop (fold→DCE) run until stable:
+   - **Constant folding + copy propagation** (`compiler/fold.py`) — `x + 0 → x`, `t1 = 5; use(t1) → use(5)`.
+   - **Dead code elimination + dead function elimination** (`compiler/dce.py`) — removes unused temporaries and functions unreachable from `main`.
+7. **Code Generator** — IR → R316 assembly with backend optimizations:
+   - **Linear-scan register allocator** — assigns IR temporaries to r10–r18 (caller-saved) and r19–r29 (call-crossing, callee-saved); r7–r9 remain codegen scratch.
+   - **Compare-branch fusion** — `t = a < b; if t goto L` → `sub r0, a, b; jl L`.
+   - **3-operand arithmetic** — `add dst, src1, src2` when destination ≠ right operand.
+   - **Assembly peephole** — `st Rx, r30, N; ld Ry, r30, N` → `mov Ry, Rx`.
 
-## R316 Architecture & Runtime
+## R316 Architecture
 
-### Hardware Specifications
 - **Registers**: 32 general-purpose 32-bit registers (`r0`–`r31`).
-  - `r0`: Hardware-wired to zero.
-  - `r1`–`r6`: Argument / return value registers (caller-saved).
-  - `r7`–`r9`: Compiler scratch registers (never allocated to user temporaries).
-  - `r10`–`r18`: Caller-saved temporaries (allocated by the register allocator).
-  - `r19`–`r29`: Callee-saved registers (allocated for values that must survive calls).
-  - `r30` (sp): Stack Pointer.
-  - `r31` (lr): Link Register.
-- **Memory**: 16-bit word-addressed space (0x0000–0xFFFF).
-- **Quasi-32-bit Constraint**: The VM cannot store four specific 32-bit values (0x0, 0x4, 0x8, 0xC in the MSB) in a single word. The compiler avoids this by managing `long` values as 16-bit pairs.
+  - `r0` — hardwired zero.
+  - `r1`–`r6` — argument / return value registers (caller-saved).
+  - `r7`–`r9` — compiler scratch (never allocated to user temporaries).
+  - `r10`–`r18` — caller-saved temporaries (register allocator).
+  - `r19`–`r29` — callee-saved registers (register allocator, for call-crossing values).
+  - `r30` (`sp`) — stack pointer.
+  - `r31` (`lr`) — link register.
+- **Memory**: 16-bit word-addressed space (0x0000–0xFFFF). Memory-mapped terminal I/O at 0x9F80–0x9FC6.
+- **ALU**: 16-bit. No hardware division; the compiler emits calls to `__udiv`/`__umod` runtime helpers.
 
-### Runtime Bootstrap (`runtime.asm`)
-At boot, the runtime performs a **binary search** on the address space to detect the top of writable RAM. It then:
-1.  Initializes the Stack Pointer (`r30`).
-2.  Configures the terminal MMIO (geometry, colors, and newline handling).
-3.  Clears the screen before jumping to `main`.
+### Runtime (`runtime/runtime.asm`)
 
-## Features & Usage
+At boot, the runtime binary-searches the address space to find the top of writable RAM, initializes `r30` (sp), configures the terminal MMIO (geometry, colors, newline mode), clears the screen, then jumps to `main`.
 
-### Supported Constructs
-- **Types**: `int`, `char`, `unsigned`, `void`, and pointers.
-- **Flow Control**: `if/else`, `while`, `do-while`, `for`, `break`, `continue`.
-- **Memory**: Array indexing, pointer arithmetic, and `sizeof`.
-- **Inline Assembly**: Support for `asm()` blocks with operand substitution (`%0`–`%9`).
+Provided library functions: `putchar`, `getchar`, `puts`, `print_int`, `print_uint`, `print_hex`, `printf` (supports `%d %u %x %c %s %%`), `strlen`, `strcmp`, `strcpy`, `memset`, `memcpy`.
 
-### Quick Start
+## Supported C Features
+
+### Types
+| Type | Status |
+|---|---|
+| `int`, `unsigned int` | Full support |
+| `char`, `unsigned char` | Full support |
+| `void` | Full support |
+| Pointers (single and multi-level) | Full support |
+| 1D arrays (fixed size, inferred size, initializer lists) | Full support |
+| `struct`, `union` (nested, global, arrays of) | Full support |
+| `long`, `unsigned long` | Parsed and type-checked; **16-bit arithmetic only** (see Limitations) |
+| `va_list` | Full support (alias for `int*`) |
+
+### Declarations
+- Global and local variable declarations with optional initializer
+- Multiple declarators: `int a, b = 2, c;`
+- Function declarations (forward declarations) and definitions
+- `static` and `extern` storage class (parsed; static local persistence not implemented)
+- Array initializer lists `{...}` with zero-fill for partial initializers
+- Inferred array size: `int arr[] = {1,2,3}`, `char s[] = "hello"`
+
+### Statements
+- `if` / `if-else`
+- `while`, `do-while`, `for` (init may declare a variable)
+- `return`, `break`, `continue`
+- Inline assembly: `asm("template" : "r"(expr), ...)` — input operands, `%0`–`%9` substitution
+
+### Expressions
+- Integer literals: decimal, hex (`0x`), octal (`0`-prefix); `u`/`l` suffixes accepted
+- Character literals: `\n \t \r \0 \\ \' \"`
+- String literals (adjacent concatenation)
+- Arithmetic: `+ - * / %`
+- Bitwise: `& | ^ ~ << >>`
+- Comparison: `== != < > <= >=`
+- Logical: `&& ||` (short-circuit)
+- Compound assignment: `+= -= *= /= %= &= |= ^=`
+- Pre/post `++` / `--`
+- Ternary `? :`
+- Cast `(type)expr`
+- Address-of `&`, dereference `*`
+- Array subscript `a[i]`
+- Member access `.` and `->` (with field offset arithmetic)
+- Function calls: ≤6 args in registers (`r1`–`r6`), 7th+ args via stack
+- Variadic calls: `va_start` / `va_arg` / `va_end`
+- Function pointer calls (call-through; declarator syntax requires cast)
+
+### Preprocessor
+- `#include "file"` (relative path; no angle-bracket system includes)
+- `#define NAME` and `#define NAME value` (single-token object-like macros)
+- `#undef`
+- `#ifdef` / `#ifndef` / `#else` / `#endif`
+
+## Limitations
+
+See [TODO.md](TODO.md) for the full list. Key gaps:
+
+- **`long` arithmetic** — type is tracked but all arithmetic is 16-bit; multi-word codegen not implemented
+- **`sizeof`** — IR node exists but the parser never creates it; `sizeof` is not a keyword token
+- **`typedef`** — token exists, no parser branch; `typedef struct { } Name;` produces a parse error
+- **`switch`/`case`**, **`goto`**, **`enum`** — not implemented
+- **`short`, `const`, `volatile`, `float`, `double`** — no lexer tokens; not supported
+- **Multi-dimensional arrays** — `int a[3][4]` not parsed
+- **Struct pass-by-value** — use pointers; hidden-pointer ABI not generated
+- **`#define` function-like macros**, **`#elif`** — not implemented
+- **Signed division** — `__udiv`/`__umod` are unsigned helpers; no signed division
+
+## Usage
+
 ```bash
-# Compile a C program
+# Compile
 python compiler.py examples/hello.c -o output.asm
 
-# Compile with verbose stages and source annotations
+# With source annotations and verbose stages
 python compiler.py examples/hello.c -o output.asm -v -g
 ```
 
 ### CLI Options
-- `-o <file>`: Output assembly path.
-- `-v, --verbose`: Print pipeline stages to stderr.
-- `-g, --annotate`: Embed C source lines as comments in the output assembly.
-- `--dump-tokens`: Dump lexer token stream to stderr.
-- `--dump-ast`: Dump the parsed AST to stderr.
-- `--dump-ir`: Dump IR both before and after optimization (shorthand for `--dump-ir-pre --dump-ir-post`).
-- `--dump-ir-pre`: Dump IR before optimization passes only.
-- `--dump-ir-post`: Dump IR after optimization passes only.
-- `--dump-opt-stats`: Print instruction and function count changes for each optimization pass.
-- `--dump-opt-stats`: Print instruction and function count changes for each optimization pass.
-- `--stop-after {lex,parse,semantic,ir,opt,codegen}`: Stop after the named stage (`ir` = pre-opt, `opt` = post-opt).
+
+| Option | Effect |
+|---|---|
+| `-o <file>` | Output assembly path |
+| `-v`, `--verbose` | Print pipeline stages to stderr |
+| `-g`, `--annotate` | Embed C source lines as comments in output |
+| `--dump-tokens` | Dump lexer token stream to stderr |
+| `--dump-ast` | Dump parsed AST to stderr |
+| `--dump-ir` | Dump IR before and after optimization |
+| `--dump-ir-pre` | Dump IR before optimization only |
+| `--dump-ir-post` | Dump IR after optimization only |
+| `--dump-opt-stats` | Print instruction/function count delta per pass |
+| `--stop-after {lex,parse,semantic,ir,opt,codegen}` | Stop after the named stage |
 
 ## Project Structure
 
-- `compiler.py` — CLI entry point.
-- `compiler/lexer.py` — Tokenizer.
-- `compiler/parser.py` — Recursive descent parser (tokens → AST).
-- `compiler/semantic.py` — Type checking and symbol table.
-- `compiler/irgen.py` — AST → Three-Address Code IR.
-- `compiler/fold.py` — Constant folding and copy propagation pass.
-- `compiler/dce.py` — Dead code and dead function elimination pass.
-- `compiler/regalloc.py` — Linear-scan register allocator.
-- `compiler/codegen.py` — IR → R316 assembly with backend optimizations.
-- `runtime/stdlib.h` — C standard library declarations.
-- `runtime/runtime.asm` — Bootstrap and runtime helpers (putchar, print_int, etc.).
-- `docs/ABI.md` — Full calling convention and register usage specification.
-- `docs/TODO.md` — Planned and completed optimization work.
+```
+compiler.py          — CLI entry point
+compiler/
+  lexer.py           — Tokenizer
+  parser.py          — Recursive descent parser (tokens → AST)
+  ast_nodes.py       — AST node definitions
+  semantic.py        — Type checking and symbol table
+  irgen.py           — AST → Three-Address Code IR
+  ir.py              — IR instruction and operand definitions
+  fold.py            — Constant folding and copy propagation
+  dce.py             — Dead code and dead function elimination
+  regalloc.py        — Linear-scan register allocator
+  codegen.py         — IR → R316 assembly
+runtime/
+  stdlib.h           — C standard library declarations
+  runtime.asm        — Bootstrap and runtime helpers
+docs/
+  ABI.md             — Calling convention and register usage specification
+TODO.md              — Known issues and planned work
+```
 
 ## License
+
 Provided "as-is" for educational and hobbyist use in The Powder Toy community.
