@@ -245,10 +245,14 @@ class Codegen:
                 if self._scratch_a_temp == op:
                     if reg != SCRATCH_A:
                         self._ins(f'mov {reg}, {SCRATCH_A}')
+                        if reg == SCRATCH_C:
+                            self._scratch_c_temp = op
                     return
                 if self._scratch_c_temp == op:
                     if reg != SCRATCH_C:
                         self._ins(f'mov {reg}, {SCRATCH_C}')
+                        if reg == SCRATCH_A:
+                            self._scratch_a_temp = op
                     return
             slot = self._spill_slot(op)
             self._ins(f'ld {reg}, {SP}, {slot}')

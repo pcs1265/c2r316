@@ -167,7 +167,18 @@ class IRGen:
             d = stmt.decl
             if d.init is not None:
                 loc = self._loc(stmt)
-                if isinstance(d.init, InitList):
+                if isinstance(d.init, StringLit) and isinstance(d.ctype, CArray):
+                    # char arr[] = "hello" — copy each char + null terminator
+                    chars = d.init.chars + [0]
+                    base = self._var_addr(d.name, loc)
+                    for i, ch in enumerate(chars):
+                        if i == 0:
+                            self._emit(IStore(base, ImmInt(ch), loc))
+                        else:
+                            t_off = self._tmp()
+                            self._emit(IBinOp(t_off, '+', base, ImmInt(i), loc))
+                            self._emit(IStore(t_off, ImmInt(ch), loc))
+                elif isinstance(d.init, InitList):
                     elem_sz = d.ctype.base.size() if isinstance(d.ctype, CArray) else 1
                     arr_len = d.ctype.length if isinstance(d.ctype, CArray) else 1
                     base = self._var_addr(d.name, loc)

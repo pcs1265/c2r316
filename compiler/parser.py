@@ -429,8 +429,11 @@ class Parser:
             else:
                 init = self._parse_assign()
         # infer array length from initializer if [] was used
-        if isinstance(vtype, CArray) and vtype.length is None and isinstance(init, InitList):
-            vtype = CArray(vtype.base, len(init.elems))
+        if isinstance(vtype, CArray) and vtype.length is None:
+            if isinstance(init, InitList):
+                vtype = CArray(vtype.base, len(init.elems))
+            elif isinstance(init, StringLit):
+                vtype = CArray(vtype.base, len(init.chars) + 1)  # +1 for null terminator
         results.append(DeclStmt(VarDecl(name, vtype, init, is_global=False)))
         # multi-declaration: int x = 1, y, z = 3;
         while self._try_eat(TK.COMMA):
