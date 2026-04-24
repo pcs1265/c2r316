@@ -107,6 +107,17 @@ def compile_c(src: str, src_name: str = '<stdin>',
         analyzer = Analyzer()
         analyzer.analyze(ast)
     except SemanticError as e:
+        err_file, err_line, _col = _parse_error_location(e)
+        if err_line:
+            if err_file and os.path.isfile(err_file):
+                try:
+                    err_src = open(err_file, encoding='utf-8').read()
+                except OSError:
+                    err_src = src
+            else:
+                err_src = src
+            ctx = _source_context(err_src, err_line, 0)
+            raise SystemExit(f"Semantic error: {e}\n{ctx}")
         raise SystemExit(f"Semantic error: {e}")
 
     if stop_after == 'semantic':
@@ -144,20 +155,32 @@ def compile_c(src: str, src_name: str = '<stdin>',
 
 
 def _parse_error_location(e: Exception):
-    """Return (filename, line, col) from a ParseError message.
+    """Return (filename, line, col) from an error message.
 
-    Handles both old-style 'Line N:col:' and new-style 'file:N:col:' formats.
+    Handles:
+      'file:N:col: ...'   — parse errors (new style)
+      'Line N:col: ...'   — parse errors (old style)
+      'file:N: ...'       — semantic errors
+      'Line N: ...'       — semantic errors (old style)
     """
     import re
     msg = str(e)
-    # new style: path/file.c:N:col:
+    # file:N:col:
     m = re.match(r'^(.+):(\d+):(\d+):', msg)
     if m:
         return m.group(1), int(m.group(2)), int(m.group(3))
-    # old style: Line N:col:
+    # file:N:
+    m = re.match(r'^(.+):(\d+):', msg)
+    if m:
+        return m.group(1), int(m.group(2)), 0
+    # Line N:col:
     m = re.match(r'Line (\d+):(\d+):', msg)
     if m:
         return '', int(m.group(1)), int(m.group(2))
+    # Line N:
+    m = re.match(r'Line (\d+):', msg)
+    if m:
+        return '', int(m.group(1)), 0
     return '', 0, 0
 
 

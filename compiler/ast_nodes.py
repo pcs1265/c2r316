@@ -243,6 +243,8 @@ class StringLit(Expr):
 class Ident(Expr):
     name: str
     ctype: CType = None
+    line: int = 0
+    filename: str = ''
 
 @dataclass
 class BinOp(Expr):

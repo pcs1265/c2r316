@@ -69,10 +69,11 @@ class Analyzer:
         self.scope.define(sym)
         return sym
 
-    def _lookup(self, name: str) -> Symbol:
+    def _lookup(self, name: str, line: int = 0, filename: str = '') -> Symbol:
         sym = self.scope.lookup(name)
         if sym is None:
-            raise SemanticError(f"Undefined symbol: {name!r}")
+            loc = f'{filename}:{line}: ' if filename and line else (f'Line {line}: ' if line else '')
+            raise SemanticError(f"{loc}Undefined symbol: {name!r}")
         return sym
 
     # ── Top-Level ───────────────────────────────────────────────────────────────
@@ -191,7 +192,7 @@ class Analyzer:
             return expr.ctype
 
         if isinstance(expr, Ident):
-            sym = self._lookup(expr.name)
+            sym = self._lookup(expr.name, expr.line, expr.filename)
             expr.ctype = sym.ctype
             expr._sym  = sym
             return expr.ctype

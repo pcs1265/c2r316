@@ -645,7 +645,7 @@ class Parser:
                 arg_type = self._parse_type()
                 self._eat(TK.RPAREN)
                 return VaArg(ap, arg_type)
-            return Ident(tok.value)
+            return Ident(tok.value, line=tok.line, filename=tok.filename)
 
         if tok.kind == TK.LPAREN:
             self._eat(TK.LPAREN)
