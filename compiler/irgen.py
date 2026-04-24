@@ -13,7 +13,7 @@ from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
-    IInlineAsm, IRFunction, IRProgram,
+    IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram,
 )
 
 
@@ -107,10 +107,12 @@ class IRGen:
         self._locals = set()
         self._break_stack = []
         self._cont_stack  = []
+        self._num_fixed_params = len(func.params)
 
         self._fn = IRFunction(
             name=func.name,
             params=[p.name for p in func.params],
+            is_variadic=func.is_variadic,
         )
 
         self._collect_locals(func.body)
@@ -361,6 +363,9 @@ class IRGen:
             self._emit(ILoad(t, addr, loc))
             return t
 
+        if isinstance(expr, VaArg):
+            return self._gen_vaarg(expr)
+
         raise IRGenError(f"Unhandled expression: {type(expr)}")
 
     def _gen_load_ident(self, expr: Ident) -> Operand:
@@ -608,6 +613,19 @@ class IRGen:
 
     def _gen_call(self, expr: Call) -> Operand:
         loc  = self._loc(expr)
+
+        # va_start(ap, last): store va_start address into ap
+        if isinstance(expr.func, Ident) and expr.func.name == 'va_start':
+            ap_addr = self._gen_addr(expr.args[0])
+            t = self._tmp()
+            self._emit(IVaStart(t, self._num_fixed_params, loc))
+            self._emit(IStore(ap_addr, t, loc))
+            return ImmInt(0)
+
+        # va_end(ap): no-op at IR level
+        if isinstance(expr.func, Ident) and expr.func.name == 'va_end':
+            return ImmInt(0)
+
         args = [self._gen_expr(a) for a in expr.args]
 
         if isinstance(expr.func, Ident):
@@ -619,6 +637,27 @@ class IRGen:
         dst = None if is_void else self._tmp()
         self._emit(ICall(dst, func_op, args, loc))
         return dst if dst is not None else ImmInt(0)
+
+    # ── VaArg ────────────────────────────────────────────────────────────────
+
+    def _gen_vaarg(self, expr: VaArg) -> Operand:
+        loc  = self._loc(expr)
+        step = expr.arg_type.size() if expr.arg_type.size() > 0 else 1
+
+        # Load current ap value
+        ap_val = self._gen_expr(expr.ap)
+
+        # dst = *ap  (load from the address stored in ap)
+        dst = self._tmp()
+        self._emit(IVaArg(dst, ap_val, step, loc))
+
+        # Advance ap: ap += step; store back
+        ap_addr = self._gen_addr(expr.ap)
+        new_ap  = self._tmp()
+        self._emit(IBinOp(new_ap, '+', ap_val, ImmInt(step), loc))
+        self._emit(IStore(ap_addr, new_ap, loc))
+
+        return dst
 
     # ── Ternary ───────────────────────────────────────────────────────────────
 

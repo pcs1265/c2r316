@@ -257,6 +257,31 @@ class IInlineAsm(Instr):
         return f'  asm({self.text!r}, {", ".join(str(s) for s in self.srcs)}){self._loc_str()}'
 
 
+@dataclass
+class IVaStart(Instr):
+    """dst = va_start address: pointer into variadic spill area past fixed params"""
+    dst: Temp
+    num_fixed: int   # number of fixed (non-variadic) parameters
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return self.dst
+    def uses(self): return []
+    def __str__(self): return f'  {self.dst} = va_start({self.num_fixed}){self._loc_str()}'
+
+
+@dataclass
+class IVaArg(Instr):
+    """dst = *ap; ap += step  — fetch and advance a va_list pointer"""
+    dst: Temp
+    ap: Operand      # the va_list (pointer) operand
+    step: int        # word size of the fetched type (1 or 2)
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return self.dst
+    def uses(self): return [self.ap]
+    def __str__(self): return f'  {self.dst} = va_arg({self.ap}, step={self.step}){self._loc_str()}'
+
+
 # ── Function IR container ──────────────────────────────────────────────────────
 
 @dataclass
@@ -265,6 +290,9 @@ class IRFunction:
     params: List[str]           # parameter names in order
     instrs: List[Instr] = field(default_factory=list)
     local_sizes: Dict[str, int] = field(default_factory=dict)  # name → slot count
+    is_variadic: bool = False
+    # va_spill_base is set by codegen: frame offset where arg-reg spill area begins
+    va_spill_base: int = 0
 
     def dump(self) -> str:
         lines = [f'function {self.name}({", ".join(self.params)}):']
