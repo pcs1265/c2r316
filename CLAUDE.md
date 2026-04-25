@@ -22,7 +22,10 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 - `compiler/builtins.h` — auto-prepended built-in helpers (division, etc.)
 - `compiler/fold.py`, `compiler/dce.py`, `compiler/inline.py`, `compiler/regalloc.py` — IR optimization passes
 - `runtime/runtime.asm` — Standard library (putchar, getchar, puts, print_int, etc.)
-- `tests/test_compiler.py` — Test harness (escape lexing, sizeof, enum, shift-assign, examples smoke compile)
+- `tests/test_compiler.py` — Test harness (lexer/parser checks + emulator-based execution tests)
+- `tests/r316_emu.py` — In-process Python R316 emulator: parses generated asm, executes it, captures stdout via terminal MMIO. Used by execution tests.
+- `tests/golden/` — Captured stdout for each `examples/test_*.c`. Execution tests compare emulated output byte-for-byte against these.
+- `tests/gen_goldens.py` — Regenerates golden files. Run after intentional output-changing changes — never just to make a failing test pass.
 
 ## Key Documents
 
@@ -66,5 +69,24 @@ All user-defined C symbols (functions and global variables) are emitted with a `
 - `python tests/test_compiler.py` — runs all checks; exit code is non-zero if any fail.
 - Individual feature checks live in that file as `test_*` functions. Add new ones there rather than creating ad-hoc scripts.
 - The harness invokes `compile_c` from `compiler.py` directly (not via subprocess), so failures show full Python tracebacks.
+
+### Three layers of tests
+
+1. **Lexer / parser feature tests** — small C snippets compiled to ASM, checked with substring or AST assertions. Catches token-level and parser-level bugs.
+2. **Targeted execution tests** (`test_execution_smoke`, `test_print_int_signed`) — small programs run through the in-process R316 emulator (`tests/r316_emu.py`), return value and stdout asserted. Catches codegen and IR-optimization bugs.
+3. **Golden execution tests** (`test_examples_run`) — every `examples/test_*.c` is compiled, executed in the emulator, and its **full stdout** is compared byte-for-byte against `tests/golden/<name>.txt`. Catches anything the C-level `check()` could lie about (a miscompiled comparator that prints PASS for wrong values), as well as hangs (output truncates before the golden's final bytes), reordering, dropped lines, and any character-level drift.
+
+### Adding tests
+
+- Adding a new `examples/test_*.c`:
+  1. Write it (use the standard `check(name, got, expected)` + `PASS:`/`FAIL:` summary pattern, ending with `puts("=== done ===");`).
+  2. Run `python tests/gen_goldens.py` to capture its stdout into `tests/golden/`.
+  3. Eyeball the golden — confirm the output is what you expect.
+  4. Commit both the `.c` and the `.txt`.
+- Updating an existing test's expected output: same flow. **Never** regenerate goldens just to silence a failing check; verify by hand first that the new output is correct.
+
+### Emulator scope and limitations
+
+`tests/r316_emu.py` implements the instructions the c2r316 compiler actually emits (`mov add adc sub sbb mul and or xor shl shr ld st jmp <jcc> hlt`) plus the `cmp/test/nop` macros from `common.asm`. Flag handling follows `manual.md`. Execution starts at `_C_main:` with `sp=0x8000` and `lr=sentinel`; the runtime's `__stack_init` and `__term_init` are skipped. Terminal MMIO writes to `0x9FB5` are captured into stdout. **Not** a full TPT-VM emulator; if a future test needs hardware features beyond this, extend `tests/r316_emu.py`.
 
 
