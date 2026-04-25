@@ -392,6 +392,9 @@ class Parser:
         if self._at(TK.FOR):
             return self._stamp(self._parse_for(), tok)
 
+        if self._at(TK.SWITCH):
+            return self._stamp(self._parse_switch(), tok)
+
         if self._try_eat(TK.RETURN):
             expr = None
             if not self._at(TK.SEMICOLON):
@@ -510,6 +513,35 @@ class Parser:
         self._eat(TK.RPAREN)
         body = self._parse_stmt()
         return ForStmt(init, cond, step, body)
+
+    def _parse_switch(self) -> SwitchStmt:
+        self._eat(TK.SWITCH)
+        self._eat(TK.LPAREN)
+        expr = self._parse_expr()
+        self._eat(TK.RPAREN)
+        self._eat(TK.LBRACE)
+        clauses = []
+        while not self._at(TK.RBRACE, TK.EOF):
+            # collect one or more case/default labels, then gather body stmts
+            if self._at(TK.CASE) or self._at(TK.DEFAULT):
+                value = None
+                if self._try_eat(TK.CASE):
+                    value = self._parse_expr()
+                else:
+                    self._eat(TK.DEFAULT)
+                self._eat(TK.COLON)
+                body = []
+                while not self._at(TK.CASE, TK.DEFAULT, TK.RBRACE, TK.EOF):
+                    s = self._parse_stmt()
+                    if isinstance(s, list):
+                        body.extend(s)
+                    else:
+                        body.append(s)
+                clauses.append(CaseClause(value, body))
+            else:
+                raise ParseError(f"Line {self._cur().line}: expected 'case' or 'default' inside switch")
+        self._eat(TK.RBRACE)
+        return SwitchStmt(expr, clauses)
 
     def _parse_init_list(self) -> InitList:
         self._eat(TK.LBRACE)

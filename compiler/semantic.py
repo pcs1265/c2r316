@@ -165,6 +165,14 @@ class Analyzer:
             if stmt.expr:
                 self._analyze_expr(stmt.expr)
 
+        elif isinstance(stmt, SwitchStmt):
+            self._analyze_expr(stmt.expr)
+            for clause in stmt.clauses:
+                if clause.value is not None:
+                    self._analyze_expr(clause.value)
+                for s in clause.body:
+                    self._analyze_stmt(s)
+
         elif isinstance(stmt, (BreakStmt, ContinueStmt)):
             pass
 

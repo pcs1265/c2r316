@@ -221,6 +221,17 @@ class AsmStmt(Stmt):
     text:   str        # template string, %0..%N are substituted
     inputs: list       # list[Expr]
 
+@dataclass
+class CaseClause:
+    """A single case (or default) clause inside a SwitchStmt."""
+    value:  Optional['Expr']   # None → default
+    body:   list               # list[Stmt]
+
+@dataclass
+class SwitchStmt(Stmt):
+    expr:    'Expr'
+    clauses: list              # list[CaseClause]
+
 
 # ── Expressions ───────────────────────────────────────────────────────────────────
 

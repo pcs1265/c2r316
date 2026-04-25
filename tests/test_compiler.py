@@ -470,6 +470,55 @@ int main() { return sum_to(10); }
           'expected ._user_loop and ._user_done in asm')
 
 
+def test_switch():
+    print('\n[switch / case / default]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    def run(src):
+        return _emu_run_main(mod.compile_c(src, src_name='<t>'))
+
+    src = """
+#include <stdio.h>
+int grade(int s) {
+    switch (s) {
+        case 1: return 10;
+        case 2: return 20;
+        default: return 99;
+    }
+}
+int fallthrough(int x) {
+    int r = 0;
+    switch (x) {
+        case 1: r = r + 1;
+        case 2: r = r + 2; break;
+        default: r = r + 100;
+    }
+    return r;
+}
+int main() {
+    return grade(2) + fallthrough(1);
+}
+"""
+    ret, _ = run(src)
+    check('case dispatch + fallthrough', ret == 23)
+
+    src2 = """
+#include <stdio.h>
+int main() {
+    int x = 5;
+    switch (x) {
+        case 5: puts("five"); break;
+        default: puts("other");
+    }
+    return 0;
+}
+"""
+    _, stdout = run(src2)
+    check('switch break/default', stdout.strip() == 'five')
+
+
 def test_typedef_still_works():
     print('\n[parser: typedef regression]')
     src = """
@@ -501,6 +550,7 @@ if __name__ == '__main__':
     test_print_int_signed()
     test_examples_run()
     test_goto()
+    test_switch()
     test_typedef_still_works()
     test_examples_compile()
     print(f'\n=== {PASS} passed, {FAIL} failed ===')

@@ -290,9 +290,12 @@ class IRGen:
         elif isinstance(stmt, ForStmt):
             self._gen_for(stmt)
 
+        elif isinstance(stmt, SwitchStmt):
+            self._gen_switch(stmt)
+
         elif isinstance(stmt, BreakStmt):
             if not self._break_stack:
-                raise IRGenError("break outside loop")
+                raise IRGenError("break outside loop or switch")
             self._emit(IJump(self._break_stack[-1], self._loc(stmt)))
 
         elif isinstance(stmt, ContinueStmt):
@@ -313,6 +316,37 @@ class IRGen:
 
         else:
             raise IRGenError(f"Unhandled statement: {type(stmt)}")
+
+    def _gen_switch(self, stmt: SwitchStmt):
+        loc = self._loc(stmt)
+        end_lbl = self._new_label('swend')
+        val = self._gen_expr(stmt.expr)
+
+        # assign a label to each clause
+        clause_lbls = [self._new_label('swcase') for _ in stmt.clauses]
+        default_lbl = end_lbl
+
+        # emit dispatch: compare val against each case constant, jump if equal
+        for clause, lbl in zip(stmt.clauses, clause_lbls):
+            if clause.value is None:
+                default_lbl = lbl
+            else:
+                cval = self._gen_expr(clause.value)
+                eq = self._tmp()
+                self._emit(IBinOp(eq, '==', val, cval, loc))
+                self._emit(IJumpIf(eq, lbl, loc))
+
+        self._emit(IJump(default_lbl, loc))
+
+        self._break_stack.append(end_lbl)
+
+        for clause, lbl in zip(stmt.clauses, clause_lbls):
+            self._emit(ILabel(lbl, loc))
+            for s in clause.body:
+                self._gen_stmt(s)
+
+        self._break_stack.pop()
+        self._emit(ILabel(end_lbl, loc))
 
     def _gen_if(self, stmt: IfStmt):
         loc = self._loc(stmt)

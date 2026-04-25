@@ -37,6 +37,9 @@ class TK(Enum):
     SIZEOF     = auto()
     ENUM       = auto()
     GOTO       = auto()
+    SWITCH     = auto()
+    CASE       = auto()
+    DEFAULT    = auto()
 
     # operators
     PLUS       = auto()   # +
@@ -115,6 +118,9 @@ KEYWORDS = {
     'sizeof':   TK.SIZEOF,
     'enum':     TK.ENUM,
     'goto':     TK.GOTO,
+    'switch':   TK.SWITCH,
+    'case':     TK.CASE,
+    'default':  TK.DEFAULT,
 }
 
 

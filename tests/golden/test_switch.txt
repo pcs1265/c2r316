@@ -1,0 +1,22 @@
+=== test_switch ===
+case 1: PASS
+case 2: PASS
+case 3: PASS
+default: PASS
+fallthrough 1->2: PASS
+no-fallthrough 2: PASS
+no-fallthrough 3: PASS
+default ft: PASS
+no-default hit: PASS
+no-default hit2: PASS
+no-default miss: PASS
+nested 1,10: PASS
+nested 1,20: PASS
+nested 1,99: PASS
+nested 2,x: PASS
+nested def: PASS
+switch in loop n=6: PASS
+================
+PASS: 17
+FAIL: 0
+=== done ===
