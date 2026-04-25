@@ -147,6 +147,61 @@ __umod:
     mov r1, r10
     jmp r31
 
+; ── __sdiv(r1=dividend, r2=divisor) → r1=quotient ────────────────────────────
+; Sign rule: quotient is negative iff exactly one operand is negative.
+__sdiv:
+    mov r10, 0
+    shr r3, r1, 15
+    jz  .__sdiv_aneg_skip
+    sub r1, 0, r1
+    xor r10, 1
+.__sdiv_aneg_skip:
+    shr r3, r2, 15
+    jz  .__sdiv_bneg_skip
+    sub r2, 0, r2
+    xor r10, 1
+.__sdiv_bneg_skip:
+    ; save lr and sign flag on stack, call __udiv, restore
+    sub r30, 2
+    st  r31, r30, 0
+    st  r10, r30, 1
+    jmp r31, __udiv
+    ld  r10, r30, 1
+    ld  r31, r30, 0
+    add r30, 2
+    ; apply sign
+    cmp r10, 0
+    jz  .__sdiv_done
+    sub r1, 0, r1
+.__sdiv_done:
+    jmp r31
+
+; ── __smod(r1=dividend, r2=divisor) → r1=remainder ───────────────────────────
+; Sign rule: remainder takes the sign of the dividend.
+__smod:
+    mov r10, 0
+    shr r3, r1, 15
+    jz  .__smod_aneg_skip
+    sub r1, 0, r1
+    mov r10, 1
+.__smod_aneg_skip:
+    shr r3, r2, 15
+    jz  .__smod_bneg_skip
+    sub r2, 0, r2
+.__smod_bneg_skip:
+    sub r30, 2
+    st  r31, r30, 0
+    st  r10, r30, 1
+    jmp r31, __umod
+    ld  r10, r30, 1
+    ld  r31, r30, 0
+    add r30, 2
+    cmp r10, 0
+    jz  .__smod_done
+    sub r1, 0, r1
+.__smod_done:
+    jmp r31
+
 ; ── data ─────────────────────────────────────────────────────────────────────
 __heap_base:  dw 0
 __heap_limit: dw 0

@@ -585,7 +585,12 @@ class IRGen:
         # Division and modulo are lowered to runtime helper calls so that
         # the IR call graph is complete (correct leaf detection, LR save, etc.)
         if expr.op in ('/', '%'):
-            helper = '__udiv' if expr.op == '/' else '__umod'
+            def _is_unsigned(t): return getattr(t, 'unsigned', False)
+            unsigned = _is_unsigned(expr.left.ctype) or _is_unsigned(expr.right.ctype)
+            if expr.op == '/':
+                helper = '__udiv' if unsigned else '__sdiv'
+            else:
+                helper = '__umod' if unsigned else '__smod'
             t = self._tmp()
             self._emit(ICall(t, Global(helper), [left, right], loc))
             return t
@@ -710,7 +715,11 @@ class IRGen:
         base = expr.op[:-1]   # '+=' → '+'
         t    = self._tmp()
         if base in ('/', '%'):
-            helper = '__udiv' if base == '/' else '__umod'
+            unsigned = getattr(expr.ctype, 'unsigned', False)
+            if base == '/':
+                helper = '__udiv' if unsigned else '__sdiv'
+            else:
+                helper = '__umod' if unsigned else '__smod'
             self._emit(ICall(t, Global(helper), [cur, rhs], loc))
         else:
             self._emit(IBinOp(t, base, cur, rhs, loc))
