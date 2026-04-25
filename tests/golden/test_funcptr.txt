@@ -1,0 +1,28 @@
+=== test_funcptr ===
+typedef_add: PASS
+typedef_sub: PASS
+global_mul: PASS
+apply_add: PASS
+apply_sub: PASS
+decl_add: PASS
+array_ops[0]: PASS
+array_ops[1]: PASS
+array_ops[2]: PASS
+ret_funcptr_add: PASS
+ret_funcptr_sub: PASS
+ret_funcptr_mul: PASS
+chain_add: PASS
+chain_sub: PASS
+chain_mul: PASS
+struct_fp_add: PASS
+struct_fp_mul: PASS
+fold_add: PASS
+fold_mul: PASS
+reassign_1: PASS
+reassign_2: PASS
+reassign_3: PASS
+reassign_4: PASS
+================
+PASS: 23
+FAIL: 0
+=== done ===

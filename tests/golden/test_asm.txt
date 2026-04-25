@@ -1,0 +1,22 @@
+=== test_asm ===
+asm_putchar: OK
+strlen_hello: PASS
+strlen_empty: PASS
+strlen_one: PASS
+strcmp_eq: PASS
+strcmp_lt: PASS
+strcmp_gt: PASS
+strcmp_prefix: PASS
+memset[0]: PASS
+memset[1]: PASS
+memset[2]: PASS
+memset[3]: PASS
+memcpy[0]: PASS
+memcpy[1]: PASS
+memcpy[2]: PASS
+asm_add: PASS
+asm_multiline: PASS
+================
+PASS: 16
+FAIL: 0
+=== done ===

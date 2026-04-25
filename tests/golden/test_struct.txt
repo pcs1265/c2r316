@@ -1,0 +1,36 @@
+=== test_struct ===
+dot.x: PASS
+dot.y: PASS
+mut.x: PASS
+arrow->x: PASS
+arrow->y: PASS
+arrow_wr->x: PASS
+fn_sum: PASS
+scale.x: PASS
+scale.y: PASS
+two_a.x: PASS
+two_b.x: PASS
+arr[0].x: PASS
+arr[1].x: PASS
+arr[2].y: PASS
+rect_tl.x: PASS
+rect_br.y: PASS
+rect_area: PASS
+union.i: PASS
+union.c: PASS
+union_overlap: PASS
+g_origin.x: PASS
+g_origin.y: PASS
+g_cursor.x: PASS
+g_cursor.y: PASS
+g_cursor_ptr: PASS
+g_vp_area: PASS
+g_vp_mutate: PASS
+g_pts_xsum: PASS
+g_pts[1].y: PASS
+g_pts_xsum2: PASS
+g_after_call: PASS
+==================
+PASS: 31
+FAIL: 0
+=== done ===

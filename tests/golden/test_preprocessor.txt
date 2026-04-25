@@ -1,0 +1,42 @@
+object macro: 42
+fn macro MAX: 7
+fn macro MIN: 3
+stringify: hello
+token paste: 99
+paste digit: 2
+ifdef taken: taken
+ifndef taken: taken
+if expr: 1
+elif expr: 2
+else branch: 3
+nested if: ok
+undef: ok
+char literal: 65
+hex literal: 255
+octal literal: 8
+binary literal: 10
+if add: 5
+if sub: 1
+if mul: 6
+if div: 3
+if mod: 1
+shift: 8
+bitwise and: 1
+bitwise or: 7
+bitwise xor: 6
+bitwise not: ok
+logical: 1
+unary minus: ok
+ternary if: ok
+ternary macro: 10
+variadic: done
+multiline macro: 6
+nested macro: 12
+defined bare: ok
+include guard: ok
+header const: 77
+header macro: 5
+file macro: <PATH>
+line macro: 350
+stdc macro: ok
+all tests passed

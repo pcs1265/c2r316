@@ -1,0 +1,30 @@
+=== test_call ===
+reg1: PASS
+reg2: PASS
+reg6: PASS
+sum7: PASS
+sum8: PASS
+pick7: PASS
+pick8: PASS
+add_stack: PASS
+sum7b: PASS
+va_sum1: PASS
+va_sum2: PASS
+va_sum3: PASS
+va_sum0: PASS
+va_first: PASS
+va_last3: PASS
+pt_sum: PASS
+pt_diff: PASS
+rect_area: PASS
+rect_peri: PASS
+pt_add_x: PASS
+pt_add_y: PASS
+pt_scale_x: PASS
+pt_scale_y: PASS
+chain_x: PASS
+chain_y: PASS
+================
+PASS: 25
+FAIL: 0
+=== done ===

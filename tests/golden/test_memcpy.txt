@@ -1,0 +1,21 @@
+basic[0]: PASS
+basic[1]: PASS
+basic[2]: PASS
+basic[3]: PASS
+n=0 [0]: PASS
+n=0 [1]: PASS
+second[0]: PASS
+second[1]: PASS
+second[2]: PASS
+n=1: PASS
+memset[0]: PASS
+memset[1]: PASS
+memset[2]: PASS
+memset[3]: PASS
+memset n=0 [0]: PASS
+memset n=0 [1]: PASS
+memset2[0]: PASS
+memset2[1]: PASS
+memset2[2]: PASS
+
+Done: 19 passed, 0 failed

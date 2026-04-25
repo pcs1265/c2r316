@@ -270,23 +270,62 @@ def test_execution_smoke():
 
 
 def test_examples_run():
-    """Run a subset of examples on the emulator and check expected output.
-    Catches end-to-end regressions across the whole pipeline + runtime."""
-    print('\n[execution: examples on emulator]')
-    import importlib.util
+    """Execute every examples/test_*.c on the emulator and compare its
+    full stdout against a captured golden file in tests/golden/.
+
+    Why exact comparison instead of a substring predicate:
+      - The C-level `check(name, got, expected)` could itself miscompile such
+        that it prints PASS for a wrong value. A substring like 'FAIL: 0' is
+        still satisfied in that case.
+      - A program that hangs partway truncates output → the final byte differs
+        from the golden's final byte → exact-match fails immediately.
+      - Any change in the emitted text (digit value, ordering, escape) is
+        caught, not just whether a marker is present.
+
+    Update flow: when a test legitimately changes (or you add a new
+    examples/test_*.c), regenerate goldens with `python tests/gen_goldens.py`.
+    """
+    import re, importlib.util
+    print('\n[execution: examples/test_*.c on emulator]')
     spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
     mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
-    # test_div.c prints "PASS: 52\nFAIL: 0\n" near the end if all checks pass.
-    path = os.path.join(ROOT, 'examples', 'test_div.c')
-    with open(path) as f: src = f.read()
-    asm = mod.compile_c(src, src_name='examples/test_div.c', src_path=path)
-    try:
-        ret, out = _emu_run_main(asm, max_cycles=20_000_000)
-        check('test_div.c reports PASS: 52', 'PASS: 52' in out and 'FAIL: 0' in out,
-              out[-200:])
-    except Exception as e:
-        check('test_div.c runs to completion', False, f'{type(e).__name__}: {e}')
+    def _normalize(out):
+        # __FILE__ embeds an absolute path — replace for portability.
+        return re.sub(r'file macro: .*', 'file macro: <PATH>', out)
+
+    golden_dir = os.path.join(ROOT, 'tests', 'golden')
+    for path in sorted(glob.glob(os.path.join(ROOT, 'examples', 'test_*.c'))):
+        rel  = os.path.relpath(path, ROOT)
+        base = os.path.basename(path).replace('.c', '.txt')
+        golden_path = os.path.join(golden_dir, base)
+        if not os.path.isfile(golden_path):
+            check(f'execute {rel}', False,
+                  f'no golden at {os.path.relpath(golden_path, ROOT)} '
+                  f'(run tests/gen_goldens.py)')
+            continue
+        with open(golden_path, encoding='utf-8') as f:
+            expected = f.read()
+        try:
+            with open(path, encoding='utf-8') as f:
+                src = f.read()
+            asm = mod.compile_c(src, src_name=rel, src_path=path)
+            ret, out = _emu_run_main(asm, max_cycles=20_000_000)
+            actual = _normalize(out)
+            if actual == expected:
+                check(f'execute {rel}', True)
+            else:
+                # short, locating diff: first 60 chars at the divergence point
+                idx = next((i for i in range(min(len(actual), len(expected)))
+                            if actual[i] != expected[i]),
+                           min(len(actual), len(expected)))
+                ctx = (f'mismatch at byte {idx} '
+                       f'(actual len={len(actual)} expected len={len(expected)}); '
+                       f'expected[{idx}:{idx+60}]={expected[idx:idx+60]!r}; '
+                       f'actual[{idx}:{idx+60}]={actual[idx:idx+60]!r}')
+                check(f'execute {rel}', False, ctx)
+        except Exception as e:
+            check(f'execute {rel}', False, f'{type(e).__name__}: {e}')
 
 
 def test_print_int_signed():
