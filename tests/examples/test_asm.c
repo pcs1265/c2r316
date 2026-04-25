@@ -20,7 +20,7 @@ int fail_count;
 void check(char *name, int got, int expected) {
     if (got == expected) {
         print_str(name);
-        print_str(": PASS\n");
+        puts(": PASS");
         pass_count = pass_count + 1;
     } else {
         print_str(name);
@@ -179,9 +179,9 @@ int main(void) {
     check("asm_multiline", result, 90);
 
     /* summary */
-    print_str("================\n");
+    puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);
     print_str("FAIL: "); print_int(fail_count); putchar(10);
-    print_str("=== done ===\n");
+    puts("=== done ===");
     return 0;
 }

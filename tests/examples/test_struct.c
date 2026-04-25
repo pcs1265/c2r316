@@ -192,7 +192,7 @@ int main(void) {
     check("g_after_call", g_cursor.x, 55);
 
     /* summary */
-    puts("==================");
+    puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);
     print_str("FAIL: "); print_int(fail_count); putchar(10);
     puts("=== done ===");

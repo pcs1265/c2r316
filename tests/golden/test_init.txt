@@ -54,7 +54,7 @@ str[2]: PASS
 str[3]: PASS
 str[4]: PASS
 str[5]: PASS
-=================
+================
 PASS: 55
 FAIL: 0
 === done ===

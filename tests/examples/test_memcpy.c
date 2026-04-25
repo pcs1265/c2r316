@@ -17,7 +17,7 @@ int fail_count;
 void check(char *name, int got, int expected) {
     if (got == expected) {
         print_str(name);
-        print_str(": PASS\n");
+        puts(": PASS");
         pass_count = pass_count + 1;
     } else {
         print_str(name);
@@ -31,6 +31,10 @@ void check(char *name, int got, int expected) {
 }
 
 int main() {
+    pass_count = 0;
+    fail_count = 0;
+    puts("=== test_memcpy ===");
+
     /* 1. Basic copy of 4 elements */
     int src[4];
     int dst[4];
@@ -91,10 +95,9 @@ int main() {
     check("memset2[1]", mbuf2[1], 42);
     check("memset2[2]", mbuf2[2], 42);
 
-    print_str("\nDone: ");
-    print_int(pass_count);
-    print_str(" passed, ");
-    print_int(fail_count);
-    print_str(" failed\n");
-    return fail_count;
+    puts("================");
+    print_str("PASS: "); print_int(pass_count); putchar(10);
+    print_str("FAIL: "); print_int(fail_count); putchar(10);
+    puts("=== done ===");
+    return 0;
 }

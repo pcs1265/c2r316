@@ -1,3 +1,4 @@
+=== test_memcpy ===
 basic[0]: PASS
 basic[1]: PASS
 basic[2]: PASS
@@ -17,5 +18,7 @@ memset n=0 [1]: PASS
 memset2[0]: PASS
 memset2[1]: PASS
 memset2[2]: PASS
-
-Done: 19 passed, 0 failed
+================
+PASS: 19
+FAIL: 0
+=== done ===

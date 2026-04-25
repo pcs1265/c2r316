@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 int main() {
+    puts("=== test_printf ===");
     printf("%d\n", 42);
     printf("%d\n", -7);
     printf("%u\n", 65535);
@@ -11,5 +12,6 @@ int main() {
     printf("%s\n", "hello");
     printf("100%%\n");
     printf("%d %d %d\n", 1, 2, 3);
+    puts("=== done ===");
     return 0;
 }

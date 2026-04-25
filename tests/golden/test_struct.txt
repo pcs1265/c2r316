@@ -30,7 +30,7 @@ g_pts_xsum: PASS
 g_pts[1].y: PASS
 g_pts_xsum2: PASS
 g_after_call: PASS
-==================
+================
 PASS: 31
 FAIL: 0
 === done ===

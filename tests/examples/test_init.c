@@ -157,7 +157,7 @@ int main(void) {
     check("str[5]", s[5], 0);
 
     /* summary */
-    puts("=================");
+    puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);
     print_str("FAIL: "); print_int(fail_count); putchar(10);
     puts("=== done ===");
