@@ -18,11 +18,17 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 - `compiler/codegen.py` — IR → R316 assembly
 - `compiler/ast_nodes.py` — AST node definitions
 - `compiler/ir.py` — IR instruction/operand definitions
+- `compiler/preprocessor.py` — C preprocessor (`#include`, `#define`, conditionals)
+- `compiler/builtins.h` — auto-prepended built-in helpers (division, etc.)
+- `compiler/fold.py`, `compiler/dce.py`, `compiler/inline.py`, `compiler/regalloc.py` — IR optimization passes
 - `runtime/runtime.asm` — Standard library (putchar, getchar, puts, print_int, etc.)
+- `tests/test_compiler.py` — Test harness (escape lexing, sizeof, enum, shift-assign, examples smoke compile)
 
 ## Key Documents
 
 - **`docs/ABI.md`** — R316 C Compiler ABI specification. **MUST read before modifying codegen, runtime, or any calling-convention-related code.** Covers register classification, argument passing, return values, stack frame layout, long (32-bit) arithmetic, and edge cases.
+- **`TODO.md`** — current state of the compiler: implemented features, known issues, not-yet-implemented features. Check before adding a feature to confirm it isn't already done or already tracked.
+- **`IMPROVEMENTS.md`** — full prioritized survey of potential improvements (correctness, optimization, runtime, tooling, testing). Use this as the menu when picking the next non-trivial task.
 
 ## R316 Machine Specs
 
@@ -35,6 +41,9 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 ## Working Rules
 
 - **Analyze in small steps**: When analyzing code or assembly output, break the analysis into small, focused steps. Read or examine one section at a time, confirm each step before proceeding to the next. Do NOT attempt to analyze everything in a single pass — this causes errors and omissions.
+- **Run the test suite after compiler changes**: `python tests/test_compiler.py` from the repo root. It smoke-compiles every `examples/*.c` plus targeted feature checks. Add a new check there when adding a language feature or fixing a bug.
+- **Check `TODO.md` before claiming a feature is missing**: the TODO file occasionally lags reality (e.g. `typedef` was implemented well before its TODO entry was removed). Grep the source first.
+- **Don't bypass the `_C_` symbol prefix**: see Symbol Naming Convention. Runtime helpers are the only unprefixed user-callable names.
 
 ## Symbol Naming Convention
 
@@ -44,10 +53,18 @@ All user-defined C symbols (functions and global variables) are emitted with a `
 
 - `--dump-tokens` — dump lexer tokens to stderr
 - `--dump-ast` — dump AST to stderr
-- `--dump-ir` — dump IR to stderr
-- `--stop-after {lex,parse,semantic,ir,codegen}` — stop after a compilation stage
-- `-g` / `--annotate` — annotate ASM with source line comments (requires parser line tracking, see below)
+- `--dump-ir` — dump IR before and after optimization (or `--dump-ir-pre` / `--dump-ir-post`)
+- `--dump-opt-stats` — print instruction/function count delta per optimization pass
+- `--stop-after {lex,parse,semantic,ir,opt,codegen}` — stop after a compilation stage
+- `-g` / `--annotate` — annotate ASM with source line comments
+- `-I DIR` — add include search path
 - `-v` / `--verbose` — print compilation stages
 - Error messages include source context with caret indicator
+
+## Testing
+
+- `python tests/test_compiler.py` — runs all checks; exit code is non-zero if any fail.
+- Individual feature checks live in that file as `test_*` functions. Add new ones there rather than creating ad-hoc scripts.
+- The harness invokes `compile_c` from `compiler.py` directly (not via subprocess), so failures show full Python tracebacks.
 
 
