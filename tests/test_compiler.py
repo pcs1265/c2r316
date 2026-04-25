@@ -27,6 +27,9 @@ from compiler.irgen    import IRGen
 import compiler as _pkg
 from compiler.preprocessor import preprocess
 
+# In-process R316 emulator — runs compiled asm to verify behaviour.
+from r316_emu import run_main as _emu_run_main
+
 
 def _compile_via_main(src: str, **kwargs) -> str:
     """Compile a C string by invoking the top-level pipeline."""
@@ -220,6 +223,93 @@ int main() { return test(7); }
     check('algebraic identities compile', isinstance(asm, str) and len(asm) > 0)
 
 
+def test_execution_smoke():
+    """Emulator-based execution tests: compile + run + check return value / stdout.
+    These catch correctness bugs that pattern-matching tests can't (the very
+    bug fixed in fc7eb9d would have been caught by `print_int(-1)` here)."""
+    print('\n[execution: emulator smoke tests]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    def run(src, max_cycles=500_000):
+        return _emu_run_main(mod.compile_c(src, src_name='<t>'), max_cycles=max_cycles)
+
+    # Arithmetic + control flow
+    cases = [
+        ("int main() { return 7 * 6; }", 42, ''),
+        ("int main() { return 100 % 7; }", 2, ''),
+        ("int main() { unsigned x = 100; return x / 3; }", 33, ''),
+        ("int main() { int n = 0; for (int i = 0; i < 10; i++) n += i; return n; }", 45, ''),
+        ("int main() { int x = 5; x <<= 3; return x; }", 40, ''),
+        ("int sum(int n) { int s = 0; for (int i = 1; i <= n; i++) s += i; return s; } "
+         "int main() { return sum(10); }", 55, ''),
+        # Recursion
+        ("int fact(int n) { return n <= 1 ? 1 : n * fact(n - 1); } "
+         "int main() { return fact(5); }", 120, ''),
+        # Unsigned compare regression: 0xFFFF < 1 unsigned must be FALSE
+        ("int main() { unsigned a = 0xFFFF, b = 1; return a < b; }", 0, ''),
+        # The exact pattern of the codegen bug we fixed: `if (x & MASK) y = 0 - x;`
+        # In 16-bit modular: 0 - 0xFFFF = 1.  Pre-fix: `0 - (x&0x8000) = 0x8000`.
+        ("int test(int x) { if (x & 0x8000) return 0 - x; return x; } "
+         "int main() { return test(-1); }", 1, ''),
+        # __builtin_smod with negative dividend (the real-world hello.c hang)
+        ("int main() { int x = -7; return x % 3; }", 0xFFFF, ''),  # -7 % 3 = -1 = 0xFFFF
+    ]
+
+    for src, expect_ret, expect_out in cases:
+        try:
+            ret, out = run(src)
+            ok = (ret == expect_ret) and (out == expect_out)
+            label = src[:55].replace('\n', ' ')
+            check(f'execute: {label!r}',
+                  ok,
+                  f'expected ret={expect_ret} out={expect_out!r}; got ret={ret} out={out!r}')
+        except Exception as e:
+            check(f'execute: {src[:55]!r}', False, f'{type(e).__name__}: {e}')
+
+
+def test_examples_run():
+    """Run a subset of examples on the emulator and check expected output.
+    Catches end-to-end regressions across the whole pipeline + runtime."""
+    print('\n[execution: examples on emulator]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    # test_div.c prints "PASS: 52\nFAIL: 0\n" near the end if all checks pass.
+    path = os.path.join(ROOT, 'examples', 'test_div.c')
+    with open(path) as f: src = f.read()
+    asm = mod.compile_c(src, src_name='examples/test_div.c', src_path=path)
+    try:
+        ret, out = _emu_run_main(asm, max_cycles=20_000_000)
+        check('test_div.c reports PASS: 52', 'PASS: 52' in out and 'FAIL: 0' in out,
+              out[-200:])
+    except Exception as e:
+        check('test_div.c runs to completion', False, f'{type(e).__name__}: {e}')
+
+
+def test_print_int_signed():
+    """End-to-end: print_int(N) → stdout matches str(N).  This is the test
+    the hello.c hang would have failed pre-fix (infinite cycle limit hit)."""
+    print('\n[execution: print_int / printf]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    cases = [0, 1, 7, -1, -7, 42, -42, 100, -100, 255, -255, 32767]
+    for n in cases:
+        src = f'#include "runtime/stdio.h"\nint main() {{ print_int({n}); return 0; }}\n'
+        try:
+            asm = mod.compile_c(src, src_name='<t>')
+            ret, out = _emu_run_main(asm, max_cycles=2_000_000)
+            check(f'print_int({n}) == {n!r}',
+                  out == str(n),
+                  f'expected {str(n)!r} got {out!r}')
+        except Exception as e:
+            check(f'print_int({n})', False, f'{type(e).__name__}: {e}')
+
+
 def test_left_operand_preserved_across_binop():
     """Critical correctness: codegen must NOT clobber the left operand's
     register when generating 2-op forms like AND/OR/XOR/SHL/SHR.
@@ -368,6 +458,9 @@ if __name__ == '__main__':
     test_algebraic_identities()
     test_left_operand_preserved_across_binop()
     test_unsigned_comparison()
+    test_execution_smoke()
+    test_print_int_signed()
+    test_examples_run()
     test_goto()
     test_typedef_still_works()
     test_examples_compile()
