@@ -46,12 +46,26 @@
 17 % 13: PASS
 19 / 3: PASS
 19 % 3: PASS
+-10 / 3: PASS
+-10 % 3: PASS
+10 / -3: PASS
+10 % -3: PASS
+-10 / -3: PASS
+-10 % -3: PASS
+-1 / 1: PASS
+-1 % 1: PASS
+-32768 / 1: PASS
+-32768 % 1: PASS
+-32768 / 2: PASS
+-32768 % 2: PASS
+-32767 / 2: PASS
+-32767 % 2: PASS
 100 /= 3: PASS
 100 %= 3: PASS
 (100 / 2) / 2: PASS
 (100 % 30) % 7: PASS
 100 / (2 * 2): PASS
 ================
-PASS: 52
+PASS: 66
 FAIL: 0
 === done ===
