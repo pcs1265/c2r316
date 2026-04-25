@@ -37,6 +37,6 @@ include guard: ok
 header const: 77
 header macro: 5
 file macro: <PATH>
-line macro: 350
+line macro: 349
 stdc macro: ok
 all tests passed

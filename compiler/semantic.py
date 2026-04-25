@@ -7,7 +7,11 @@ from .ast_nodes import *
 
 
 class SemanticError(Exception):
-    pass
+    def __init__(self, message, line=0, col=0, filename=''):
+        super().__init__(message)
+        self.line     = line
+        self.col      = col
+        self.filename = filename
 
 
 class Symbol:
@@ -54,6 +58,20 @@ class Analyzer:
         self.current_func: Optional[FuncDecl] = None
         self.local_offset = 0      # current function stack size (words)
         self.string_lits: list[StringLit] = []
+        self._cur_line: int = 0
+        self._cur_file: str = ''
+
+    def _err(self, msg: str) -> SemanticError:
+        return SemanticError(msg, self._cur_line, 0, self._cur_file)
+
+    def _set_loc(self, node):
+        """Update current location from a node if it carries one."""
+        line = getattr(node, 'line', 0)
+        fname = getattr(node, 'filename', '')
+        if line:
+            self._cur_line = line
+        if fname:
+            self._cur_file = fname
 
     # ── Scope Management ───────────────────────────────────────────────────────────
 
@@ -72,8 +90,11 @@ class Analyzer:
     def _lookup(self, name: str, line: int = 0, filename: str = '') -> Symbol:
         sym = self.scope.lookup(name)
         if sym is None:
-            loc = f'{filename}:{line}: ' if filename and line else (f'Line {line}: ' if line else '')
-            raise SemanticError(f"{loc}Undefined symbol: {name!r}")
+            if line:
+                self._cur_line = line
+            if filename:
+                self._cur_file = filename
+            raise self._err(f"Undefined symbol: {name!r}")
         return sym
 
     # ── Top-Level ───────────────────────────────────────────────────────────────
@@ -187,11 +208,12 @@ class Analyzer:
                 self._analyze_expr(e)
 
         else:
-            raise SemanticError(f"Unknown statement type: {type(stmt)}")
+            raise self._err(f"Unknown statement type: {type(stmt)}")
 
     # ── Expressions ───────────────────────────────────────────────────────────────
 
     def _analyze_expr(self, expr: Expr) -> CType:
+        self._set_loc(expr)
         if isinstance(expr, IntLit):
             expr.ctype = CInt()
             return expr.ctype
@@ -230,7 +252,7 @@ class Analyzer:
                 elif isinstance(ot, CArray):
                     expr.ctype = ot.base
                 else:
-                    raise SemanticError(f"Dereferencing non-pointer type {ot}")
+                    raise self._err(f"Dereferencing non-pointer type {ot}")
             elif expr.op == '!':
                 expr.ctype = CInt()
             else:
@@ -262,21 +284,21 @@ class Analyzer:
                 if ft.is_variadic:
                     # variadic: must supply at least the fixed params
                     if len(expr.args) < len(ft.params):
-                        raise SemanticError(
+                        raise self._err(
                             f"Function '{name}' expects at least {len(ft.params)} argument(s), "
                             f"but {len(expr.args)} given"
                         )
                 else:
                     # argument count check
                     if len(expr.args) != len(ft.params):
-                        raise SemanticError(
+                        raise self._err(
                             f"Function '{name}' expects {len(ft.params)} argument(s), "
                             f"but {len(expr.args)} given"
                         )
                 # type check fixed params only
                 for i, (arg_t, param_t) in enumerate(zip(arg_types, ft.params)):
                     if not self._is_assignable(arg_t, param_t):
-                        raise SemanticError(
+                        raise self._err(
                             f"Function '{name}': argument {i+1} type mismatch — "
                             f"expected {param_t}, got {arg_t}"
                         )
@@ -291,7 +313,7 @@ class Analyzer:
             if isinstance(at, (CPointer, CArray)):
                 expr.ctype = at.base
             else:
-                raise SemanticError(f"Indexing non-array/pointer type {at}")
+                raise self._err(f"Indexing non-array/pointer type {at}")
             return expr.ctype
 
         if isinstance(expr, Cast):
@@ -312,16 +334,16 @@ class Analyzer:
                 if isinstance(obj_type, CPointer):
                     obj_type = obj_type.base
                 else:
-                    raise SemanticError(
+                    raise self._err(
                         f"Arrow operator '->' requires a pointer, got {obj_type}"
                     )
             if not isinstance(obj_type, (CStruct, CUnion)):
-                raise SemanticError(
+                raise self._err(
                     f"Member access on non-struct/union type {obj_type}"
                 )
             sf = obj_type.get_field(expr.field)
             if sf is None:
-                raise SemanticError(
+                raise self._err(
                     f"'{obj_type}' has no field '{expr.field}'"
                 )
             expr._field_info = sf      # offset + ctype for IRGen
@@ -346,7 +368,7 @@ class Analyzer:
             expr.ctype = expr.arg_type
             return expr.ctype
 
-        raise SemanticError(f"Unknown expression type: {type(expr)}")
+        raise self._err(f"Unknown expression type: {type(expr)}")
 
     # ── Type Compatibility ───────────────────────────────────────────────────────
 

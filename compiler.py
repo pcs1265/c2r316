@@ -11,7 +11,7 @@ import sys
 import os
 import argparse
 
-from compiler.lexer          import Lexer,  LexError
+from compiler.lexer          import Lexer,  LexError, LexWarning
 from compiler.parser         import Parser, ParseError
 from compiler.semantic       import Analyzer, SemanticError
 from compiler.irgen          import IRGen,  IRGenError
@@ -35,6 +35,40 @@ def _source_context(src: str, line: int, col: int, context: int = 2) -> str:
         if i == line - 1 and col > 0:
             result.append(f'{" " * len(prefix)}{" " * (col - 1)}^')
     return '\n'.join(result)
+
+
+def _print_warning(w, fallback_src: str):
+    """Print a compiler warning with source context to stderr."""
+    if w.line:
+        if w.filename and os.path.isfile(w.filename):
+            try:
+                warn_src = open(w.filename, encoding='utf-8').read()
+            except OSError:
+                warn_src = fallback_src
+        else:
+            warn_src = fallback_src
+        ctx = _source_context(warn_src, w.line, w.col)
+        print(f"warning: {w.message}\n{ctx}", file=sys.stderr)
+    else:
+        print(f"warning: {w.message}", file=sys.stderr)
+
+
+def _raise_with_context(label: str, e: Exception, fallback_src: str):
+    """Format and raise a SystemExit with source context for any compiler error."""
+    line     = getattr(e, 'line',     0)
+    col      = getattr(e, 'col',      0)
+    filename = getattr(e, 'filename', '')
+    if line:
+        if filename and os.path.isfile(filename):
+            try:
+                err_src = open(filename, encoding='utf-8').read()
+            except OSError:
+                err_src = fallback_src
+        else:
+            err_src = fallback_src
+        ctx = _source_context(err_src, line, col)
+        raise SystemExit(f"{label}: {e}\n{ctx}")
+    raise SystemExit(f"{label}: {e}")
 
 
 def _ir_header(title: str) -> str:
@@ -78,20 +112,28 @@ def compile_c(src: str, src_name: str = '<stdin>',
     _v('Preprocessing ...')
     _root = os.path.dirname(os.path.abspath(__file__))
     _inc_dirs = [os.path.join(_root, 'include'), _root] + (include_dirs or [])
-    # Auto-prepend compiler built-ins (division helpers, etc.)
-    src = '#include "compiler/builtins.h"\n' + src
+    # Auto-prepend compiler built-ins (division helpers, etc.).
+    # Preprocess builtins and user source separately so that #line markers
+    # in the output reflect the user's original file line numbers correctly.
+    _builtins_path = os.path.join(_root, 'compiler', 'builtins.h')
     try:
-        src = preprocess(src, src_path=src_path, include_dirs=_inc_dirs)
+        _builtins_src = open(_builtins_path, encoding='utf-8').read()
+        _builtins_pp = preprocess(_builtins_src, src_path=_builtins_path, include_dirs=_inc_dirs)
+        _user_pp     = preprocess(src,           src_path=src_path,        include_dirs=_inc_dirs)
     except PreprocessorError as e:
-        raise SystemExit(f"Preprocessor error: {e}")
+        _raise_with_context("Preprocessor error", e, src)
+    # Reset filename/line for the lexer before the user's code begins.
+    _escaped = src_path.replace('\\', '\\\\') if src_path else src_name
+    src = _builtins_pp + f'\n#line 1 "{_escaped}"\n' + _user_pp
 
     # 2. lexing
     try:
         lexer = Lexer(src, filename=src_name)
     except LexError as e:
-        ctx = _source_context(src, e.line if hasattr(e, 'line') else 0,
-                              e.col if hasattr(e, 'col') else 0)
-        raise SystemExit(f"Lex error: {e}\n{ctx}")
+        _raise_with_context("Lex error", e, src)
+
+    for w in lexer.warnings:
+        _print_warning(w, src)
 
     if dump_tokens:
         for tok in lexer.tokens:
@@ -107,16 +149,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
         parser = Parser(lexer.tokens)
         ast    = parser.parse()
     except ParseError as e:
-        err_file, err_line, err_col = _parse_error_location(e)
-        if err_file and os.path.isfile(err_file):
-            try:
-                err_src = open(err_file, encoding='utf-8').read()
-            except OSError:
-                err_src = src
-        else:
-            err_src = src
-        ctx = _source_context(err_src, err_line, err_col)
-        raise SystemExit(f"Parse error: {e}\n{ctx}")
+        _raise_with_context("Parse error", e, src)
 
     if dump_ast:
         from compiler.ast_nodes import dump_ast as ast_dump
@@ -133,18 +166,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
         analyzer = Analyzer()
         analyzer.analyze(ast)
     except SemanticError as e:
-        err_file, err_line, _col = _parse_error_location(e)
-        if err_line:
-            if err_file and os.path.isfile(err_file):
-                try:
-                    err_src = open(err_file, encoding='utf-8').read()
-                except OSError:
-                    err_src = src
-            else:
-                err_src = src
-            ctx = _source_context(err_src, err_line, 0)
-            raise SystemExit(f"Semantic error: {e}\n{ctx}")
-        raise SystemExit(f"Semantic error: {e}")
+        _raise_with_context("Semantic error", e, src)
 
     if stop_after == 'semantic':
         return ''
@@ -218,43 +240,6 @@ def compile_c(src: str, src_name: str = '<stdin>',
     _v('Done.')
     return asm
 
-
-def _parse_error_location(e: Exception):
-    """Return (filename, line, col) from an error message.
-
-    Handles:
-      'file:N:col: ...'   — parse errors (new style)
-      'Line N:col: ...'   — parse errors (old style)
-      'file:N: ...'       — semantic errors
-      'Line N: ...'       — semantic errors (old style)
-    """
-    import re
-    msg = str(e)
-    # file:N:col:
-    m = re.match(r'^(.+):(\d+):(\d+):', msg)
-    if m:
-        return m.group(1), int(m.group(2)), int(m.group(3))
-    # file:N:
-    m = re.match(r'^(.+):(\d+):', msg)
-    if m:
-        return m.group(1), int(m.group(2)), 0
-    # Line N:col:
-    m = re.match(r'Line (\d+):(\d+):', msg)
-    if m:
-        return '', int(m.group(1)), int(m.group(2))
-    # Line N:
-    m = re.match(r'Line (\d+):', msg)
-    if m:
-        return '', int(m.group(1)), 0
-    return '', 0, 0
-
-
-def _extract_line(e: Exception) -> int:
-    return _parse_error_location(e)[1]
-
-
-def _extract_col(e: Exception) -> int:
-    return _parse_error_location(e)[2]
 
 
 def main():

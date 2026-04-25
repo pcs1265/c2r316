@@ -8,7 +8,11 @@ from .ast_nodes import *
 
 
 class ParseError(Exception):
-    pass
+    def __init__(self, message, line=0, col=0, filename=''):
+        super().__init__(message)
+        self.line     = line
+        self.col      = col
+        self.filename = filename
 
 
 class Parser:
@@ -36,13 +40,16 @@ class Parser:
     def _at(self, *kinds) -> bool:
         return self._cur().kind in kinds
 
+    def _err(self, msg: str, tok: Token = None) -> ParseError:
+        t = tok or self._cur()
+        return ParseError(msg, t.line, t.col, t.filename)
+
     def _eat(self, *kinds) -> Token:
         tok = self._cur()
         if tok.kind not in kinds:
             exp = ', '.join(k.name for k in kinds)
-            loc = f'{tok.filename}:{tok.line}' if tok.filename else f'Line {tok.line}'
-            raise ParseError(
-                f"{loc}:{tok.col}: Expected {exp}, got {tok.kind.name} ({tok.value!r})"
+            raise self._err(
+                f"Expected {exp}, got {tok.kind.name} ({tok.value!r})", tok
             )
         self.pos += 1
         return tok
@@ -101,12 +108,12 @@ class Parser:
             return CChar(unsigned)
         if self._try_eat(TK.VOID):
             if unsigned:
-                raise ParseError("unsigned void is invalid")
+                raise self._err("unsigned void is invalid")
             return CVoid()
         # unsigned alone → unsigned int
         if unsigned:
             return CInt(unsigned=True)
-        raise ParseError(f"Line {self._cur().line}: Expected type specifier")
+        raise self._err("Expected type specifier")
 
     def _parse_struct_or_union(self, is_union: bool) -> CType:
         """Parse `struct [tag] [{ field; ... }]` or `union [tag] [{ ... }]`."""
@@ -165,7 +172,7 @@ class Parser:
                     elif self._at(TK.IDENT) and self._cur().value in self._enum_consts:
                         value = sign * self._enum_consts[self._eat(TK.IDENT).value]
                     else:
-                        raise ParseError(f"Line {self._cur().line}: enum initializer must be an integer constant")
+                        raise self._err("enum initializer must be an integer constant")
                 self._enum_consts[name] = value
                 value += 1
                 if not self._try_eat(TK.COMMA):
@@ -542,7 +549,7 @@ class Parser:
                         body.append(s)
                 clauses.append(CaseClause(value, body))
             else:
-                raise ParseError(f"Line {self._cur().line}: expected 'case' or 'default' inside switch")
+                raise self._err("expected 'case' or 'default' inside switch")
         self._eat(TK.RBRACE)
         return SwitchStmt(expr, clauses)
 
@@ -561,7 +568,7 @@ class Parser:
         # struct/union type-only declaration inside a block (`struct foo { ... };`)
         if not name and isinstance(vtype, (CStruct, CUnion)):
             self._eat(TK.SEMICOLON)
-            raise ParseError(f"Line {self._cur().line}: type-only declaration inside block has no effect")
+            raise self._err("type-only declaration inside block has no effect")
         results = []
         init = None
         if self._try_eat(TK.ASSIGN):
@@ -823,7 +830,4 @@ class Parser:
             self._eat(TK.RPAREN)
             return expr
 
-        loc = f'{tok.filename}:{tok.line}' if tok.filename else f'Line {tok.line}'
-        raise ParseError(
-            f"{loc}:{tok.col}: Unexpected token {tok.kind.name} ({tok.value!r})"
-        )
+        raise self._err(f"Unexpected token {tok.kind.name} ({tok.value!r})", tok)

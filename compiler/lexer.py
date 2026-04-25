@@ -137,7 +137,19 @@ class Token:
 
 
 class LexError(Exception):
-    pass
+    def __init__(self, message, line=0, col=0, filename=''):
+        super().__init__(message)
+        self.line     = line
+        self.col      = col
+        self.filename = filename
+
+
+class LexWarning:
+    def __init__(self, message, line=0, col=0, filename=''):
+        self.message  = message
+        self.line     = line
+        self.col      = col
+        self.filename = filename
 
 
 class Lexer:
@@ -148,7 +160,11 @@ class Lexer:
         self.col      = 1
         self.filename = filename
         self.tokens   = []
+        self.warnings: list[LexWarning] = []
         self._tokenize()
+
+    def _warn(self, msg: str):
+        self.warnings.append(LexWarning(msg, self.line, self.col, self.filename))
 
     def _cur(self):
         if self.pos < len(self.src):
@@ -240,7 +256,7 @@ class Lexer:
             while self.pos < len(self.src) and self._cur() in '0123456789abcdefABCDEF':
                 self._advance()
             if self.pos == start:
-                raise LexError(f"Line {self.line}: empty hex escape")
+                raise LexError(f"Line {self.line}: empty hex escape", self.line, self.col, self.filename)
             return int(self.src[start:self.pos], 16) & 0xFF
         if ch in '01234567':
             # octal escape, up to 3 digits
@@ -249,21 +265,22 @@ class Lexer:
                 self._advance()
             return int(self.src[start:self.pos], 8) & 0xFF
         esc = self._advance()
+        if esc not in self._SIMPLE_ESC:
+            self._warn(f"unknown escape sequence '\\{esc}' treated as '{esc}'")
         return self._SIMPLE_ESC.get(esc, ord(esc))
 
-    def _read_char(self):
-        # after '
+    def _read_char(self, start_line, start_col):
         self._advance()  # '
         if self._cur() == '\\':
             val = self._read_escape()
         else:
             val = ord(self._advance())
         if self._cur() != "'":
-            raise LexError(f"Line {self.line}: Unclosed char literal")
+            raise LexError(f"Line {start_line}: Unclosed char literal", start_line, start_col, self.filename)
         self._advance()  # '
         return val
 
-    def _read_string(self):
+    def _read_string(self, start_line, start_col):
         self._advance()  # "
         chars = []
         while self.pos < len(self.src) and self._cur() != '"':
@@ -272,7 +289,7 @@ class Lexer:
             else:
                 chars.append(ord(self._advance()))
         if self._cur() != '"':
-            raise LexError(f"Line {self.line}: Unclosed string literal")
+            raise LexError(f"Line {start_line}: Unclosed string literal", start_line, start_col, self.filename)
         self._advance()  # "
         return chars
 
@@ -307,16 +324,16 @@ class Lexer:
 
             # char literal
             if ch == "'":
-                val = self._read_char()
+                val = self._read_char(line, col)
                 self.tokens.append(_tok(TK.CHAR_LIT, val))
                 continue
 
             # string literal (adjacent strings are concatenated, C standard)
             if ch == '"':
-                val = self._read_string()
+                val = self._read_string(line, col)
                 self._skip_whitespace_and_comments()
                 while self.pos < len(self.src) and self._cur() == '"':
-                    val = val + self._read_string()
+                    val = val + self._read_string(self.line, self.col)
                     self._skip_whitespace_and_comments()
                 self.tokens.append(_tok(TK.STRING_LIT, val))
                 continue
@@ -369,4 +386,4 @@ class Lexer:
                 self.tokens.append(_tok(one_map[ch], ch))
                 continue
 
-            raise LexError(f"Line {line}:{col}: Unexpected character {ch!r}")
+            raise LexError(f"Line {line}:{col}: Unexpected character {ch!r}", line, col, self.filename)
