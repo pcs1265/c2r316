@@ -34,6 +34,11 @@ class IRGen:
         # set of param names in current function
         self._params: set[str] = set()
         self._strings: List = []
+        # static locals: original name → mangled global name
+        self._static_locals: dict[str, str] = {}
+        # pending global entries from static locals (added in generate())
+        self._pending_globals: List = []
+        self._cur_func_name: str = ''
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -76,6 +81,8 @@ class IRGen:
             name = node.name
             if name in self._params or name in self._locals:
                 return Var(name)
+            if name in self._static_locals:
+                return Global(self._static_locals[name])
             return Global(name)
         return None
 
@@ -116,6 +123,9 @@ class IRGen:
                 ir.globals.append((decl.name, words, init_vals))
             elif isinstance(decl, FuncDecl) and decl.body is not None:
                 ir.functions.append(self._gen_func(decl))
+                # flush static locals registered during function generation
+                ir.globals.extend(self._pending_globals)
+                self._pending_globals = []
 
         # string literals are collected during generation
         ir.strings = self._strings
@@ -128,10 +138,15 @@ class IRGen:
         self._label_cnt = 0
         self._params = {p.name for p in func.params}
         self._locals = set()
+        self._static_locals = {}
+        self._cur_func_name = func.name
         self._break_stack = []
         self._cont_stack  = []
         self._num_fixed_params = len(func.params)
         self._stmt_loc = None
+
+        # Register static locals as globals before processing the body
+        self._collect_static_locals(func.body)
 
         # Struct return: inject hidden first param '__ret' (pointer to caller's
         # return slot).  The callee writes the struct there and returns the ptr.
@@ -166,10 +181,74 @@ class IRGen:
 
         return self._fn
 
+    def _collect_static_locals(self, node):
+        """Walk body, register static local variables as pending globals."""
+        if isinstance(node, DeclStmt):
+            d = node.decl
+            if not d.is_static:
+                return
+            mangled = f'_C_{self._cur_func_name}__{d.name}'
+            self._static_locals[d.name] = mangled
+            words = max(1, d.ctype.size())
+            init_vals = self._const_init(d.init, d.ctype)
+            self._pending_globals.append((mangled, words, init_vals))
+        elif isinstance(node, Block):
+            for s in node.stmts:
+                self._collect_static_locals(s)
+        elif isinstance(node, IfStmt):
+            self._collect_static_locals(node.then)
+            if node.else_:
+                self._collect_static_locals(node.else_)
+        elif isinstance(node, (WhileStmt, DoWhileStmt)):
+            self._collect_static_locals(node.body)
+        elif isinstance(node, ForStmt):
+            if node.init:
+                self._collect_static_locals(node.init)
+            self._collect_static_locals(node.body)
+
+    def _is_const_init(self, init) -> bool:
+        """True if the initializer is fully constant (can be baked into global data)."""
+        if init is None:
+            return True
+        if isinstance(init, (IntLit, CharLit, StringLit)):
+            return True
+        if isinstance(init, InitList):
+            return all(isinstance(e, (IntLit, CharLit, StringLit)) for e in init.elems)
+        return False
+
+    def _const_init(self, init, ctype):
+        """Extract constant initializer values for a global/static, or return None for zero-init."""
+        if init is None:
+            return None
+        if isinstance(init, IntLit):
+            return [init.value]
+        if isinstance(init, CharLit):
+            return [init.value & 0xFF]
+        if isinstance(init, InitList):
+            vals = []
+            for e in init.elems:
+                if isinstance(e, (IntLit, CharLit)):
+                    vals.append(e.value)
+                elif isinstance(e, StringLit):
+                    lbl = f'_cstr_{len(self._strings) + 1}'
+                    self._strings.append((lbl, e.chars))
+                    vals.append(lbl)
+                else:
+                    vals.append(0)
+            return vals
+        if isinstance(init, StringLit):
+            lbl = f'_cstr_{len(self._strings) + 1}'
+            self._strings.append((lbl, init.chars))
+            return [lbl]
+        # non-constant initializer: zero-init the storage; init code is emitted at call site
+        return None
+
     def _collect_locals(self, node):
         """Walk body and register all declared local names and their sizes."""
         if isinstance(node, DeclStmt):
             d = node.decl
+            if d.is_static:
+                return  # handled as a global via _collect_static_locals
             self._locals.add(d.name)
             size = d.ctype.size() if isinstance(d.ctype, (CArray, CStruct, CUnion)) else 1
             self._fn.local_sizes[d.name] = size
@@ -202,6 +281,30 @@ class IRGen:
 
         elif isinstance(stmt, DeclStmt):
             d = stmt.decl
+            if d.is_static:
+                # Static local: storage is a global. Constant initializers are
+                # already baked into the global data section. For non-constant
+                # initializers, emit the assignment guarded by a one-time flag.
+                if d.init is not None and not self._is_const_init(d.init):
+                    mangled = self._static_locals[d.name]
+                    flag_name = mangled + '__init'
+                    self._pending_globals.append((flag_name, 1, None))
+                    loc = self._loc(stmt)
+                    flag_addr = self._tmp()
+                    self._emit(IAddrOf(flag_addr, Global(flag_name), loc))
+                    flag_val = self._tmp()
+                    self._emit(ILoad(flag_val, flag_addr, loc))
+                    lbl_done = self._new_label('sl_done')
+                    self._emit(IJumpIf(flag_val, lbl_done, loc))
+                    # mark initialized
+                    self._emit(IStore(flag_addr, ImmInt(1), loc))
+                    # emit init code (re-use existing DeclStmt logic via a temp non-static decl)
+                    val = self._gen_expr(d.init)
+                    g_addr = self._tmp()
+                    self._emit(IAddrOf(g_addr, Global(mangled), loc))
+                    self._emit(IStore(g_addr, val, loc))
+                    self._emit(ILabel(lbl_done, loc))
+                return
             if d.init is not None:
                 loc = self._loc(stmt)
                 if isinstance(d.init, StringLit) and isinstance(d.ctype, CArray):
@@ -538,6 +641,8 @@ class IRGen:
     def _var_operand(self, name: str) -> Union[Var, Global]:
         if name in self._locals or name in self._params:
             return Var(name)
+        if name in self._static_locals:
+            return Global(self._static_locals[name])
         return Global(name)
 
     def _var_addr(self, name: str, loc) -> Operand:

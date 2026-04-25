@@ -1,0 +1,16 @@
+=== test_static_locals ===
+counter 1: PASS
+counter 2: PASS
+counter 3: PASS
+get_id 1: PASS
+get_id 2: PASS
+get_id 3: PASS
+accumulate 5: PASS
+accumulate 3: PASS
+accumulate 7: PASS
+two_statics 1: PASS
+two_statics 2: PASS
+================
+PASS: 11
+FAIL: 0
+=== done ===

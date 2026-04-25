@@ -425,9 +425,12 @@ class Parser:
         if self._at(TK.ASM):
             return self._stamp(self._parse_asm(), tok)
 
-        # local variable declaration
-        if self._at_type_start():
-            decls = self._parse_local_decl()
+        # local variable declaration (optionally prefixed with 'static')
+        is_local_static = self._at(TK.STATIC)
+        if is_local_static or self._at_type_start():
+            if is_local_static:
+                self._eat(TK.STATIC)
+            decls = self._parse_local_decl(is_static=is_local_static)
             for d in decls:
                 self._stamp(d, tok)
             return decls
@@ -553,7 +556,7 @@ class Parser:
         self._eat(TK.RBRACE)
         return InitList(elems)
 
-    def _parse_local_decl(self) -> list:
+    def _parse_local_decl(self, is_static: bool = False) -> list:
         vtype, name = self._parse_type_and_name()
         # struct/union type-only declaration inside a block (`struct foo { ... };`)
         if not name and isinstance(vtype, (CStruct, CUnion)):
@@ -572,8 +575,8 @@ class Parser:
                 vtype = CArray(vtype.base, len(init.elems))
             elif isinstance(init, StringLit):
                 vtype = CArray(vtype.base, len(init.chars) + 1)  # +1 for null terminator
-        results.append(DeclStmt(VarDecl(name, vtype, init, is_global=False)))
-        # multi-declaration: int x = 1, y, z = 3;
+        results.append(DeclStmt(VarDecl(name, vtype, init, is_global=False, is_static=is_static)))
+        # multi-declaration: static int x = 1, y, z = 3;
         while self._try_eat(TK.COMMA):
             extra_name = self._eat(TK.IDENT).value
             extra_init = None
@@ -582,7 +585,7 @@ class Parser:
                     extra_init = self._parse_init_list()
                 else:
                     extra_init = self._parse_assign()
-            results.append(DeclStmt(VarDecl(extra_name, vtype, extra_init, is_global=False)))
+            results.append(DeclStmt(VarDecl(extra_name, vtype, extra_init, is_global=False, is_static=is_static)))
         self._eat(TK.SEMICOLON)
         return results
 
