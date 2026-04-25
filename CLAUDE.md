@@ -89,4 +89,17 @@ All user-defined C symbols (functions and global variables) are emitted with a `
 
 `tests/r316_emu.py` implements the instructions the c2r316 compiler actually emits (`mov add adc sub sbb mul and or xor shl shr ld st jmp <jcc> hlt`) plus the `cmp/test/nop` macros from `common.asm`. Flag handling follows `manual.md`. Execution starts at `_C_main:` with `sp=0x8000` and `lr=sentinel`; the runtime's `__stack_init` and `__term_init` are skipped. Terminal MMIO writes to `0x9FB5` are captured into stdout. **Not** a full TPT-VM emulator; if a future test needs hardware features beyond this, extend `tests/r316_emu.py`.
 
+### Running the emulator standalone
+
+`tests/r316_emu.py` can be run directly to compile-and-run a `.c` file or execute a pre-built `.asm` file:
+
+```
+python tests/r316_emu.py examples/hello.c          # compile then emulate
+python tests/r316_emu.py output.asm                # emulate .asm directly
+python tests/r316_emu.py file.c --show-retval      # also print [exit N]
+python tests/r316_emu.py file.c --cycles 5000000   # override cycle limit
+```
+
+Program stdout is written to the terminal; the process exits with `main()`'s return value.
+
 

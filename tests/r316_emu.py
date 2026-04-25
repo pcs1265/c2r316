@@ -535,3 +535,48 @@ def run_main(asm: str, max_cycles: int = 1_000_000) -> tuple[int, str]:
     m.pc = prog.labels['_C_main']
     m.run()
     return m.regs[1] & _MASK16, m.stdout_str()
+
+
+# ── standalone entry point ─────────────────────────────────────────────────
+
+if __name__ == '__main__':
+    import argparse
+    import os
+    import sys
+
+    ap = argparse.ArgumentParser(
+        description='Run a .asm or .c file through the R316 emulator.')
+    ap.add_argument('file', help='.asm file (or .c file, compiled first)')
+    ap.add_argument('--cycles', type=int, default=1_000_000,
+                    metavar='N', help='max emulated cycles (default: 1 000 000)')
+    ap.add_argument('--show-retval', action='store_true',
+                    help='print main() return value after program output')
+    args = ap.parse_args()
+
+    path = args.file
+    if path.endswith('.c'):
+        # Import compiler from repo root (works whether run as
+        # `python tests/r316_emu.py` or from the repo root).
+        _this_dir = os.path.dirname(os.path.abspath(__file__))
+        _root = os.path.dirname(_this_dir)
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location('_compiler_main',
+                    os.path.join(_root, 'compiler.py'))
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        compile_c = _mod.compile_c
+        with open(path, encoding='utf-8') as fh:
+            src = fh.read()
+        asm = compile_c(src, src_name=os.path.basename(path),
+                        src_path=os.path.dirname(os.path.abspath(path)))
+    else:
+        with open(path, encoding='utf-8') as fh:
+            asm = fh.read()
+
+    retval, out = run_main(asm, max_cycles=args.cycles)
+    sys.stdout.write(out)
+    if args.show_retval:
+        print(f'\n[exit {retval}]')
+    sys.exit(retval)
