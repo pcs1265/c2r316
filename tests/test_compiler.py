@@ -220,6 +220,47 @@ int main() { return test(7); }
     check('algebraic identities compile', isinstance(asm, str) and len(asm) > 0)
 
 
+def test_unsigned_comparison():
+    """Unsigned `<` etc. must use carry-based branches (jc/jnc), not signed jl/jge.
+    Otherwise values with the high bit set compare wrong (e.g. 0xFFFF < 1 wrongly true)."""
+    print('\n[bugfix: unsigned comparison]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    src = """
+int test(unsigned int a, unsigned int b) { return a < b; }
+int main() { return test(1, 2); }
+"""
+    asm = mod.compile_c(src, src_name='<t>')
+    # extract the test function body
+    lines = asm.split('\n')
+    start = next(i for i, l in enumerate(lines) if l.strip() == '_C_test:')
+    body = '\n'.join(lines[start:start + 20])
+    check('unsigned < uses jnc / jc, not jge / jl',
+          ('jnc' in body or 'jc ' in body) and 'jge' not in body and ' jl ' not in body,
+          body[:300])
+
+    # All four ordering ops on unsigned
+    src2 = """
+int test(unsigned int a, unsigned int b) {
+    if (a < b) return 1;
+    if (a > b) return 2;
+    if (a <= b) return 3;
+    if (a >= b) return 4;
+    return 0;
+}
+int main() { return test(5, 7); }
+"""
+    asm2 = mod.compile_c(src2, src_name='<t>')
+    # all four compares should use jc/jnc, no signed jl/jge in test body
+    s = next(i for i, l in enumerate(asm2.split('\n')) if l.strip() == '_C_test:')
+    body2 = '\n'.join(asm2.split('\n')[s:s + 60])
+    check('all 4 unsigned ordering ops avoid signed branches',
+          'jge' not in body2 and ' jl ' not in body2 and ' jg ' not in body2 and 'jle' not in body2,
+          body2[:500])
+
+
 def test_goto():
     print('\n[parser: goto / labels]')
     src = """
@@ -270,6 +311,7 @@ if __name__ == '__main__':
     test_enum()
     test_strength_reduction()
     test_algebraic_identities()
+    test_unsigned_comparison()
     test_goto()
     test_typedef_still_works()
     test_examples_compile()

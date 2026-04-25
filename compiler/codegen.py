@@ -778,7 +778,7 @@ class Codegen:
             elif isinstance(nxt, IJumpIfNot) and nxt.cond == instr.dst:
                 # invert the jump condition
                 inv = {'jz': 'jnz', 'jnz': 'jz', 'jl': 'jge', 'jge': 'jl',
-                       'jg': 'jle', 'jle': 'jg'}
+                       'jg': 'jle', 'jle': 'jg', 'jc': 'jnc', 'jnc': 'jc'}
                 fused[i] = (i + 1, inv[self._CMP_JMP[instr.op]], nxt.target)
         return fused
 
@@ -962,9 +962,12 @@ class Codegen:
     # ── BinOp instruction selection ───────────────────────────────────────────
 
     _CMP_JMP = {
-        '==': 'jz',  '!=': 'jnz',
-        '<':  'jl',  '>':  'jg',
-        '<=': 'jle', '>=': 'jge',
+        '==':  'jz',  '!=':  'jnz',
+        '<':   'jl',  '>':   'jg',
+        '<=':  'jle', '>=':  'jge',
+        # Unsigned variants: after `sub r0, a, b`, carry is set when there was
+        # a borrow (a < b unsigned).  jc ↔ a <u b, jnc ↔ a >=u b.
+        '<u':  'jc',  '>=u': 'jnc',
     }
 
     def _gen_binop(self, instr: IBinOp):

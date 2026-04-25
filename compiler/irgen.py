@@ -619,8 +619,21 @@ class IRGen:
             self._emit(ICall(t, Global(helper), [left, right], loc))
             return t
 
+        op = expr.op
+        # Unsigned ordering compares: emit `<u` / `>=u` so codegen picks the
+        # carry-flag-based branch (jc / jnc) instead of the signed jl / jge.
+        # `>u` and `<=u` are normalized away by swapping operands so we only
+        # need two new IR opcodes.  `==` / `!=` are signedness-neutral.
+        if op in ('<', '<=', '>', '>='):
+            def _is_unsigned(t): return getattr(t, 'unsigned', False)
+            if _is_unsigned(expr.left.ctype) or _is_unsigned(expr.right.ctype):
+                if op == '<':   op = '<u'
+                elif op == '>=': op = '>=u'
+                elif op == '>':  op, left, right = '<u', right, left
+                elif op == '<=': op, left, right = '>=u', right, left
+
         t = self._tmp()
-        self._emit(IBinOp(t, expr.op, left, right, loc))
+        self._emit(IBinOp(t, op, left, right, loc))
         return t
 
     def _gen_short_circuit(self, expr: BinOp, is_or: bool) -> Operand:
@@ -740,9 +753,18 @@ class IRGen:
         t    = self._tmp()
         if base in ('/', '%'):
             unsigned = getattr(expr.ctype, 'unsigned', False)
-            helper = ('__builtin_udiv' if base == '/' else '__builtin_umod') if unsigned else \
-                     ('__builtin_sdiv' if base == '/' else '__builtin_smod')
-            self._emit(ICall(t, Global(helper), [cur, rhs], loc))
+            # Strength reduction (mirrors _gen_binop): unsigned x /= 2^n → x >>= n,
+            # unsigned x %= 2^n → x &= 2^n - 1
+            if unsigned and isinstance(rhs, ImmInt) and rhs.value > 0 and (rhs.value & (rhs.value - 1)) == 0:
+                n = rhs.value.bit_length() - 1
+                if base == '/':
+                    self._emit(IBinOp(t, '>>', cur, ImmInt(n), loc))
+                else:
+                    self._emit(IBinOp(t, '&', cur, ImmInt(rhs.value - 1), loc))
+            else:
+                helper = ('__builtin_udiv' if base == '/' else '__builtin_umod') if unsigned else \
+                         ('__builtin_sdiv' if base == '/' else '__builtin_smod')
+                self._emit(ICall(t, Global(helper), [cur, rhs], loc))
         else:
             self._emit(IBinOp(t, base, cur, rhs, loc))
         self._gen_store_to(t, expr.target)

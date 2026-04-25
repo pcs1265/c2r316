@@ -47,7 +47,10 @@ def _fold_binop(op: str, a: int, b: int) -> Optional[int]:
     if op == '>>': return (a >> (b & 15)) & _MASK
     if op == '==': return int(a == b)
     if op == '!=': return int(a != b)
-    # Comparisons are signed: reinterpret as two's-complement 16-bit values
+    # Unsigned ordering compares: use the masked values directly.
+    if op == '<u':  return int(a < b)
+    if op == '>=u': return int(a >= b)
+    # Signed ordering compares: reinterpret as two's-complement 16-bit values.
     sa = a if a < 0x8000 else a - 0x10000
     sb = b if b < 0x8000 else b - 0x10000
     if op == '<':  return int(sa < sb)
@@ -112,8 +115,8 @@ def _simplify_binop(instr: IBinOp) -> Instr:
         if op == '^':                             return ICopy(dst, ImmInt(0), loc)
         if op == '&':                             return ICopy(dst, left, loc)
         if op == '|':                             return ICopy(dst, left, loc)
-        if op in ('==', '<=', '>='):              return ICopy(dst, ImmInt(1), loc)
-        if op in ('!=', '<',  '>'):               return ICopy(dst, ImmInt(0), loc)
+        if op in ('==', '<=', '>=', '>=u'):       return ICopy(dst, ImmInt(1), loc)
+        if op in ('!=', '<',  '>',  '<u'):        return ICopy(dst, ImmInt(0), loc)
 
     return instr
 
