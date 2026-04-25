@@ -12,8 +12,6 @@
 #ifndef STDLIB_H
 #define STDLIB_H
 
-#include "runtime/divmod.h"
-
 /* ── memset / memcpy ────────────────────────────────────────────────────── */
 
 static void memset(char *dst, int val, int n) {

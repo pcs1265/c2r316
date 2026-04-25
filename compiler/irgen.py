@@ -582,15 +582,11 @@ class IRGen:
         left  = self._gen_expr(expr.left)
         right = self._gen_expr(expr.right)
 
-        # Division and modulo are lowered to runtime helper calls so that
-        # the IR call graph is complete (correct leaf detection, LR save, etc.)
         if expr.op in ('/', '%'):
             def _is_unsigned(t): return getattr(t, 'unsigned', False)
             unsigned = _is_unsigned(expr.left.ctype) or _is_unsigned(expr.right.ctype)
-            if expr.op == '/':
-                helper = '__udiv' if unsigned else '__sdiv'
-            else:
-                helper = '__umod' if unsigned else '__smod'
+            helper = ('__builtin_udiv' if expr.op == '/' else '__builtin_umod') if unsigned else \
+                     ('__builtin_sdiv' if expr.op == '/' else '__builtin_smod')
             t = self._tmp()
             self._emit(ICall(t, Global(helper), [left, right], loc))
             return t
@@ -716,10 +712,8 @@ class IRGen:
         t    = self._tmp()
         if base in ('/', '%'):
             unsigned = getattr(expr.ctype, 'unsigned', False)
-            if base == '/':
-                helper = '__udiv' if unsigned else '__sdiv'
-            else:
-                helper = '__umod' if unsigned else '__smod'
+            helper = ('__builtin_udiv' if base == '/' else '__builtin_umod') if unsigned else \
+                     ('__builtin_sdiv' if base == '/' else '__builtin_smod')
             self._emit(ICall(t, Global(helper), [cur, rhs], loc))
         else:
             self._emit(IBinOp(t, base, cur, rhs, loc))

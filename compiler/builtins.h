@@ -1,16 +1,19 @@
 /*
- * divmod.h — integer division/modulo helpers for the R316 C compiler
+ * builtins.h — compiler built-in helpers for the R316 C compiler
  *
- * __udiv/__umod/__sdiv/__smod are emitted by the compiler for / and %
- * expressions.  Included by stdio.h and stdlib.h so they are available
- * whenever either standard header is in use.  Subject to DCE — only
- * the helpers actually called survive into the final binary.
+ * Auto-prepended to every compilation unit by compiler.py.
+ * Do not #include manually.
+ *
+ * All symbols use the __builtin_ prefix (compiler-owned namespace).
+ * Unused helpers are eliminated by DCE.
  */
 
-#ifndef DIVMOD_H
-#define DIVMOD_H
+#ifndef BUILTINS_H
+#define BUILTINS_H
 
-static unsigned int __udiv(unsigned int dividend, unsigned int divisor) {
+/* ── Integer division / modulo ──────────────────────────────────────────── */
+
+static unsigned int __builtin_udiv(unsigned int dividend, unsigned int divisor) {
     unsigned int res;
     asm(
         "mov r10, 0\n"
@@ -31,7 +34,7 @@ static unsigned int __udiv(unsigned int dividend, unsigned int divisor) {
     return res;
 }
 
-static unsigned int __umod(unsigned int dividend, unsigned int divisor) {
+static unsigned int __builtin_umod(unsigned int dividend, unsigned int divisor) {
     unsigned int res;
     asm(
         "mov r10, 0\n"
@@ -51,7 +54,7 @@ static unsigned int __umod(unsigned int dividend, unsigned int divisor) {
     return res;
 }
 
-static int __sdiv(int dividend, int divisor) {
+static int __builtin_sdiv(int dividend, int divisor) {
     int neg;
     unsigned int udividend;
     unsigned int udivisor;
@@ -67,14 +70,14 @@ static int __sdiv(int dividend, int divisor) {
     }
     udividend = dividend;
     udivisor = divisor;
-    uresult = __udiv(udividend, udivisor);
+    uresult = __builtin_udiv(udividend, udivisor);
     if (neg) {
         return 0 - uresult;
     }
     return uresult;
 }
 
-static int __smod(int dividend, int divisor) {
+static int __builtin_smod(int dividend, int divisor) {
     int neg;
     unsigned int udividend;
     unsigned int udivisor;
@@ -89,11 +92,11 @@ static int __smod(int dividend, int divisor) {
     }
     udividend = dividend;
     udivisor = divisor;
-    uresult = __umod(udividend, udivisor);
+    uresult = __builtin_umod(udividend, udivisor);
     if (neg) {
         return 0 - uresult;
     }
     return uresult;
 }
 
-#endif /* DIVMOD_H */
+#endif /* BUILTINS_H */

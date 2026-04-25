@@ -7,15 +7,26 @@ int fail_count;
 
 void check(char *name, int got, int expected) {
     if (got == expected) {
+        print_str(name); puts(": PASS");
+        pass_count = pass_count + 1;
+    } else {
+        print_str(name); print_str(": FAIL got=");
+        print_int(got); print_str(" exp="); print_int(expected); putchar(10);
+        fail_count = fail_count + 1;
+    }
+}
+
+void check_u(char *name, unsigned int got, unsigned int expected) {
+    if (got == expected) {
         print_str(name);
         puts(": PASS");
         pass_count = pass_count + 1;
     } else {
         print_str(name);
         print_str(": FAIL got=");
-        print_int(got);
+        print_uint(got);
         print_str(" exp=");
-        print_int(expected);
+        print_uint(expected);
         putchar(10);
         fail_count = fail_count + 1;
     }
@@ -49,13 +60,14 @@ int main(void) {
     check("32767 / 2", 32767 / 2, 16383);
     check("32767 % 2", 32767 % 2, 1);
 
-    /* Unsigned-like behavior (R316 ints are effectively unsigned in many contexts) */
-    /* 65535 is 0xFFFF */
-    check("65535 / 1", 65535 / 1, 65535);
-    check("65535 / 2", 65535 / 2, 32767);
-    check("65535 % 2", 65535 % 2, 1);
-    check("65535 / 256", 65535 / 256, 255);
-    check("65535 % 256", 65535 % 256, 255);
+    /* Unsigned division (0xFFFF = 65535) */
+    unsigned int u;
+    u = 65535;
+    check_u("65535u / 1",   u / 1,   65535);
+    check_u("65535u / 2",   u / 2,   32767);
+    check_u("65535u % 2",   u % 2,   1);
+    check_u("65535u / 256", u / 256, 255);
+    check_u("65535u % 256", u % 256, 255);
 
     /* Power of 2 */
     check("1024 / 2", 1024 / 2, 512);
