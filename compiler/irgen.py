@@ -46,6 +46,13 @@ class IRGen:
         self._label_cnt += 1
         return f'._ir_{prefix}_{self._label_cnt}'
 
+    def _user_label(self, name: str) -> str:
+        """Mangle a user-written label to avoid clashes with compiler-generated ones.
+
+        User labels are local to a function and are emitted in the output ASM
+        as local labels (leading dot)."""
+        return f'._user_{name}'
+
     def _loc(self, node: Node):
         line = getattr(node, 'line', None)
         if not line:
@@ -292,6 +299,13 @@ class IRGen:
             if not self._cont_stack:
                 raise IRGenError("continue outside loop")
             self._emit(IJump(self._cont_stack[-1], self._loc(stmt)))
+
+        elif isinstance(stmt, GotoStmt):
+            self._emit(IJump(self._user_label(stmt.label), self._loc(stmt)))
+
+        elif isinstance(stmt, LabelStmt):
+            self._emit(ILabel(self._user_label(stmt.label), self._loc(stmt)))
+            self._gen_stmt(stmt.body)
 
         elif isinstance(stmt, AsmStmt):
             srcs = [self._gen_expr(e) for e in stmt.inputs]
@@ -585,6 +599,20 @@ class IRGen:
         if expr.op in ('/', '%'):
             def _is_unsigned(t): return getattr(t, 'unsigned', False)
             unsigned = _is_unsigned(expr.left.ctype) or _is_unsigned(expr.right.ctype)
+            # Strength reduction: unsigned division/modulo by a power-of-two constant
+            #   x / 2^n  →  x >> n
+            #   x % 2^n  →  x & (2^n - 1)
+            # Only safe for unsigned (signed semantics around negative dividends differ).
+            if unsigned and isinstance(right, ImmInt) and right.value > 0:
+                v = right.value
+                if (v & (v - 1)) == 0:
+                    n = v.bit_length() - 1
+                    t = self._tmp()
+                    if expr.op == '/':
+                        self._emit(IBinOp(t, '>>', left, ImmInt(n), loc))
+                    else:
+                        self._emit(IBinOp(t, '&', left, ImmInt(v - 1), loc))
+                    return t
             helper = ('__builtin_udiv' if expr.op == '/' else '__builtin_umod') if unsigned else \
                      ('__builtin_sdiv' if expr.op == '/' else '__builtin_smod')
             t = self._tmp()

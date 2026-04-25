@@ -407,6 +407,18 @@ class Parser:
             self._eat(TK.SEMICOLON)
             return self._stamp(ContinueStmt(), tok)
 
+        if self._try_eat(TK.GOTO):
+            name = self._eat(TK.IDENT).value
+            self._eat(TK.SEMICOLON)
+            return self._stamp(GotoStmt(name), tok)
+
+        # labeled statement: IDENT ':' stmt
+        if self._at(TK.IDENT) and self._peek().kind == TK.COLON:
+            name = self._eat(TK.IDENT).value
+            self._eat(TK.COLON)
+            inner = self._parse_stmt()
+            return self._stamp(LabelStmt(name, inner), tok)
+
         if self._at(TK.ASM):
             return self._stamp(self._parse_asm(), tok)
 

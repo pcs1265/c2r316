@@ -11,6 +11,7 @@
 - `va_list` (as `int*` alias)
 - `enum` (with optional tag, optional initializers — auto-incrementing int constants)
 - `typedef` (simple aliases, function-pointer typedefs)
+- `goto` and labels (label names are mangled to `._user_<name>` in the asm)
 
 ### Declarations
 - Global and local variable declarations with optional initializers
@@ -61,6 +62,9 @@
 
 ### Optimizations
 - Constant folding + copy propagation (`compiler/fold.py`)
+- Strength reduction: `x * 2^n` → `x << n`; unsigned `x / 2^n` → `x >> n`; unsigned `x % 2^n` → `x & (2^n - 1)`
+- Algebraic identities: `x & 0`, `x & 0xFFFF`, `x | 0`, `x | 0xFFFF`, `x ^ 0`; self-ops on identical Temps (`t - t`, `t ^ t`, `t == t`, etc.)
+- Unary constant folding for `-` and `~`
 - Dead code elimination + dead function elimination (`compiler/dce.py`)
 - Linear-scan register allocator (`compiler/regalloc.py`): Temps → r10–r18 (caller-saved) and r19–r29 (call-crossing, callee-saved)
 - Compare-branch fusion: `t = a < b; if t goto L` → `sub r0,a,b; jl L`
@@ -90,7 +94,6 @@
 | `short`, `signed`, `const`, `volatile`, `register` | No lexer tokens |
 | `float`, `double` | No support at any level |
 | `switch` / `case` / `default` | No keyword tokens, no parse support |
-| `goto` / labels | No support |
 | Multi-dimensional arrays | `int a[3][4]` is not parsed |
 | Struct/union pass-by-value | Hidden pointer not generated |
 | Function pointer declarator syntax | Implemented — `int (*fp)(int)` parsed in params, locals, globals |

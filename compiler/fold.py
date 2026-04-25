@@ -68,28 +68,52 @@ def _simplify_binop(instr: IBinOp) -> Instr:
         if v is not None:
             return ICopy(dst, ImmInt(v), loc)
 
-    # Identity / absorbing rules
+    # Identity / absorbing rules — right-hand constant
     if isinstance(right, ImmInt):
-        if op == '+' and right.value == 0:
-            return ICopy(dst, left, loc)
-        if op == '-' and right.value == 0:
-            return ICopy(dst, left, loc)
-        if op == '*' and right.value == 1:
-            return ICopy(dst, left, loc)
-        if op == '*' and right.value == 0:
-            return ICopy(dst, ImmInt(0), loc)
-        if op == '<<' and right.value == 0:
-            return ICopy(dst, left, loc)
-        if op == '>>' and right.value == 0:
-            return ICopy(dst, left, loc)
+        rv = right.value & _MASK
+        if op == '+' and rv == 0:                 return ICopy(dst, left, loc)
+        if op == '-' and rv == 0:                 return ICopy(dst, left, loc)
+        if op == '*' and rv == 1:                 return ICopy(dst, left, loc)
+        if op == '*' and rv == 0:                 return ICopy(dst, ImmInt(0), loc)
+        if op == '<<' and rv == 0:                return ICopy(dst, left, loc)
+        if op == '>>' and rv == 0:                return ICopy(dst, left, loc)
+        if op == '&' and rv == 0:                 return ICopy(dst, ImmInt(0), loc)
+        if op == '&' and rv == _MASK:             return ICopy(dst, left, loc)
+        if op == '|' and rv == 0:                 return ICopy(dst, left, loc)
+        if op == '|' and rv == _MASK:             return ICopy(dst, ImmInt(_MASK), loc)
+        if op == '^' and rv == 0:                 return ICopy(dst, left, loc)
+        # Strength reduction: x * 2^n → x << n  (works for both signed and unsigned)
+        if op == '*' and rv > 0 and (rv & (rv - 1)) == 0:
+            n = rv.bit_length() - 1
+            return IBinOp(dst, '<<', left, ImmInt(n), loc)
 
+    # Identity / absorbing rules — left-hand constant
     if isinstance(left, ImmInt):
-        if op == '+' and left.value == 0:
-            return ICopy(dst, right, loc)
-        if op == '*' and left.value == 1:
-            return ICopy(dst, right, loc)
-        if op == '*' and left.value == 0:
-            return ICopy(dst, ImmInt(0), loc)
+        lv = left.value & _MASK
+        if op == '+' and lv == 0:                 return ICopy(dst, right, loc)
+        if op == '*' and lv == 1:                 return ICopy(dst, right, loc)
+        if op == '*' and lv == 0:                 return ICopy(dst, ImmInt(0), loc)
+        if op == '&' and lv == 0:                 return ICopy(dst, ImmInt(0), loc)
+        if op == '&' and lv == _MASK:             return ICopy(dst, right, loc)
+        if op == '|' and lv == 0:                 return ICopy(dst, right, loc)
+        if op == '|' and lv == _MASK:             return ICopy(dst, ImmInt(_MASK), loc)
+        if op == '^' and lv == 0:                 return ICopy(dst, right, loc)
+        # 0 - x  →  -x  (express as 0 ^ ... is not equivalent; leave as-is unless negation IR exists)
+        if op == '*' and lv > 0 and (lv & (lv - 1)) == 0:
+            n = lv.bit_length() - 1
+            return IBinOp(dst, '<<', right, ImmInt(n), loc)
+
+    # Self-operations on identical Temps (post copy-propagation: same SSA temp).
+    # Note: only safe if neither operand has observable side effects — Temps satisfy
+    # this by construction (pure SSA values).  Vars/Globals could change between
+    # reads if there's a call in between, so restrict to Temps.
+    if isinstance(left, Temp) and isinstance(right, Temp) and left.id == right.id:
+        if op == '-':                             return ICopy(dst, ImmInt(0), loc)
+        if op == '^':                             return ICopy(dst, ImmInt(0), loc)
+        if op == '&':                             return ICopy(dst, left, loc)
+        if op == '|':                             return ICopy(dst, left, loc)
+        if op in ('==', '<=', '>='):              return ICopy(dst, ImmInt(1), loc)
+        if op in ('!=', '<',  '>'):               return ICopy(dst, ImmInt(0), loc)
 
     return instr
 
@@ -166,8 +190,12 @@ def _fold_function(fn: IRFunction) -> None:
     for i, instr in enumerate(instrs):
         if isinstance(instr, IBinOp):
             instrs[i] = _simplify_binop(instr)
-        elif isinstance(instr, IUnaryOp) and instr.op == '-' and isinstance(instr.src, ImmInt):
-            instrs[i] = ICopy(instr.dst, ImmInt((-instr.src.value) & _MASK), instr.loc)
+        elif isinstance(instr, IUnaryOp) and isinstance(instr.src, ImmInt):
+            v = instr.src.value & _MASK
+            if instr.op == '-':
+                instrs[i] = ICopy(instr.dst, ImmInt((-v) & _MASK), instr.loc)
+            elif instr.op == '~':
+                instrs[i] = ICopy(instr.dst, ImmInt((~v) & _MASK), instr.loc)
 
 
 def _subst_instr(instr: Instr, addr_sub, val_sub) -> Instr:

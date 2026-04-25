@@ -168,6 +168,12 @@ class Analyzer:
         elif isinstance(stmt, (BreakStmt, ContinueStmt)):
             pass
 
+        elif isinstance(stmt, GotoStmt):
+            pass  # label resolution happens at irgen / asm-emit time
+
+        elif isinstance(stmt, LabelStmt):
+            self._analyze_stmt(stmt.body)
+
         elif isinstance(stmt, AsmStmt):
             for e in stmt.inputs:
                 self._analyze_expr(e)

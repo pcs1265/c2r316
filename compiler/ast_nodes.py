@@ -203,6 +203,15 @@ class ContinueStmt(Stmt):
     pass
 
 @dataclass
+class GotoStmt(Stmt):
+    label: str
+
+@dataclass
+class LabelStmt(Stmt):
+    label: str
+    body:  Stmt
+
+@dataclass
 class DeclStmt(Stmt):
     decl: VarDecl
 

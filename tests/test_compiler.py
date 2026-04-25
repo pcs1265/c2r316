@@ -156,6 +156,95 @@ int main() { return A + B; }
     check('anonymous enum compiles', isinstance(asm2, str) and len(asm2) > 0)
 
 
+def test_strength_reduction():
+    """Verify * by power-of-2 → <<, unsigned / and % by power-of-2 → >> and &."""
+    print('\n[opt: strength reduction]')
+
+    def _ir_post(src):
+        # Run the pipeline up to post-opt and capture stderr IR dump.
+        import io, contextlib
+        spec_path = os.path.join(ROOT, 'compiler.py')
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('c2r316_main', spec_path)
+        mod  = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            try:
+                mod.compile_c(src, src_name='<t>', dump_ir_post=True, stop_after='opt')
+            except SystemExit:
+                pass
+        return buf.getvalue()
+
+    src = """
+int test(unsigned int x) { return x * 8 + x / 16 + x % 4; }
+int sgn(int y) { return y * 4; }
+int main() { return test(10) + sgn(3); }
+"""
+    ir = _ir_post(src)
+    check('x * 8 → << 3 (unsigned)', '<< 3' in ir, ir[:400])
+    check('x / 16 → >> 4 (unsigned)', '>> 4' in ir, ir[:400])
+    check('x % 4 → & 3 (unsigned)', '& 3' in ir, ir[:400])
+    check('y * 4 → << 2 (signed)', '<< 2' in ir, ir[:400])
+
+    # Self-op identities: t = y - y; should fold to 0 in IR
+    src2 = """
+int main() {
+    int y = 5;
+    int a = y - y;
+    int b = y ^ y;
+    return a + b;
+}
+"""
+    ir2 = _ir_post(src2)
+    # The store-of-computed-zero pattern shows that y-y and y^y were folded.
+    # Generous check: count the literal '= 0' appearances should be at least 2.
+    check('y - y / y ^ y fold to 0', ir2.count('= 0') >= 2, ir2[:400])
+
+
+def test_algebraic_identities():
+    print('\n[opt: algebraic identities]')
+
+    def _asm(src):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+        mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        return mod.compile_c(src, src_name='<t>')
+
+    # x & 0xFFFF, x | 0, x ^ 0 should disappear (no-op)
+    src = """
+int test(int x) { return (x & 0xFFFF) | (x ^ 0); }
+int main() { return test(7); }
+"""
+    asm = _asm(src)
+    check('algebraic identities compile', isinstance(asm, str) and len(asm) > 0)
+
+
+def test_goto():
+    print('\n[parser: goto / labels]')
+    src = """
+int sum_to(int n) {
+    int s = 0;
+    int i = 0;
+loop:
+    if (i > n) goto done;
+    s = s + i;
+    i = i + 1;
+    goto loop;
+done:
+    return s;
+}
+int main() { return sum_to(10); }
+"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    asm = mod.compile_c(src, src_name='<t>')
+    check('goto compiles', isinstance(asm, str) and len(asm) > 0)
+    check('user labels are mangled', '._user_loop' in asm and '._user_done' in asm,
+          'expected ._user_loop and ._user_done in asm')
+
+
 def test_typedef_still_works():
     print('\n[parser: typedef regression]')
     src = """
@@ -179,6 +268,9 @@ if __name__ == '__main__':
     test_shift_assign()
     test_sizeof()
     test_enum()
+    test_strength_reduction()
+    test_algebraic_identities()
+    test_goto()
     test_typedef_still_works()
     test_examples_compile()
     print(f'\n=== {PASS} passed, {FAIL} failed ===')

@@ -36,6 +36,7 @@ class TK(Enum):
     ASM        = auto()
     SIZEOF     = auto()
     ENUM       = auto()
+    GOTO       = auto()
 
     # operators
     PLUS       = auto()   # +
@@ -113,6 +114,7 @@ KEYWORDS = {
     '__asm__':  TK.ASM,
     'sizeof':   TK.SIZEOF,
     'enum':     TK.ENUM,
+    'goto':     TK.GOTO,
 }
 
 
