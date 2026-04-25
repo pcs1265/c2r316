@@ -1,60 +1,16 @@
 /*
  * stdlib.h — C standard library for the R316 C compiler
  *
- * Auto-prepended to every compilation unit by compiler.py.
- * Do not #include manually.
+ * Provides memory, string, and division utilities.
+ * For I/O functions (printf, puts, etc.) include runtime/stdio.h.
  *
- * Functions kept in runtime.asm (called by compiler internals):
- *   __udiv, __umod      — emitted by codegen for / and %
+ * Functions kept in runtime.asm:
  *   __stack_init        — boot: detect RAM size, set SP
  *   __term_init         — boot: configure terminal geometry/colour
  */
 
 #ifndef STDLIB_H
 #define STDLIB_H
-
-/* ── division helpers (called by compiler for / and %) ─────────────────── */
-
-static int __udiv(unsigned int dividend, unsigned int divisor) {
-    unsigned int res;
-    asm(
-        "mov r10, 0\n"
-        "mov r11, 16\n"
-        "._udiv_loop:\n"
-        "add %0, %0\n"
-        "adc r10, r10\n"
-        "sub r12, r10, %1\n"
-        "jc ._udiv_skip\n"
-        "mov r10, r12\n"
-        "or %0, 1\n"
-        "._udiv_skip:\n"
-        "sub r11, 1\n"
-        "jnz ._udiv_loop\n"
-        "st %0, %2"
-        : "r"(dividend), "r"(divisor), "r"(&res)
-    );
-    return res;
-}
-
-static int __umod(unsigned int dividend, unsigned int divisor) {
-    unsigned int res;
-    asm(
-        "mov r10, 0\n"
-        "mov r11, 16\n"
-        "._umod_loop:\n"
-        "add %0, %0\n"
-        "adc r10, r10\n"
-        "sub r12, r10, %1\n"
-        "jc ._umod_skip\n"
-        "mov r10, r12\n"
-        "._umod_skip:\n"
-        "sub r11, 1\n"
-        "jnz ._umod_loop\n"
-        "st r10, %2"
-        : "r"(dividend), "r"(divisor), "r"(&res)
-    );
-    return res;
-}
 
 /* ── memset / memcpy ────────────────────────────────────────────────────── */
 

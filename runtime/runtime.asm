@@ -115,6 +115,38 @@ __stack_init:
     add r30, 1
     jmp r31
 
+; ── __udiv(r1=dividend, r2=divisor) → r1=quotient ────────────────────────────
+__udiv:
+    mov r10, 0
+    mov r11, 16
+.__udiv_loop:
+    add r1, r1
+    adc r10, r10
+    sub r12, r10, r2
+    jc  .__udiv_skip
+    mov r10, r12
+    or  r1, 1
+.__udiv_skip:
+    sub r11, 1
+    jnz .__udiv_loop
+    jmp r31
+
+; ── __umod(r1=dividend, r2=divisor) → r1=remainder ───────────────────────────
+__umod:
+    mov r10, 0
+    mov r11, 16
+.__umod_loop:
+    add r1, r1
+    adc r10, r10
+    sub r12, r10, r2
+    jc  .__umod_skip
+    mov r10, r12
+.__umod_skip:
+    sub r11, 1
+    jnz .__umod_loop
+    mov r1, r10
+    jmp r31
+
 ; ── data ─────────────────────────────────────────────────────────────────────
 __heap_base:  dw 0
 __heap_limit: dw 0
