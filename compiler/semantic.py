@@ -286,6 +286,8 @@ class Analyzer:
             return expr.ctype
 
         if isinstance(expr, SizeOf):
+            if not isinstance(expr.target, CType):
+                self._analyze_expr(expr.target)
             expr.ctype = CInt()
             return expr.ctype
 

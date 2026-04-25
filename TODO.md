@@ -9,6 +9,8 @@
 - 1D arrays (with initializers, inferred size from `{}` or string literal)
 - `struct` and `union` (field access via `.` and `->`, nested, global, arrays of structs)
 - `va_list` (as `int*` alias)
+- `enum` (with optional tag, optional initializers — auto-incrementing int constants)
+- `typedef` (simple aliases, function-pointer typedefs)
 
 ### Declarations
 - Global and local variable declarations with optional initializers
@@ -28,13 +30,14 @@
 
 ### Expressions
 - Integer literals (decimal, hex `0x`, octal `0`-prefix; `u`/`l` suffixes accepted and ignored)
-- Character literals with escape sequences: `\n \t \r \0 \\ \' \"`
+- Character literals with escape sequences: `\n \t \r \0 \a \b \f \v \\ \' \" \? \xHH \ooo` (octal up to 3 digits)
 - String literals (adjacent concatenation, same escape sequences)
 - All arithmetic: `+ - * / %` (div/mod dispatched to `__udiv`/`__umod` runtime helpers)
 - All bitwise: `& | ^ ~ << >>`
 - All comparison: `== != < > <= >=`
 - Logical: `&& ||` (short-circuit evaluation)
-- Compound assignments: `+= -= *= /= %= &= |= ^=`
+- Compound assignments: `+= -= *= /= %= &= |= ^= <<= >>=`
+- `sizeof(type)` and `sizeof expr`
 - Pre/post `++` and `--`
 - Ternary `? :`
 - Cast `(type)expr`
@@ -75,13 +78,8 @@
 
 - **`long` (32-bit) arithmetic** — type parses and type-checks, but all arithmetic is 16-bit; multi-word codegen (`add+adc`, `sub+sbb`, `mul+mulh`, even-register alignment per ABI §9) is not implemented
 - **Integer literals > 16 bits** — truncated to 16 bits at IR generation; codegen does not emit multi-word constants
-- **`sizeof`** — `SizeOf` AST node and irgen handler exist, but the parser has no path to create it; `sizeof` is not a keyword token
-- **`typedef`** — keyword token exists, but `_parse_top_decl` has no `typedef` branch; `typedef struct { } Name;` and similar forms produce a parse error
 - **Struct/union pass-by-value** — hidden-pointer ABI (ABI §4) not generated; use explicit pointers
 - **`static` local variables** — `is_static` flag stored on `VarDecl` but irgen treats static locals identically to ordinary locals (no persistent storage across calls)
-- **`\x` hex escapes in char/string literals** — bug: `\x41` gives `ord('x')` = 120 instead of 65
-- **`<<=` and `>>=`** — no lexer tokens; compound shift-assignment silently fails to parse
-- **Signed division** — `__udiv`/`__umod` helpers are unsigned-only; signed division is not separately handled
 
 ---
 
@@ -91,12 +89,10 @@
 |---|---|
 | `short`, `signed`, `const`, `volatile`, `register` | No lexer tokens |
 | `float`, `double` | No support at any level |
-| `enum` | No lexer token, no parse support |
 | `switch` / `case` / `default` | No keyword tokens, no parse support |
 | `goto` / labels | No support |
 | Multi-dimensional arrays | `int a[3][4]` is not parsed |
 | Struct/union pass-by-value | Hidden pointer not generated |
-| `typedef` | Token exists; no parse branch |
 | Function pointer declarator syntax | Implemented — `int (*fp)(int)` parsed in params, locals, globals |
 | `__func__` / `__FUNCTION__` | C99 implicit per-function string variable; not yet implemented |
 | Designated initializers (`{.field = val}`) | Not supported |

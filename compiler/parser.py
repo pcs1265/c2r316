@@ -54,7 +54,7 @@ class Parser:
 
     # ── Type Parsing ─────────────────────────────────────────────────────────────
 
-    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION}
+    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION, TK.ENUM}
 
     # identifiers that act as type names
     _TYPE_IDENTS = {'__builtin_va_list'}  # __builtin_va_list is int* alias
@@ -75,12 +75,16 @@ class Parser:
         self._union_tags:  dict[str, CUnion]  = {}
         # typedef alias registry: name → CType
         self._typedefs: dict[str, CType] = {}
+        # enum constant registry: name → int value
+        self._enum_consts: dict[str, int] = {}
 
     def _parse_base_type(self) -> CType:
         if self._at(TK.STRUCT):
             return self._parse_struct_or_union(is_union=False)
         if self._at(TK.UNION):
             return self._parse_struct_or_union(is_union=True)
+        if self._at(TK.ENUM):
+            return self._parse_enum()
         # __builtin_va_list is an alias for int* (pointer to variadic spill area)
         if self._at(TK.IDENT) and self._cur().value == '__builtin_va_list':
             self._eat(TK.IDENT)
@@ -144,6 +148,30 @@ class Parser:
             rec.complete = True
 
         return rec
+
+    def _parse_enum(self) -> CType:
+        """Parse `enum [tag] [{ id [= const-expr], ... }]`. Treated as int."""
+        self._eat(TK.ENUM)
+        if self._at(TK.IDENT):
+            self._eat(TK.IDENT)  # tag — accepted but not stored
+        if self._try_eat(TK.LBRACE):
+            value = 0
+            while not self._at(TK.RBRACE, TK.EOF):
+                name = self._eat(TK.IDENT).value
+                if self._try_eat(TK.ASSIGN):
+                    sign = -1 if self._try_eat(TK.MINUS) else 1
+                    if self._at(TK.INT_LIT):
+                        value = sign * self._eat(TK.INT_LIT).value
+                    elif self._at(TK.IDENT) and self._cur().value in self._enum_consts:
+                        value = sign * self._enum_consts[self._eat(TK.IDENT).value]
+                    else:
+                        raise ParseError(f"Line {self._cur().line}: enum initializer must be an integer constant")
+                self._enum_consts[name] = value
+                value += 1
+                if not self._try_eat(TK.COMMA):
+                    break
+            self._eat(TK.RBRACE)
+        return CInt()
 
     def _parse_type(self) -> CType:
         base = self._parse_base_type()
@@ -245,10 +273,14 @@ class Parser:
         attr2 = self._parse_attribute()
         is_always_inline = (attr1 == 'always_inline' or attr2 == 'always_inline')
 
+        start_kind = self._cur().kind
         ret_type = self._parse_base_type()
-
-        # `struct foo { ... };` with no declarator — type definition only
-        if self._at(TK.SEMICOLON) and isinstance(ret_type, (CStruct, CUnion)):
+        # `struct foo { ... };` / `enum E { ... };` with no declarator — type definition only.
+        # Detect: the base type started with struct/union/enum AND ended on a `}` (had a body).
+        was_aggregate_def = (start_kind in (TK.STRUCT, TK.UNION, TK.ENUM)
+                             and self.pos > 0
+                             and self.tokens[self.pos - 1].kind == TK.RBRACE)
+        if self._at(TK.SEMICOLON) and (isinstance(ret_type, (CStruct, CUnion)) or was_aggregate_def):
             self._eat(TK.SEMICOLON)
             return []
 
@@ -527,6 +559,8 @@ class Parser:
             TK.AMP_ASSIGN:   '&=',
             TK.PIPE_ASSIGN:  '|=',
             TK.CARET_ASSIGN: '^=',
+            TK.LSHIFT_ASSIGN: '<<=',
+            TK.RSHIFT_ASSIGN: '>>=',
         }
         if self._cur().kind in op_map:
             op = op_map[self._eat(self._cur().kind).kind]
@@ -648,6 +682,17 @@ class Parser:
         if self._at(TK.DEC):
             self._eat(TK.DEC)
             return UnaryOp('--pre', self._parse_unary())
+        if self._at(TK.SIZEOF):
+            self._eat(TK.SIZEOF)
+            # sizeof(type)  vs  sizeof expr
+            if self._at(TK.LPAREN) and (self._peek().kind in self.TYPE_STARTS or
+                    (self._peek().kind == TK.IDENT and (self._peek().value in self._TYPE_IDENTS
+                                                         or self._peek().value in self._typedefs))):
+                self._eat(TK.LPAREN)
+                t = self._parse_type()
+                self._eat(TK.RPAREN)
+                return SizeOf(t)
+            return SizeOf(self._parse_unary())
         # cast: (type)expr
         if self._at(TK.LPAREN) and (self._peek().kind in self.TYPE_STARTS or
                 (self._peek().kind == TK.IDENT and (self._peek().value in self._TYPE_IDENTS
@@ -720,6 +765,9 @@ class Parser:
                 arg_type = self._parse_type()
                 self._eat(TK.RPAREN)
                 return VaArg(ap, arg_type)
+            # enum constant: substitute integer literal at parse time
+            if tok.value in self._enum_consts:
+                return IntLit(self._enum_consts[tok.value])
             return Ident(tok.value, line=tok.line, filename=tok.filename)
 
         if tok.kind == TK.LPAREN:

@@ -34,6 +34,8 @@ class TK(Enum):
     EXTERN     = auto()
     STATIC     = auto()
     ASM        = auto()
+    SIZEOF     = auto()
+    ENUM       = auto()
 
     # operators
     PLUS       = auto()   # +
@@ -48,6 +50,8 @@ class TK(Enum):
     BANG       = auto()   # !
     LSHIFT     = auto()   # <<
     RSHIFT     = auto()   # >>
+    LSHIFT_ASSIGN = auto() # <<=
+    RSHIFT_ASSIGN = auto() # >>=
     AND        = auto()   # &&
     OR         = auto()   # ||
     EQ         = auto()   # ==
@@ -107,6 +111,8 @@ KEYWORDS = {
     'static':   TK.STATIC,
     'asm':      TK.ASM,
     '__asm__':  TK.ASM,
+    'sizeof':   TK.SIZEOF,
+    'enum':     TK.ENUM,
 }
 
 
@@ -210,16 +216,38 @@ class Lexer:
             self._advance()
         return int(self.src[start:self.pos].rstrip('uUlL') or '0', base)
 
+    _SIMPLE_ESC = {
+        'n': 10, 't': 9, 'r': 13, '0': 0,
+        'a': 7, 'b': 8, 'f': 12, 'v': 11,
+        '\\': ord('\\'), "'": ord("'"), '"': ord('"'), '?': ord('?'),
+    }
+
+    def _read_escape(self):
+        # Called with self.pos pointing at the '\\'.
+        self._advance()  # consume backslash
+        ch = self._cur()
+        if ch == 'x':
+            self._advance()
+            start = self.pos
+            while self.pos < len(self.src) and self._cur() in '0123456789abcdefABCDEF':
+                self._advance()
+            if self.pos == start:
+                raise LexError(f"Line {self.line}: empty hex escape")
+            return int(self.src[start:self.pos], 16) & 0xFF
+        if ch in '01234567':
+            # octal escape, up to 3 digits
+            start = self.pos
+            while self.pos < len(self.src) and (self.pos - start) < 3 and self._cur() in '01234567':
+                self._advance()
+            return int(self.src[start:self.pos], 8) & 0xFF
+        esc = self._advance()
+        return self._SIMPLE_ESC.get(esc, ord(esc))
+
     def _read_char(self):
         # after '
         self._advance()  # '
         if self._cur() == '\\':
-            self._advance()
-            esc = self._advance()
-            val = {
-                'n': 10, 't': 9, 'r': 13, '0': 0,
-                '\\': ord('\\'), "'": ord("'"), '"': ord('"'),
-            }.get(esc, ord(esc))
+            val = self._read_escape()
         else:
             val = ord(self._advance())
         if self._cur() != "'":
@@ -232,13 +260,7 @@ class Lexer:
         chars = []
         while self.pos < len(self.src) and self._cur() != '"':
             if self._cur() == '\\':
-                self._advance()
-                esc = self._advance()
-                val = {
-                    'n': 10, 't': 9, 'r': 13, '0': 0,
-                    '\\': ord('\\'), '"': ord('"'), "'": ord("'"),
-                }.get(esc, ord(esc))
-                chars.append(val)
+                chars.append(self._read_escape())
             else:
                 chars.append(ord(self._advance()))
         if self._cur() != '"':
@@ -291,10 +313,17 @@ class Lexer:
                 self.tokens.append(_tok(TK.STRING_LIT, val))
                 continue
 
-            # three-character: ellipsis
-            if ch == '.' and self._peek() == '.' and self._peek(2) == '.':
+            # three-character: ellipsis, shift-assigns
+            three = ch + self._peek() + self._peek(2)
+            three_map = {
+                '...': (TK.ELLIPSIS, '...'),
+                '<<=': (TK.LSHIFT_ASSIGN, '<<='),
+                '>>=': (TK.RSHIFT_ASSIGN, '>>='),
+            }
+            if three in three_map:
+                kind, value = three_map[three]
                 self._advance(); self._advance(); self._advance()
-                self.tokens.append(_tok(TK.ELLIPSIS, '...'))
+                self.tokens.append(_tok(kind, value))
                 continue
 
             # two-character operators first
