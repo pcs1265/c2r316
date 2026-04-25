@@ -83,7 +83,6 @@
 - **`long` (32-bit) arithmetic** — type parses and type-checks, but all arithmetic is 16-bit; multi-word codegen (`add+adc`, `sub+sbb`, `mul+mulh`, even-register alignment per ABI §9) is not implemented
 - **Integer literals > 16 bits** — truncated to 16 bits at IR generation; codegen does not emit multi-word constants
 - **Struct/union pass-by-value** — hidden-pointer ABI (ABI §4) not generated; use explicit pointers
-- **`static` local variables** — `is_static` flag stored on `VarDecl` but irgen treats static locals identically to ordinary locals (no persistent storage across calls)
 
 ---
 
@@ -93,7 +92,7 @@
 |---|---|
 | `short`, `signed`, `const`, `volatile`, `register` | No lexer tokens |
 | `float`, `double` | No support at any level |
-| `switch` / `case` / `default` | No keyword tokens, no parse support |
+| `switch` / `case` / `default` | Implemented — dispatch + fallthrough + break + default |
 | Multi-dimensional arrays | `int a[3][4]` is not parsed |
 | Struct/union pass-by-value | Hidden pointer not generated |
 | Function pointer declarator syntax | Implemented — `int (*fp)(int)` parsed in params, locals, globals |
