@@ -338,7 +338,7 @@ def test_print_int_signed():
 
     cases = [0, 1, 7, -1, -7, 42, -42, 100, -100, 255, -255, 32767]
     for n in cases:
-        src = f'#include "runtime/stdio.h"\nint main() {{ print_int({n}); return 0; }}\n'
+        src = f'#include <stdio.h>\nint main() {{ print_int({n}); return 0; }}\n'
         try:
             asm = mod.compile_c(src, src_name='<t>')
             ret, out = _emu_run_main(asm, max_cycles=2_000_000)

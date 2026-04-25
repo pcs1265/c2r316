@@ -8,8 +8,8 @@
  *   4. Multiple calls — verifies no label collision from inlining
  */
 
-#include "runtime/stdlib.h"
-#include "runtime/stdio.h"
+#include <stdlib.h>
+#include <stdio.h>
 
 int pass_count;
 int fail_count;

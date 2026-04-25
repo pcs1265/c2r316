@@ -1,6 +1,6 @@
 /* test_struct.c - self-validating tests for struct and union support */
 
-#include "runtime/stdio.h"
+#include <stdio.h>
 
 int pass_count;
 int fail_count;

@@ -1,4 +1,4 @@
-#include "runtime/stdio.h"
+#include <stdio.h>
 
 /*
  * Super complex mathematics test suite:

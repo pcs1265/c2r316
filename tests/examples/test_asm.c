@@ -11,8 +11,8 @@
  *   0x9FB5 : term_term    (character output, handles newline)
  */
 
-#include "runtime/stdlib.h"
-#include "runtime/stdio.h"
+#include <stdlib.h>
+#include <stdio.h>
 
 int pass_count;
 int fail_count;

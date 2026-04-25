@@ -46,7 +46,7 @@
  *   all tests passed
  */
 
-#include "runtime/stdio.h"
+#include <stdio.h>
 
 /* ── object macro ───────────────────────────────────────────────────────── */
 #define ANSWER 42

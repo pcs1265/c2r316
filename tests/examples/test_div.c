@@ -1,6 +1,6 @@
 /* test_div.c - Comprehensive division and modulo tests */
 
-#include "runtime/stdio.h"
+#include <stdio.h>
 
 int pass_count;
 int fail_count;

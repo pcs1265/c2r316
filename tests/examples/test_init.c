@@ -1,6 +1,6 @@
 /* test_init.c - self-validating tests for multi-declarations and array initializers */
 
-#include "runtime/stdio.h"
+#include <stdio.h>
 
 int pass_count;
 int fail_count;
