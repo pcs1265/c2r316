@@ -300,7 +300,8 @@ class Machine:
 
     SENTINEL_LR = 0xDEAD   # invalid PC: when jmp r31 lands here, we halt
 
-    def __init__(self, prog: Program, sp_init: int = 0x8000, max_cycles: int = 1_000_000):
+    def __init__(self, prog: Program, sp_init: int = 0x8000, max_cycles: int = 1_000_000,
+                 stdin: str = ''):
         self.prog = prog
         self.regs = [0] * 32
         self.regs[30] = sp_init        # sp
@@ -309,6 +310,8 @@ class Machine:
         self.mem: dict[int, int] = dict(prog.data)
         self.pc: int = 0
         self.stdout: list[int] = []
+        self.stdin: list[int] = [ord(c) for c in stdin]
+        self.stdin_pos: int = 0
         self.cycles = 0
         self.max_cycles = max_cycles
         self.halted = False
@@ -335,6 +338,12 @@ class Machine:
     # ── memory ─────────────────────────────────────────────────────────────
     def mem_read(self, addr: int) -> int:
         addr &= _MASK16
+        if addr == 0x9F80:  # terminal input
+            if self.stdin_pos < len(self.stdin):
+                ch = self.stdin[self.stdin_pos]
+                self.stdin_pos += 1
+                return ch
+            return 0  # no more input (keeps polling loop spinning → timeout)
         return self.mem.get(addr, 0) & _MASK16
 
     def mem_write(self, addr: int, value: int) -> None:
@@ -526,12 +535,12 @@ class Machine:
 
 # ── public helper ──────────────────────────────────────────────────────────
 
-def run_main(asm: str, max_cycles: int = 1_000_000) -> tuple[int, str]:
+def run_main(asm: str, max_cycles: int = 1_000_000, stdin: str = '') -> tuple[int, str]:
     """Compile output → (return_value_of_main, stdout). Starts at `_C_main:`."""
     prog = parse_asm(asm)
     if '_C_main' not in prog.labels:
         raise RuntimeError("no _C_main in asm")
-    m = Machine(prog, max_cycles=max_cycles)
+    m = Machine(prog, max_cycles=max_cycles, stdin=stdin)
     m.pc = prog.labels['_C_main']
     m.run()
     return m.regs[1] & _MASK16, m.stdout_str()
