@@ -270,7 +270,7 @@ def test_execution_smoke():
 
 
 def test_examples_run():
-    """Execute every tests/examples/test_*.c on the emulator and compare its
+    """Execute every tests/programs/test_*.c on the emulator and compare its
     full stdout against a captured golden file in tests/golden/.
 
     Why exact comparison instead of a substring predicate:
@@ -283,10 +283,10 @@ def test_examples_run():
         caught, not just whether a marker is present.
 
     Update flow: when a test legitimately changes (or you add a new
-    tests/examples/test_*.c), regenerate goldens with `python tests/gen_goldens.py`.
+    tests/programs/test_*.c), regenerate goldens with `python tests/gen_goldens.py`.
     """
     import re, importlib.util
-    print('\n[execution: examples/test_*.c on emulator]')
+    print('\n[execution: programs/test_*.c on emulator]')
     spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
     mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
@@ -295,7 +295,7 @@ def test_examples_run():
         return re.sub(r'file macro: .*', 'file macro: <PATH>', out)
 
     golden_dir = os.path.join(ROOT, 'tests', 'golden')
-    for path in sorted(glob.glob(os.path.join(THIS_DIR, 'examples', 'test_*.c'))):
+    for path in sorted(glob.glob(os.path.join(THIS_DIR, 'programs', 'test_*.c'))):
         rel  = os.path.relpath(path, ROOT)
         base = os.path.basename(path).replace('.c', '.txt')
         golden_path = os.path.join(golden_dir, base)
@@ -309,8 +309,10 @@ def test_examples_run():
         try:
             with open(path, encoding='utf-8') as f:
                 src = f.read()
+            stdin_path = path.replace('.c', '.stdin')
+            stdin = open(stdin_path, encoding='utf-8').read() if os.path.isfile(stdin_path) else ''
             asm = mod.compile_c(src, src_name=rel, src_path=path)
-            ret, out = _emu_run_main(asm, max_cycles=20_000_000)
+            ret, out = _emu_run_main(asm, max_cycles=20_000_000, stdin=stdin)
             actual = _normalize(out)
             if actual == expected:
                 check(f'execute {rel}', True)
@@ -556,6 +558,81 @@ int main() { return LIMIT; }
     check('const global compiles', isinstance(asm2, str) and len(asm2) > 0)
 
 
+def test_scanf():
+    """End-to-end: scanf reads integers/chars/strings from a simulated stdin."""
+    print('\n[execution: scanf]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    def run(src, stdin='', max_cycles=2_000_000):
+        asm = mod.compile_c(src, src_name='<t>')
+        return _emu_run_main(asm, max_cycles=max_cycles, stdin=stdin)
+
+    # %d positive
+    src = '#include <stdio.h>\nint main() { int x; scanf("%d", &x); return x; }\n'
+    try:
+        ret, _ = run(src, stdin='42\n')
+        check('scanf %d positive', ret == 42)
+    except Exception as e:
+        check('scanf %d positive', False, str(e))
+
+    # %d negative
+    src = '#include <stdio.h>\nint main() { int x; scanf("%d", &x); return x; }\n'
+    try:
+        ret, _ = run(src, stdin='-7\n')
+        check('scanf %d negative', ret == (0x10000 - 7))
+    except Exception as e:
+        check('scanf %d negative', False, str(e))
+
+    # %x hex
+    src = '#include <stdio.h>\nint main() { unsigned x; scanf("%x", &x); return x; }\n'
+    try:
+        ret, _ = run(src, stdin='ff\n')
+        check('scanf %x', ret == 0xFF)
+    except Exception as e:
+        check('scanf %x', False, str(e))
+
+    # %c character
+    src = '#include <stdio.h>\nint main() { int c; scanf("%c", &c); return c; }\n'
+    try:
+        ret, _ = run(src, stdin='A')
+        check('scanf %c', ret == ord('A'))
+    except Exception as e:
+        check('scanf %c', False, str(e))
+
+    # %s string
+    src = r"""
+#include <stdio.h>
+int main() {
+    char s[16];
+    scanf("%s", s);
+    puts(s);
+    return 0;
+}
+"""
+    try:
+        _, out = run(src, stdin='hello\n')
+        check('scanf %s', out.strip() == 'hello')
+    except Exception as e:
+        check('scanf %s', False, str(e))
+
+    # multiple items, return value
+    src = r"""
+#include <stdio.h>
+int main() {
+    int a; int b;
+    int r = scanf("%d %d", &a, &b);
+    return r * 100 + a + b;
+}
+"""
+    try:
+        ret, _ = run(src, stdin='3 4\n')
+        check('scanf multi', ret == 2 * 100 + 3 + 4)
+    except Exception as e:
+        check('scanf multi', False, str(e))
+
+
 if __name__ == '__main__':
     test_hex_escape()
     test_octal_escape()
@@ -574,6 +651,7 @@ if __name__ == '__main__':
     test_switch()
     test_typedef_still_works()
     test_const_qualifier()
+    test_scanf()
     test_examples_compile()
     print(f'\n=== {PASS} passed, {FAIL} failed ===')
     if FAIL:

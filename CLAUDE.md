@@ -24,7 +24,8 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 - `runtime/runtime.asm` — Standard library (putchar, getchar, puts, print_int, etc.)
 - `tests/test_compiler.py` — Test harness (lexer/parser checks + emulator-based execution tests)
 - `tests/r316_emu.py` — In-process Python R316 emulator: parses generated asm, executes it, captures stdout via terminal MMIO. Used by execution tests.
-- `tests/golden/` — Captured stdout for each `examples/test_*.c`. Execution tests compare emulated output byte-for-byte against these.
+- `tests/programs/` — Test C programs (`test_*.c`). Each may have a `.stdin` sidecar for programs that read input.
+- `tests/golden/` — Captured stdout for each `tests/programs/test_*.c`. Execution tests compare emulated output byte-for-byte against these.
 - `tests/gen_goldens.py` — Regenerates golden files. Run after intentional output-changing changes — never just to make a failing test pass.
 
 ## Key Documents
@@ -44,7 +45,7 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 ## Working Rules
 
 - **Analyze in small steps**: When analyzing code or assembly output, break the analysis into small, focused steps. Read or examine one section at a time, confirm each step before proceeding to the next. Do NOT attempt to analyze everything in a single pass — this causes errors and omissions.
-- **Run the test suite after compiler changes**: `python tests/test_compiler.py` from the repo root. It smoke-compiles every `examples/*.c` plus targeted feature checks. Add a new check there when adding a language feature or fixing a bug.
+- **Run the test suite after compiler changes**: `python tests/test_compiler.py` from the repo root. It smoke-compiles every `tests/programs/test_*.c` plus targeted feature checks. Add a new check there when adding a language feature or fixing a bug.
 - **Check `TODO.md` before claiming a feature is missing**: the TODO file occasionally lags reality (e.g. `typedef` was implemented well before its TODO entry was removed). Grep the source first.
 - **Don't bypass the `_C_` symbol prefix**: see Symbol Naming Convention. Runtime helpers are the only unprefixed user-callable names.
 
@@ -74,11 +75,11 @@ All user-defined C symbols (functions and global variables) are emitted with a `
 
 1. **Lexer / parser feature tests** — small C snippets compiled to ASM, checked with substring or AST assertions. Catches token-level and parser-level bugs.
 2. **Targeted execution tests** (`test_execution_smoke`, `test_print_int_signed`) — small programs run through the in-process R316 emulator (`tests/r316_emu.py`), return value and stdout asserted. Catches codegen and IR-optimization bugs.
-3. **Golden execution tests** (`test_examples_run`) — every `examples/test_*.c` is compiled, executed in the emulator, and its **full stdout** is compared byte-for-byte against `tests/golden/<name>.txt`. Catches anything the C-level `check()` could lie about (a miscompiled comparator that prints PASS for wrong values), as well as hangs (output truncates before the golden's final bytes), reordering, dropped lines, and any character-level drift.
+3. **Golden execution tests** (`test_examples_run`) — every `tests/programs/test_*.c` is compiled, executed in the emulator, and its **full stdout** is compared byte-for-byte against `tests/golden/<name>.txt`. Catches anything the C-level `check()` could lie about (a miscompiled comparator that prints PASS for wrong values), as well as hangs (output truncates before the golden's final bytes), reordering, dropped lines, and any character-level drift.
 
 ### Adding tests
 
-- Adding a new `examples/test_*.c`:
+- Adding a new `tests/programs/test_*.c`:
   1. Write it (use the standard `check(name, got, expected)` + `PASS:`/`FAIL:` summary pattern, ending with `puts("=== done ===");`).
   2. Run `python tests/gen_goldens.py` to capture its stdout into `tests/golden/`.
   3. Eyeball the golden — confirm the output is what you expect.
