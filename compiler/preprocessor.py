@@ -394,7 +394,7 @@ def _expand_tokens(tokens: list, defines: dict, expanding: set) -> list:
         # function-like macro: scan for '('
         j = i + 1
         # skip whitespace tokens
-        while j < len(tokens) and tokens[j] == (_TOK_OTHER, ' '):
+        while j < len(tokens) and tokens[j][0] == _TOK_OTHER and tokens[j][1].strip() == '':
             j += 1
         if j >= len(tokens) or tokens[j] != (_TOK_OTHER, '('):
             # no '(' — not a macro call, emit as-is
