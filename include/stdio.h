@@ -15,7 +15,7 @@
 #ifndef STDIO_H
 #define STDIO_H
 
-#include "runtime/stdarg.h"
+#include <stdarg.h>
 
 /* ── MMIO primitives ────────────────────────────────────────────────────── */
 

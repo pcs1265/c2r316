@@ -219,7 +219,7 @@ def _process(src: str, filename: str, inc_dirs: list,
             new_stack = include_stack | {real_inc}
             inc_src = open(inc_path, encoding='utf-8').read()
             inc_file_dir = os.path.dirname(os.path.abspath(inc_path))
-            child_dirs = [inc_file_dir] + [d for d in inc_dirs if d != inc_file_dir]
+            child_dirs = [inc_file_dir] + inc_dirs[1:]
             expanded = _process(inc_src, inc_path, child_dirs, defines, new_stack)
             out.append(f'#line 1 "{inc_path}"')
             out.append(expanded)

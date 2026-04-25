@@ -76,9 +76,8 @@ def compile_c(src: str, src_name: str = '<stdin>',
 
     # 1. preprocessing
     _v('Preprocessing ...')
-    # Always search the compiler's own root so #include "runtime/stdlib.h" works
     _root = os.path.dirname(os.path.abspath(__file__))
-    _inc_dirs = [_root] + (include_dirs or [])
+    _inc_dirs = [os.path.join(_root, 'include'), _root] + (include_dirs or [])
     # Auto-prepend compiler built-ins (division helpers, etc.)
     src = '#include "compiler/builtins.h"\n' + src
     try:
