@@ -535,6 +535,27 @@ int main() {
     check('typedef compiles', isinstance(asm, str) and len(asm) > 0)
 
 
+def test_const_qualifier():
+    print('\n[parser: const qualifier]')
+    src = """
+int main() {
+    const int x = 42;
+    const char *s = "hi";
+    int * const p = 0;
+    const unsigned int u = 7;
+    return x;
+}
+"""
+    asm = _compile_via_main(src)
+    check('const local vars compile', isinstance(asm, str) and len(asm) > 0)
+    src2 = """
+const int LIMIT = 10;
+int main() { return LIMIT; }
+"""
+    asm2 = _compile_via_main(src2)
+    check('const global compiles', isinstance(asm2, str) and len(asm2) > 0)
+
+
 if __name__ == '__main__':
     test_hex_escape()
     test_octal_escape()
@@ -552,6 +573,7 @@ if __name__ == '__main__':
     test_goto()
     test_switch()
     test_typedef_still_works()
+    test_const_qualifier()
     test_examples_compile()
     print(f'\n=== {PASS} passed, {FAIL} failed ===')
     if FAIL:

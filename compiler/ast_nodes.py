@@ -152,6 +152,7 @@ class VarDecl(Node):
     init: Optional['Expr']
     is_global: bool = False
     is_static: bool = False
+    is_const: bool = False
 
 
 # ── Statements ─────────────────────────────────────────────────────────────────────

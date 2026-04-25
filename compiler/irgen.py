@@ -39,6 +39,8 @@ class IRGen:
         # pending global entries from static locals (added in generate())
         self._pending_globals: List = []
         self._cur_func_name: str = ''
+        # const globals with scalar integer initializers: mangled_name → int value
+        self._const_globals: dict[str, int] = {}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -121,6 +123,10 @@ class IRGen:
                     self._strings.append((lbl, decl.init.chars))
                     init_vals = [lbl]
                 ir.globals.append((decl.name, words, init_vals))
+                # track scalar integer const globals for inline substitution
+                if (decl.is_const and isinstance(decl.init, (IntLit, CharLit))
+                        and not isinstance(decl.ctype, (CArray, CStruct, CUnion))):
+                    self._const_globals[decl.name] = decl.init.value
             elif isinstance(decl, FuncDecl) and decl.body is not None:
                 ir.functions.append(self._gen_func(decl))
                 # flush static locals registered during function generation
@@ -630,6 +636,12 @@ class IRGen:
         if name in self._params or name in self._locals:
             t = self._tmp()
             self._emit(ICopy(t, Var(name), loc))
+            return t
+
+        # const global with known integer value: inline as immediate
+        if name in self._const_globals:
+            t = self._tmp()
+            self._emit(ICopy(t, ImmInt(self._const_globals[name]), loc))
             return t
 
         # global: load via address

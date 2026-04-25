@@ -61,7 +61,7 @@ class Parser:
 
     # ── Type Parsing ─────────────────────────────────────────────────────────────
 
-    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION, TK.ENUM}
+    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION, TK.ENUM, TK.CONST}
 
     # identifiers that act as type names
     _TYPE_IDENTS = {'__builtin_va_list'}  # __builtin_va_list is int* alias
@@ -99,7 +99,11 @@ class Parser:
         # typedef alias
         if self._at(TK.IDENT) and self._cur().value in self._typedefs:
             return self._typedefs[self._eat(TK.IDENT).value]
+        while self._try_eat(TK.CONST):
+            pass
         unsigned = bool(self._try_eat(TK.UNSIGNED))
+        while self._try_eat(TK.CONST):
+            pass
         if self._try_eat(TK.INT):
             return CInt(unsigned)
         if self._try_eat(TK.LONG):
@@ -183,6 +187,8 @@ class Parser:
     def _parse_type(self) -> CType:
         base = self._parse_base_type()
         while self._try_eat(TK.STAR):
+            while self._try_eat(TK.CONST):
+                pass
             base = CPointer(base)
         return base
 
@@ -192,6 +198,8 @@ class Parser:
         # pointer modifiers
         stars = 0
         while self._try_eat(TK.STAR):
+            while self._try_eat(TK.CONST):
+                pass
             stars += 1
         # function pointer declarator: ret (*name)(params)
         if self._at(TK.LPAREN) and self._peek().kind == TK.STAR:
@@ -241,6 +249,8 @@ class Parser:
         self._eat(TK.TYPEDEF)
         ret = self._parse_base_type()
         while self._try_eat(TK.STAR):
+            while self._try_eat(TK.CONST):
+                pass
             ret = CPointer(ret)
         # function pointer typedef: typedef ret (*name)(params);
         if self._at(TK.LPAREN) and self._peek().kind == TK.STAR:
@@ -280,6 +290,7 @@ class Parser:
         attr2 = self._parse_attribute()
         is_always_inline = (attr1 == 'always_inline' or attr2 == 'always_inline')
 
+        is_const = self._at(TK.CONST)
         start_kind = self._cur().kind
         ret_type = self._parse_base_type()
         # `struct foo { ... };` / `enum E { ... };` with no declarator — type definition only.
@@ -293,6 +304,8 @@ class Parser:
 
         stars = 0
         while self._try_eat(TK.STAR):
+            while self._try_eat(TK.CONST):
+                pass
             stars += 1
         for _ in range(stars):
             ret_type = CPointer(ret_type)
@@ -329,7 +342,7 @@ class Parser:
                     init = self._parse_expr()
             if isinstance(vtype, CArray) and vtype.length is None and isinstance(init, InitList):
                 vtype = CArray(vtype.base, len(init.elems))
-            results.append(VarDecl(name, vtype, init, is_global=True, is_static=is_static))
+            results.append(VarDecl(name, vtype, init, is_global=True, is_static=is_static, is_const=is_const))
 
             while self._try_eat(TK.COMMA):
                 extra_name = self._eat(TK.IDENT).value

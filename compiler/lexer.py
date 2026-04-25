@@ -40,6 +40,7 @@ class TK(Enum):
     SWITCH     = auto()
     CASE       = auto()
     DEFAULT    = auto()
+    CONST      = auto()
 
     # operators
     PLUS       = auto()   # +
@@ -121,6 +122,7 @@ KEYWORDS = {
     'switch':   TK.SWITCH,
     'case':     TK.CASE,
     'default':  TK.DEFAULT,
+    'const':    TK.CONST,
 }
 
 
