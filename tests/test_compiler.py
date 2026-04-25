@@ -270,7 +270,7 @@ def test_execution_smoke():
 
 
 def test_examples_run():
-    """Execute every examples/test_*.c on the emulator and compare its
+    """Execute every tests/examples/test_*.c on the emulator and compare its
     full stdout against a captured golden file in tests/golden/.
 
     Why exact comparison instead of a substring predicate:
@@ -283,7 +283,7 @@ def test_examples_run():
         caught, not just whether a marker is present.
 
     Update flow: when a test legitimately changes (or you add a new
-    examples/test_*.c), regenerate goldens with `python tests/gen_goldens.py`.
+    tests/examples/test_*.c), regenerate goldens with `python tests/gen_goldens.py`.
     """
     import re, importlib.util
     print('\n[execution: examples/test_*.c on emulator]')
@@ -295,7 +295,7 @@ def test_examples_run():
         return re.sub(r'file macro: .*', 'file macro: <PATH>', out)
 
     golden_dir = os.path.join(ROOT, 'tests', 'golden')
-    for path in sorted(glob.glob(os.path.join(ROOT, 'examples', 'test_*.c'))):
+    for path in sorted(glob.glob(os.path.join(THIS_DIR, 'examples', 'test_*.c'))):
         rel  = os.path.relpath(path, ROOT)
         base = os.path.basename(path).replace('.c', '.txt')
         golden_path = os.path.join(golden_dir, base)

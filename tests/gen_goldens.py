@@ -1,10 +1,10 @@
-"""Regenerate tests/golden/test_*.txt from the current examples/test_*.c.
+"""Regenerate tests/golden/test_*.txt from the current tests/examples/test_*.c.
 
 Run from the repo root:
     python tests/gen_goldens.py
 
 Use this when:
-  - You add a new examples/test_*.c file.
+  - You add a new tests/examples/test_*.c file.
   - A legitimate code change updates a test's expected output.
   - The emulator gains support for new instructions and previously
     failing tests now produce known-good output.
@@ -39,7 +39,7 @@ def _normalize(out: str) -> str:
 
 def main() -> int:
     n = 0
-    for path in sorted(glob.glob(os.path.join(ROOT, 'examples', 'test_*.c'))):
+    for path in sorted(glob.glob(os.path.join(THIS_DIR, 'examples', 'test_*.c'))):
         base  = os.path.basename(path).replace('.c', '.txt')
         out_path = os.path.join(GOLDEN_DIR, base)
         with open(path, encoding='utf-8') as f:
