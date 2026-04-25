@@ -80,6 +80,7 @@
 
 ## Known Issues
 
+- **Short-circuit `&&` inlining bug** — when a `&&` expression is inlined into a larger expression context (e.g. inside a `while` condition after inlining), the short-circuit `jl`/`jge` skip does not zero the result register first. If the LHS comparison is false and skips the RHS, the result register still holds the LHS operand value (often non-zero), causing the combined boolean to appear true. Workaround: write helper predicates using explicit `if (c < x) return 0; if (c > y) return 0; return 1;` instead of `c >= x && c <= y`. Affected: `_is_digit`, `_is_xdigit`-style helpers in `stdio.h`.
 - **`long` (32-bit) arithmetic** — type parses and type-checks, but all arithmetic is 16-bit; multi-word codegen (`add+adc`, `sub+sbb`, `mul+mulh`, even-register alignment per ABI §9) is not implemented
 - **Integer literals > 16 bits** — truncated to 16 bits at IR generation; codegen does not emit multi-word constants
 - **Struct/union pass-by-value** — hidden-pointer ABI (ABI §4) not generated; use explicit pointers
