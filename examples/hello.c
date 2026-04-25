@@ -6,9 +6,7 @@
 
 int main() {
     printf("Hello, R316!\n");
-    for (int i = 0; i < 1024; i++) {
-        putchar(*(char*)i);
-    }
+    printf("%u", 65535/1);
 
     return 0;
 }
