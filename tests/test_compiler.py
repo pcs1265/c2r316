@@ -220,6 +220,61 @@ int main() { return test(7); }
     check('algebraic identities compile', isinstance(asm, str) and len(asm) > 0)
 
 
+def test_left_operand_preserved_across_binop():
+    """Critical correctness: codegen must NOT clobber the left operand's
+    register when generating 2-op forms like AND/OR/XOR/SHL/SHR.
+
+    Trigger pattern (the original bug — caused hello.c to hang in
+    __builtin_sdiv when called with a negative dividend):
+        t1 = t0 & MASK
+        ifnot t1 goto L
+        t2 = 0 - t0           // <-- t0 must still hold its original value here
+    """
+    print('\n[bugfix: left-operand preservation across 2-op binops]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    # Anything matching the trigger pattern works; use the actual __builtin_sdiv
+    # via test_div which exercises both sign branches.
+    src = """
+int test(int x) {
+    if (x & 0x8000) {
+        return 0 - x;   /* must use original x, not (x & 0x8000) */
+    }
+    return x;
+}
+int main() { return test(-1); }  /* expects 1 */
+"""
+    asm = mod.compile_c(src, src_name='<t>')
+    s = next(i for i, l in enumerate(asm.split('\n')) if l.strip() == '_C_test:')
+    body = asm.split('\n')[s:s + 30]
+    # Look for the dangerous pattern: `and rX, rY` (2-op AND) followed within
+    # a few instructions by a `sub rZ, ?, rX` reading rX.  After the fix,
+    # codegen should copy lreg before AND'ing so rX (lreg) is preserved.
+    # Heuristic: the AND-result register should NOT be reused as the second
+    # source of a subsequent `sub`.
+    found_bug = False
+    for i, line in enumerate(body):
+        line = line.strip()
+        if line.startswith('and '):
+            # parse `and rA, rB` → A is destination/accumulator
+            try:
+                parts = line.replace(',', '').split()
+                acc = parts[1]
+            except Exception:
+                continue
+            # look ahead a few instructions for `sub rZ, ?, acc`
+            for nxt in body[i + 1:i + 8]:
+                nxt = nxt.strip()
+                if nxt.startswith('sub ') and nxt.endswith(', ' + acc):
+                    found_bug = True
+                    break
+    check('AND result register not reused as later sub source',
+          not found_bug,
+          '\n'.join(body[:30]))
+
+
 def test_unsigned_comparison():
     """Unsigned `<` etc. must use carry-based branches (jc/jnc), not signed jl/jge.
     Otherwise values with the high bit set compare wrong (e.g. 0xFFFF < 1 wrongly true)."""
@@ -311,6 +366,7 @@ if __name__ == '__main__':
     test_enum()
     test_strength_reduction()
     test_algebraic_identities()
+    test_left_operand_preserved_across_binop()
     test_unsigned_comparison()
     test_goto()
     test_typedef_still_works()

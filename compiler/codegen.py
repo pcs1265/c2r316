@@ -995,8 +995,13 @@ class Codegen:
             else:
                 self._ins(f'{THREE_OP[op]} {dst}, {lreg}, {rreg}')
         else:
-            # Fall back: load left into SCRATCH_A if not already there, operate 2-op
-            acc = lreg if lreg != rreg else SCRATCH_A
+            # 2-op fallback. The accumulator gets clobbered by the operation, so
+            # it must NOT be lreg (would corrupt left operand's register, which
+            # may still hold a live value used by a later instruction — e.g.
+            # `t1 = t0 & 32768` followed by `t3 = 0 - t0`).  Use dst as the
+            # accumulator when possible; if dst == rreg (would read clobbered
+            # value), use SCRATCH_A instead.
+            acc = dst if dst != rreg else SCRATCH_A
             if acc != lreg:
                 self._ins(f'mov {acc}, {lreg}')
             if op == '+':
