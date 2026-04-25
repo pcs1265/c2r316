@@ -16,6 +16,7 @@
 #define STDIO_H
 
 #include "runtime/stdarg.h"
+#include "runtime/divmod.h"
 
 /* ── MMIO primitives ────────────────────────────────────────────────────── */
 

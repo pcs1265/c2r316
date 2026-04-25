@@ -350,9 +350,7 @@ class Codegen:
         return scratch
 
     def _mangle_global(self, name: str) -> str:
-        """User-defined names get _C_ prefix; __ runtime helpers are emitted as-is."""
-        if name.startswith('__'):
-            return name
+        """All user-defined names are prefixed with _C_ to avoid assembler conflicts."""
         return f'_C_{name}'
 
     def _load_addr(self, op: Operand, reg: str):

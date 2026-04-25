@@ -128,10 +128,8 @@ def _reachable_functions(program: IRProgram, roots: set) -> set:
 
 def eliminate_dead_functions(program: IRProgram, entry: str = 'main') -> IRProgram:
     """Remove functions never reachable from entry. Mutates and returns the program."""
-    # Seed with entry point; also keep any function whose name starts with '__'
-    # (runtime helpers like __udiv/__umod that may be called from codegen-inserted calls).
     func_names = {fn.name for fn in program.functions}
-    roots = {entry} | {n for n in func_names if n.startswith('__')}
+    roots = {entry}
     reachable = _reachable_functions(program, roots)
     program.functions = [fn for fn in program.functions if fn.name in reachable]
     return program
