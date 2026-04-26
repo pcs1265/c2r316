@@ -1,14 +1,21 @@
 === test_scanf ===
+42
 scanf_ret_d: PASS
 scanf_d_pos: PASS
+-7
 scanf_d_neg: PASS
+65535
 scanf_u: PASS
+ff
 scanf_x: PASS
+A
 scanf_c: PASS
+hi
 scanf_s_ret: PASS
 scanf_s_0: PASS
 scanf_s_1: PASS
 scanf_s_2: PASS
+10 20
 scanf_multi_ret: PASS
 scanf_multi_0: PASS
 scanf_multi_1: PASS

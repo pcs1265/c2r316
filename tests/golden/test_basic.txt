@@ -65,7 +65,7 @@ g_arr_write: PASS
 g_after_call: PASS
 g_flag_toggle: PASS
 g_flag_toggle2: PASS
-B
+A
 B
 ================
 PASS: 66

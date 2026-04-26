@@ -19,18 +19,71 @@
 
 /* ── MMIO primitives ────────────────────────────────────────────────────── */
 
+/* line-input buffer — filled one line at a time, drained char by char */
+#define _IBUF_SIZE 64
+static char _ibuf[_IBUF_SIZE];
+static int  _ibuf_len;
+static int  _ibuf_pos;
+static int  _cursor_col;
+
 __attribute__((always_inline)) static void _term_putch(int c) {
     asm("st %0, 0x9FB5" : "r"(c));
+    if (c == 10) {
+        _cursor_col = 0;
+    } else {
+        _cursor_col++;
+    }
 }
 
 static int _term_getch(void) {
     int *port;
     int c;
-    port = 0x9F80;
-    c = *port;
-    while (c == 0) {
-        c = *port;
+
+    if (_ibuf_pos < _ibuf_len) {
+        c = _ibuf[_ibuf_pos];
+        _ibuf_pos++;
+        return c;
     }
+
+    /* buffer empty — read a new line with echo and backspace support */
+    _ibuf_len = 0;
+    _ibuf_pos = 0;
+    port = 0x9F80;
+    while (1) {
+        c = *port;
+        while (c == 0) c = *port;
+
+        if (c == 8 || c == 127) {       /* backspace / DEL */
+            if (_ibuf_len > 0) {
+                int *cur;
+                _ibuf_len--;
+                if (_cursor_col > 0) {
+                    _cursor_col--;
+                    cur = 0x9FC4;
+                    *cur = _cursor_col;
+                    _term_putch(' ');
+                    _cursor_col--;
+                    *cur = _cursor_col;
+                }
+            }
+        } else if (c == '\r' || c == '\n') {
+            _term_putch('\n');
+            if (_ibuf_len < _IBUF_SIZE - 1) {
+                _ibuf[_ibuf_len] = '\n';
+                _ibuf_len++;
+            }
+            break;
+        } else {
+            if (_ibuf_len < _IBUF_SIZE - 1) {
+                _term_putch(c);
+                _ibuf[_ibuf_len] = c;
+                _ibuf_len++;
+            }
+        }
+    }
+
+    c = _ibuf[_ibuf_pos];
+    _ibuf_pos++;
     return c;
 }
 

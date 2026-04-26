@@ -596,7 +596,7 @@ def test_scanf():
     # %c character
     src = '#include <stdio.h>\nint main() { int c; scanf("%c", &c); return c; }\n'
     try:
-        ret, _ = run(src, stdin='A')
+        ret, _ = run(src, stdin='A\n')
         check('scanf %c', ret == ord('A'))
     except Exception as e:
         check('scanf %c', False, str(e))
@@ -613,7 +613,7 @@ int main() {
 """
     try:
         _, out = run(src, stdin='hello\n')
-        check('scanf %s', out.strip() == 'hello')
+        check('scanf %s', out.rstrip().split('\n')[-1] == 'hello')
     except Exception as e:
         check('scanf %s', False, str(e))
 
