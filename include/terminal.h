@@ -117,14 +117,21 @@ static int  _ibuf_pos;
 
 /* --Output --------------------------------------------------------------- */
 
-__attribute__((always_inline)) static void term_putch(int c) {
-    asm("st %0, %1" : "r"(c), "r"(TERM_TERM));
-    if (c == '\n') {
-        _cursor_col = 0;
-        _cursor_row++;
-    } else {
-        _cursor_col++;
-    }
+static void term_putch(int c) {
+    asm("st %0, %1\n"
+        "cmp %0, 10\n"
+        "jne .term_putch_else\n"
+        "st r0, _C__cursor_col\n"
+        "ld r9, _C__cursor_row\n"
+        "add r9, 1\n"
+        "st r9, _C__cursor_row\n"
+        "jmp .term_putch_end\n"
+        ".term_putch_else:\n"
+        "ld r9, _C__cursor_col\n"
+        "add r9, 1\n"
+        "st r9, _C__cursor_col\n"
+        ".term_putch_end:"
+        : "r"(c), "r"(TERM_TERM));
 }
 
 /* Colour and character packed into one atomic scrollprint write.           */
