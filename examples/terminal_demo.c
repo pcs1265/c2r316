@@ -48,10 +48,9 @@ static void draw_palette(void) {
     i = 0;
     while (i < 8) {
         term_move(i * 3, 3);
-        term_set_color(TERM_WHITE, i);
-        term_putch(' ');
-        term_putch('0' + i);
-        term_putch(' ');
+        term_putch_col(' ',     TERM_WHITE, i);
+        term_putch_col('0' + i, TERM_WHITE, i);
+        term_putch_col(' ',     TERM_WHITE, i);
         i++;
     }
 
@@ -59,10 +58,9 @@ static void draw_palette(void) {
     i = 0;
     while (i < 8) {
         term_move(i * 3, 4);
-        term_set_color(TERM_BLACK, i + 8);
-        term_putch(' ');
-        term_putch('0' + i);   /* 0-7 labels for 8-15 */
-        term_putch(' ');
+        term_putch_col(' ',     TERM_BLACK, i + 8);
+        term_putch_col('0' + i, TERM_BLACK, i + 8);
+        term_putch_col(' ',     TERM_BLACK, i + 8);
         i++;
     }
 }
@@ -91,8 +89,7 @@ static void draw_rainbow(void) {
     term_move(8, 9);
     i = 0;
     while (msg[i]) {
-        term_set_color(colours[i], TERM_BLACK);
-        term_putch(msg[i]);
+        term_putch_col(msg[i], colours[i], TERM_BLACK);
         i++;
     }
 }

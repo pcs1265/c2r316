@@ -46,19 +46,29 @@
 #define TERMINAL_H
 
 /* --MMIO addresses ------------------------------------------------------- */
+/* Change only TERM_BASE if the terminal is mapped at a different address.  */
+/* All other addresses are derived from the fixed low-7-bit offsets.        */
 
-#define TERM_INPUT     0x9F80
-#define TERM_RAW       0x9F84   /* scrollprint: row-oriented, no terminal mode */
-#define TERM_TERM      0x9FB5   /* scrollprint: nlchar+tmscroll+roworient+tmmode */
-#define TERM_CHAR0ODD  0x9FC0
-#define TERM_CHAR0EVEN 0x9FC1
-#define TERM_HRANGE    0x9FC2
-#define TERM_VRANGE    0x9FC3
-#define TERM_CURSOR    0x9FC4
-#define TERM_NLCHAR    0x9FC5
-#define TERM_COLOUR    0x9FC6
-#define TERM_SCROLLMASK 0x9FC7
-#define TERM_PLOTPIX_BASE 0x9FE0  /* + colour index in low 4 bits of addr */
+#define TERM_BASE       0x9F80
+
+#define TERM_INPUT      (TERM_BASE + 0x00)  /* read-only; self-clears on read */
+#define TERM_RAW        (TERM_BASE + 0x04)  /* scrollprint: row-oriented, no terminal mode */
+#define TERM_TERM       (TERM_BASE + 0x35)  /* scrollprint: nlchar+tmscroll+roworient+tmmode */
+#define TERM_CHAR0ODD   (TERM_BASE + 0x40)
+#define TERM_CHAR0EVEN  (TERM_BASE + 0x41)
+#define TERM_HRANGE     (TERM_BASE + 0x42)
+#define TERM_VRANGE     (TERM_BASE + 0x43)
+#define TERM_CURSOR     (TERM_BASE + 0x44)
+#define TERM_NLCHAR     (TERM_BASE + 0x45)
+#define TERM_COLOUR     (TERM_BASE + 0x46)
+#define TERM_SCROLLMASK (TERM_BASE + 0x47)
+#define TERM_PLOTPIX_BASE (TERM_BASE + 0x60)  /* + colour index in low 4 bits of addr */
+
+/* TERM_TERM_COL: scrollprint with colour embedded in data (addr bit1=1).   */
+/* Use this to set fg/bg and print a character atomically in one write,      */
+/* avoiding frame-timing issues when changing colour per character.          */
+/* data = (bg<<12)|(fg<<8)|char  -> write to TERM_TERM_COL                  */
+#define TERM_TERM_COL   (TERM_BASE + 0x37)
 
 /* --Register encoding ---------------------------------------------------- */
 
@@ -108,7 +118,23 @@ static int  _ibuf_pos;
 /* --Output --------------------------------------------------------------- */
 
 __attribute__((always_inline)) static void term_putch(int c) {
-    asm("st %0, 0x9FB5" : "r"(c));
+    asm("st %0, %1" : "r"(c), "r"(TERM_TERM));
+    if (c == '\n') {
+        _cursor_col = 0;
+        _cursor_row++;
+    } else {
+        _cursor_col++;
+    }
+}
+
+/* Colour and character packed into one atomic scrollprint write.           */
+/* Avoids frame-timing issues when changing colour per character.           */
+static void term_putch_col(int c, int fg, int bg) {
+    int *addr;
+    int data;
+    addr = TERM_TERM_COL;
+    data = (bg << 12) | (fg << 8) | (c & 0xFF);
+    *addr = data;
     if (c == '\n') {
         _cursor_col = 0;
         _cursor_row++;
