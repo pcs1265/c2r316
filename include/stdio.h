@@ -1,115 +1,45 @@
 /*
  * stdio.h — I/O for the R316 C compiler
  *
- * Provides terminal I/O via two MMIO primitives:
- *   _term_putch(c)  — st c → 0x9FB5 (terminal output)
- *   _term_getch()   — polling read on 0x9F80 (keyboard input)
+ * Builds on terminal.h for character I/O primitives.
  *
  * Public API:
  *   putchar(c), getchar()
  *   puts(s), print_str(s)
  *   print_int(n), print_uint(n), print_hex(n)
  *   printf(fmt, ...)  — %d %u %x %c %s %%
+ *   scanf(fmt, ...)   — %d %u %x %c %s
  */
 
 #ifndef STDIO_H
 #define STDIO_H
 
+#include <terminal.h>
 #include <stdarg.h>
-
-/* ── MMIO primitives ────────────────────────────────────────────────────── */
-
-/* line-input buffer — filled one line at a time, drained char by char */
-#define _IBUF_SIZE 64
-static char _ibuf[_IBUF_SIZE];
-static int  _ibuf_len;
-static int  _ibuf_pos;
-static int  _cursor_col;
-
-__attribute__((always_inline)) static void _term_putch(int c) {
-    asm("st %0, 0x9FB5" : "r"(c));
-    if (c == 10) {
-        _cursor_col = 0;
-    } else {
-        _cursor_col++;
-    }
-}
-
-static int _term_getch(void) {
-    int *port;
-    int c;
-
-    if (_ibuf_pos < _ibuf_len) {
-        c = _ibuf[_ibuf_pos];
-        _ibuf_pos++;
-        return c;
-    }
-
-    /* buffer empty — read a new line with echo and backspace support */
-    _ibuf_len = 0;
-    _ibuf_pos = 0;
-    port = 0x9F80;
-    while (1) {
-        c = *port;
-        while (c == 0) c = *port;
-
-        if (c == 8 || c == 127) {       /* backspace / DEL */
-            if (_ibuf_len > 0) {
-                int *cur;
-                _ibuf_len--;
-                if (_cursor_col > 0) {
-                    _cursor_col--;
-                    cur = 0x9FC4;
-                    *cur = _cursor_col;
-                    _term_putch(' ');
-                    _cursor_col--;
-                    *cur = _cursor_col;
-                }
-            }
-        } else if (c == '\r' || c == '\n') {
-            _term_putch('\n');
-            if (_ibuf_len < _IBUF_SIZE - 1) {
-                _ibuf[_ibuf_len] = '\n';
-                _ibuf_len++;
-            }
-            break;
-        } else {
-            if (_ibuf_len < _IBUF_SIZE - 1) {
-                _term_putch(c);
-                _ibuf[_ibuf_len] = c;
-                _ibuf_len++;
-            }
-        }
-    }
-
-    c = _ibuf[_ibuf_pos];
-    _ibuf_pos++;
-    return c;
-}
 
 /* ── putchar / getchar ──────────────────────────────────────────────────── */
 
 __attribute__((always_inline)) static void putchar(int c) {
-    _term_putch(c);
+    term_putch(c);
 }
 
 __attribute__((always_inline)) static int getchar(void) {
-    return _term_getch();
+    return term_getch();
 }
 
 /* ── puts / print_str ───────────────────────────────────────────────────── */
 
 static void puts(char *s) {
     while (*s) {
-        _term_putch(*s);
+        term_putch(*s);
         s++;
     }
-    _term_putch(10);
+    term_putch('\n');
 }
 
 static void print_str(char *s) {
     while (*s) {
-        _term_putch(*s);
+        term_putch(*s);
         s++;
     }
 }
@@ -122,11 +52,11 @@ static void print_int(int n) {
     int i;
 
     if (n & 0x8000) {
-        _term_putch('-');
+        term_putch('-');
         n = 0 - n;
     }
     if (n == 0) {
-        _term_putch('0');
+        term_putch('0');
         return;
     }
     count = 0;
@@ -137,7 +67,7 @@ static void print_int(int n) {
     }
     i = count - 1;
     while (i >= 0) {
-        _term_putch(digits[i] + '0');
+        term_putch(digits[i] + '0');
         i--;
     }
 }
@@ -148,7 +78,7 @@ static void print_uint(unsigned int n) {
     int i;
 
     if (n == 0) {
-        _term_putch('0');
+        term_putch('0');
         return;
     }
     count = 0;
@@ -159,7 +89,7 @@ static void print_uint(unsigned int n) {
     }
     i = count - 1;
     while (i >= 0) {
-        _term_putch(digits[i] + '0');
+        term_putch(digits[i] + '0');
         i--;
     }
 }
@@ -174,9 +104,9 @@ static void print_hex(unsigned int n) {
     while (shift >= 0) {
         nibble = (n >> shift) & 0xF;
         if (nibble >= 10) {
-            _term_putch(nibble + 55);
+            term_putch(nibble + 55);
         } else {
-            _term_putch(nibble + '0');
+            term_putch(nibble + '0');
         }
         shift = shift - 4;
     }
@@ -190,7 +120,7 @@ static void printf(char *fmt, ...) {
     va_start(ap, fmt);
     while (*fmt) {
         if (*fmt != '%') {
-            _term_putch(*fmt);
+            term_putch(*fmt);
             fmt++;
         } else {
             fmt++;
@@ -201,11 +131,11 @@ static void printf(char *fmt, ...) {
             } else if (*fmt == 'x') {
                 print_hex(va_arg(ap, int));
             } else if (*fmt == 'c') {
-                _term_putch(va_arg(ap, int));
+                term_putch(va_arg(ap, int));
             } else if (*fmt == 's') {
                 print_str(va_arg(ap, char *));
             } else if (*fmt == '%') {
-                _term_putch('%');
+                term_putch('%');
             }
             fmt++;
         }
@@ -263,40 +193,37 @@ static int scanf(char *fmt, ...) {
             fmt++;
             if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x') {
                 /* skip leading whitespace */
-                if (c == 0) c = _term_getch();
-                while (_is_space(c)) c = _term_getch();
+                if (c == 0) c = term_getch();
+                while (_is_space(c)) c = term_getch();
 
                 if (*fmt == 'x') {
-                    /* read hex integer */
                     uval = 0;
                     if (!_is_xdigit(c)) { fmt++; continue; }
                     while (_is_xdigit(c)) {
                         uval = uval * 16 + _xdigit_val(c);
-                        c = _term_getch();
+                        c = term_getch();
                     }
                     uptr = va_arg(ap, unsigned int *);
                     *uptr = uval;
                     assigned++;
                 } else if (*fmt == 'u') {
-                    /* read unsigned decimal */
                     uval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
                     while (_is_digit(c)) {
                         uval = uval * 10 + (c - '0');
-                        c = _term_getch();
+                        c = term_getch();
                     }
                     uptr = va_arg(ap, unsigned int *);
                     *uptr = uval;
                     assigned++;
                 } else {
-                    /* read signed decimal */
                     neg = 0;
-                    if (c == '-') { neg = 1; c = _term_getch(); }
+                    if (c == '-') { neg = 1; c = term_getch(); }
                     uval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
                     while (_is_digit(c)) {
                         uval = uval * 10 + (c - '0');
-                        c = _term_getch();
+                        c = term_getch();
                     }
                     iptr = va_arg(ap, int *);
                     if (neg) {
@@ -308,22 +235,20 @@ static int scanf(char *fmt, ...) {
                 }
                 fmt++;
             } else if (*fmt == 'c') {
-                /* read one character, no whitespace skipping */
-                if (c == 0) c = _term_getch();
+                if (c == 0) c = term_getch();
                 iptr = va_arg(ap, int *);
                 *iptr = c;
                 c = 0;
                 assigned++;
                 fmt++;
             } else if (*fmt == 's') {
-                /* read non-whitespace run into char* */
-                if (c == 0) c = _term_getch();
-                while (_is_space(c)) c = _term_getch();
+                if (c == 0) c = term_getch();
+                while (_is_space(c)) c = term_getch();
                 sptr = va_arg(ap, char *);
                 while (c != 0 && !_is_space(c)) {
                     *sptr = c;
                     sptr++;
-                    c = _term_getch();
+                    c = term_getch();
                 }
                 *sptr = 0;
                 assigned++;
@@ -332,13 +257,11 @@ static int scanf(char *fmt, ...) {
                 fmt++;
             }
         } else if (_is_space(*fmt)) {
-            /* whitespace in format: skip any whitespace in input */
-            if (c == 0) c = _term_getch();
-            while (_is_space(c)) c = _term_getch();
+            if (c == 0) c = term_getch();
+            while (_is_space(c)) c = term_getch();
             fmt++;
         } else {
-            /* literal character match */
-            if (c == 0) c = _term_getch();
+            if (c == 0) c = term_getch();
             if (c != *fmt) break;
             c = 0;
             fmt++;

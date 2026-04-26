@@ -1,0 +1,16 @@
+=== test_terminal ===
+A
+XYPASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+================
+PASS: 10
+FAIL: 0
+=== done ===
