@@ -107,7 +107,3 @@
 
 ## Potential Optimizations (Future)
 
-- **Copy prop: Var sources** — blocked because `Var` in IStore/ILoad address position means "direct slot access", not "load-and-dereference"; distinguishing address-position vs. value-position uses is required first
-- **Common subexpression elimination (CSE)** — `&arr` is recomputed on every array access; CSE would deduplicate `IAddrOf` within a basic block
-- **Dead store elimination** — stores to locals never loaded again (requires liveness analysis over Vars, not just Temps)
-- **Inlining** — small leaf functions (e.g. `putchar`) called in hot loops; would require repeating the fold→DCE cycle until stable

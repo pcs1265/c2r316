@@ -205,7 +205,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
         _v(f'{name}: {before_i} -> {after_i} instrs, {before_f} -> {after_f} fns')
 
     _run_pass('Inlining', inline)
-    _run_pass('Constant folding + copy propagation', fold)
+    _run_pass('Constant folding / copy propagation / CSE / DSE', fold)
     _run_pass('Dead code / dead function elimination', dce)
 
     if dump_ir_post or dump_ir:

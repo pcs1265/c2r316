@@ -26,7 +26,7 @@ from typing import Dict, List, Optional
 
 from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
-    IConst, ICopy, IBinOp, IUnaryOp, ILoad, IStore,
+    IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
 )
@@ -147,14 +147,53 @@ def _fold_function(fn: IRFunction) -> None:
     # Temp sources: safe everywhere EXCEPT the addr field of IStore/ILoad,
     #   where substituting a Temp would change "store through pointer" into
     #   "store to slot".  _subst_instr handles this via addr_sub vs val_sub.
+    # Var sources: safe in value position only (addr_sub excludes them), AND only
+    #   when no clobbering instruction (store to same var, call, or label) lies
+    #   between the ICopy definition and its single use site.
     copy_src: Dict[int, tuple] = {}
     for i, instr in enumerate(instrs):
         if isinstance(instr, ICopy) and isinstance(instr.dst, Temp):
             tid = instr.dst.id
             if use_count.get(tid, 0) == 1 and def_count.get(tid, 0) == 1:
                 src = instr.src
-                if isinstance(src, (ImmInt, StrLabel, Global, Temp)):
+                if isinstance(src, (ImmInt, StrLabel, Global, Temp, Var)):
                     copy_src[tid] = (i, src)
+
+    # Validate Var-source entries: remove any where the variable is clobbered
+    # between the definition and the single use (by a store, call, or label).
+    var_entries = [(tid, def_idx, src) for tid, (def_idx, src) in copy_src.items()
+                   if isinstance(src, Var)]
+    if var_entries:
+        use_loc: Dict[int, int] = {}
+        for i, instr in enumerate(instrs):
+            for op in instr.uses():
+                if isinstance(op, Temp) and op.id in copy_src:
+                    if isinstance(copy_src[op.id][1], Var):
+                        use_loc.setdefault(op.id, i)
+        for tid, def_idx, var_src in var_entries:
+            use_idx = use_loc.get(tid, -1)
+            if use_idx < 0:
+                del copy_src[tid]
+                continue
+            clobbered = False
+            for j in range(def_idx + 1, use_idx):
+                chk = instrs[j]
+                if isinstance(chk, (ILabel, ICall)):
+                    clobbered = True; break
+                if isinstance(chk, IStore) and isinstance(chk.addr, Var) \
+                        and chk.addr.name == var_src.name:
+                    clobbered = True; break
+            if clobbered:
+                del copy_src[tid]
+
+    # Remove Temp-source entries whose source Temp is a Var-source key: if both
+    # t0→Var and t4→Temp(t0) are in copy_src simultaneously, the substitution
+    # loop would drop t0's ICopy while processing t4's ICopy, then use the now-
+    # stale t4→t0 entry on a later instruction, referencing an undefined temp.
+    var_source_ids = {tid for tid, (_, src) in copy_src.items() if isinstance(src, Var)}
+    for tid in [tid for tid, (_, src) in copy_src.items()
+                if isinstance(src, Temp) and src.id in var_source_ids]:
+        del copy_src[tid]
 
     def _subst_addr(op: Operand) -> Operand:
         """Substitute in address position: safe for ImmInt/StrLabel/Global/Temp.
@@ -238,6 +277,67 @@ def _subst_instr(instr: Instr, addr_sub, val_sub) -> Instr:
     return instr
 
 
+def _addrof_cse(fn: IRFunction) -> None:
+    """Deduplicate IAddrOf within a basic block.
+
+    If IAddrOf(tA, x) is followed by IAddrOf(tB, x) with no intervening label,
+    replace the second with ICopy(tB, tA).  The existing copy-propagation pass
+    then folds the chain away, eliminating the redundant address computation.
+    """
+    available: Dict[object, Temp] = {}  # var-key → Temp holding &var
+    for i, instr in enumerate(fn.instrs):
+        if isinstance(instr, ILabel):
+            available.clear()
+            continue
+        if isinstance(instr, IAddrOf):
+            key = instr.var  # Var or Global — both frozen dataclasses, hashable
+            if key in available:
+                fn.instrs[i] = ICopy(instr.dst, available[key], instr.loc)
+            else:
+                available[key] = instr.dst
+
+
+def _dead_store_elim(fn: IRFunction) -> None:
+    """Remove IStore(Var('x'), _) that is overwritten before x is read again.
+
+    Conservative: only eliminates stores to locals whose address is never taken
+    (escaped vars bypass DSE because pointer writes are untracked).  Invalidates
+    on ICall and ILabel (control-flow merge).
+    """
+    escaped: set = set()
+    for instr in fn.instrs:
+        if isinstance(instr, IAddrOf) and isinstance(instr.var, Var):
+            escaped.add(instr.var.name)
+
+    last_store: Dict[str, int] = {}  # var_name → index of pending dead store
+    to_remove: set = set()
+
+    for i, instr in enumerate(fn.instrs):
+        if isinstance(instr, (ILabel, IJump, IJumpIf, IJumpIfNot)):
+            last_store.clear()
+            continue
+        if isinstance(instr, ICall):
+            last_store.clear()
+            continue
+        if isinstance(instr, IStore) and isinstance(instr.addr, Var):
+            name = instr.addr.name
+            # The value being stored might itself read a var — flush those first.
+            if isinstance(instr.src, Var):
+                last_store.pop(instr.src.name, None)
+            if name not in escaped:
+                if name in last_store:
+                    to_remove.add(last_store[name])
+                last_store[name] = i
+            continue
+        # Any instruction that reads a Var keeps its pending store alive.
+        for op in instr.uses():
+            if isinstance(op, Var):
+                last_store.pop(op.name, None)
+
+    if to_remove:
+        fn.instrs = [instr for i, instr in enumerate(fn.instrs) if i not in to_remove]
+
+
 def _remove_trivial_jumps(fn: IRFunction) -> None:
     """Remove IJump(L) where the next non-label instruction is ILabel(L)."""
     instrs = fn.instrs
@@ -314,6 +414,8 @@ def fold(program: IRProgram) -> IRProgram:
     """Run constant folding + copy propagation on every function until stable."""
     for fn in program.functions:
         _var_load_cse(fn)
+        _addrof_cse(fn)
+        _dead_store_elim(fn)
         prev_len = -1
         while len(fn.instrs) != prev_len:
             prev_len = len(fn.instrs)
