@@ -1,12 +1,13 @@
 /*
- * terminal_demo.c — showcase of terminal.h features
+ * terminal_demo.c -- showcase of terminal.h features
  *
  * Demonstrates:
  *   - TERM_* colour constants
- *   - term_set_color(fg, bg)  : foreground/background colour
- *   - term_move(col, row)     : cursor positioning
- *   - term_putch / puts       : character output
- *   - term_getch / scanf      : line-buffered input with echo + backspace
+ *   - term_set_color(fg, bg)      : foreground/background colour
+ *   - term_putch_col(c, fg, bg)   : atomic per-character colour
+ *   - term_move(col, row)         : cursor positioning
+ *   - term_putch / puts           : character output
+ *   - term_getch / scanf          : line-buffered input with echo + backspace
  *
  * Terminal: 24 cols x 16 rows, 16 colours (CGA palette).
  */
@@ -14,37 +15,19 @@
 #include <terminal.h>
 #include <stdio.h>
 
-/* ── helpers ────────────────────────────────────────────────────────────── */
-
-static void print_str_at(int col, int row, int fg, int bg, char *s) {
-    term_move(col, row);
-    term_set_color(fg, bg);
-    print_str(s);
-}
-
-static void hline(int col, int row, int fg, int bg, int ch, int len) {
-    int i;
-    term_move(col, row);
-    term_set_color(fg, bg);
-    i = 0;
-    while (i < len) {
-        term_putch(ch);
-        i++;
-    }
-}
-
-/* ── demo sections ──────────────────────────────────────────────────────── */
-
 static void draw_header(void) {
-    hline(0, 0, TERM_BLACK, TERM_LCYAN, ' ', 24);
-    print_str_at(2, 0, TERM_BLACK, TERM_LCYAN, "R316 TERMINAL DEMO");
+    term_move(2, 0);
+    term_set_color(TERM_LCYAN, TERM_BLACK);
+    print_str("R316 TERMINAL DEMO");
 }
 
 static void draw_palette(void) {
     int i;
-    print_str_at(0, 2, TERM_LGREY, TERM_BLACK, "Colours:");
 
-    /* colours 0-7 */
+    term_move(0, 2);
+    term_set_color(TERM_LGREY, TERM_BLACK);
+    print_str("Colours:");
+
     i = 0;
     while (i < 8) {
         term_move(i * 3, 3);
@@ -54,7 +37,6 @@ static void draw_palette(void) {
         i++;
     }
 
-    /* colours 8-15 */
     i = 0;
     while (i < 8) {
         term_move(i * 3, 4);
@@ -66,10 +48,13 @@ static void draw_palette(void) {
 }
 
 static void draw_cursor_demo(void) {
-    print_str_at(0, 6, TERM_LYELLOW, TERM_BLACK, "Cursor positions:");
-    print_str_at(0,  7, TERM_LRED,     TERM_BLACK, "(0,7)");
-    print_str_at(9,  7, TERM_LGREEN,   TERM_BLACK, "(9,7)");
-    print_str_at(18, 7, TERM_LBLUE,    TERM_BLACK, "(18,7)");
+    term_move(0, 6);
+    term_set_color(TERM_LYELLOW, TERM_BLACK);
+    print_str("Cursor positions:");
+
+    term_move(0,  7); term_set_color(TERM_LRED,     TERM_BLACK); print_str("(0,7)");
+    term_move(9,  7); term_set_color(TERM_LGREEN,   TERM_BLACK); print_str("(9,7)");
+    term_move(18, 7); term_set_color(TERM_LBLUE,    TERM_BLACK); print_str("(18,7)");
 }
 
 static void draw_rainbow(void) {
@@ -97,7 +82,9 @@ static void draw_rainbow(void) {
 static void do_input(void) {
     char name[16];
 
-    print_str_at(0, 11, TERM_LGREY, TERM_BLACK, "Your name: ");
+    term_move(0, 11);
+    term_set_color(TERM_LGREY, TERM_BLACK);
+    print_str("Your name: ");
     term_set_color(TERM_WHITE, TERM_BLACK);
     scanf("%s", name);
 
@@ -109,8 +96,6 @@ static void do_input(void) {
     term_set_color(TERM_LGREEN, TERM_BLACK);
     term_putch('!');
 }
-
-/* ── main ───────────────────────────────────────────────────────────────── */
 
 int main(void) {
     term_set_color(TERM_LGREEN, TERM_BLACK);
