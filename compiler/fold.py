@@ -186,13 +186,16 @@ def _fold_function(fn: IRFunction) -> None:
             if clobbered:
                 del copy_src[tid]
 
-    # Remove Temp-source entries whose source Temp is a Var-source key: if both
-    # t0→Var and t4→Temp(t0) are in copy_src simultaneously, the substitution
-    # loop would drop t0's ICopy while processing t4's ICopy, then use the now-
-    # stale t4→t0 entry on a later instruction, referencing an undefined temp.
-    var_source_ids = {tid for tid, (_, src) in copy_src.items() if isinstance(src, Var)}
+    # Remove Temp-source entries whose source Temp is itself a key in copy_src.
+    # If t0→Var/Temp(x) and t4→Temp(t0) are both candidates, processing t4's
+    # substitution drops t0's ICopy and then any later instruction that still
+    # references t4 (resolved to stale t0) will find t0 undefined.
+    # Resolution: remove the chained entry (t4→t0) from copy_src; the next
+    # _fold_function iteration will propagate it cleanly.
+    # This also subsumes the old Var-source-only guard.
+    all_copy_keys = set(copy_src.keys())
     for tid in [tid for tid, (_, src) in copy_src.items()
-                if isinstance(src, Temp) and src.id in var_source_ids]:
+                if isinstance(src, Temp) and src.id in all_copy_keys]:
         del copy_src[tid]
 
     def _subst_addr(op: Operand) -> Operand:

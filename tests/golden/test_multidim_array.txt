@@ -1,0 +1,22 @@
+PASS: g2d[0][0]
+PASS: g2d[0][2]
+PASS: g2d[1][1]
+PASS: g2d[1][2]
+PASS: g3d[0][0][0]
+PASS: g3d[0][1][1]
+PASS: g3d[1][0][1]
+PASS: g3d[1][1][1]
+PASS: a[0][0]
+PASS: a[0][3]
+PASS: a[1][0]
+PASS: a[1][3]
+PASS: b[0][0]
+PASS: b[1][2]
+PASS: b[0][1] after write
+PASS: c[0][0][0]
+PASS: c[1][1][1]
+PASS: c[1][0][1]
+PASS: sum g2d
+PASS: sum b
+passed=20  failed=0
+=== done ===

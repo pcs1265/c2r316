@@ -21,6 +21,24 @@ class IRGenError(Exception):
     pass
 
 
+def _flatten_init(init: 'InitList') -> list:
+    """Recursively flatten a (possibly nested) InitList into a list of scalar expressions."""
+    result = []
+    for e in init.elems:
+        if isinstance(e, InitList):
+            result.extend(_flatten_init(e))
+        else:
+            result.append(e)
+    return result
+
+
+def _leaf_elem_sz(t: 'CType') -> int:
+    """Return the size (in words) of the innermost scalar element of an array type."""
+    while isinstance(t, CArray):
+        t = t.base
+    return t.size()
+
+
 class IRGen:
     def __init__(self, filename: str = '<unknown>'):
         self._filename   = filename
@@ -107,7 +125,7 @@ class IRGen:
                 init_vals = None
                 if isinstance(decl.init, InitList):
                     init_vals = []
-                    for e in decl.init.elems:
+                    for e in _flatten_init(decl.init):
                         if isinstance(e, (IntLit, CharLit)):
                             init_vals.append(e.value)
                         elif isinstance(e, StringLit):
@@ -325,11 +343,12 @@ class IRGen:
                             self._emit(IBinOp(t_off, '+', base, ImmInt(i), loc))
                             self._emit(IStore(t_off, ImmInt(ch), loc))
                 elif isinstance(d.init, InitList):
-                    elem_sz = d.ctype.base.size() if isinstance(d.ctype, CArray) else 1
-                    arr_len = d.ctype.length if isinstance(d.ctype, CArray) else 1
+                    elem_sz = _leaf_elem_sz(d.ctype) if isinstance(d.ctype, CArray) else 1
+                    total_words = d.ctype.size() if isinstance(d.ctype, CArray) else 1
+                    flat = _flatten_init(d.init)
                     base = self._var_addr(d.name, loc)
                     # write explicit initializer elements
-                    for i, elem in enumerate(d.init.elems):
+                    for i, elem in enumerate(flat):
                         val = self._gen_expr(elem)
                         if i == 0:
                             self._emit(IStore(base, val, loc))
@@ -337,8 +356,8 @@ class IRGen:
                             t_off = self._tmp()
                             self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
                             self._emit(IStore(t_off, val, loc))
-                    # zero-fill remaining elements (standard C partial initializer rule)
-                    for i in range(len(d.init.elems), arr_len):
+                    # zero-fill remaining words (standard C partial initializer rule)
+                    for i in range(len(flat), total_words // elem_sz):
                         t_off = self._tmp()
                         self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
                         self._emit(IStore(t_off, ImmInt(0), loc))
@@ -577,6 +596,9 @@ class IRGen:
 
         if isinstance(expr, Index):
             addr = self._gen_addr(expr)
+            if isinstance(expr.ctype, CArray):
+                # sub-array decays to pointer — return address, don't load
+                return addr
             t = self._tmp()
             self._emit(ILoad(t, addr, loc))
             return t

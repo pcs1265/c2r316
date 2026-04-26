@@ -224,14 +224,18 @@ class Parser:
         elem = base
         for _ in range(stars):
             elem = CPointer(elem)
-        # array modifiers
-        if self._try_eat(TK.LBRACKET):
+        # array modifiers — support multi-dimensional: int a[M][N] → CArray(CArray(int,N),M)
+        dims = []
+        while self._try_eat(TK.LBRACKET):
             if self._at(TK.INT_LIT):
-                length = self._eat(TK.INT_LIT).value
+                dims.append(self._eat(TK.INT_LIT).value)
             else:
-                length = None
+                dims.append(None)
             self._eat(TK.RBRACKET)
-            t = CArray(elem, length)
+        if dims:
+            t = elem
+            for d in reversed(dims):
+                t = CArray(t, d)
         else:
             t = elem
         return t, name
@@ -323,14 +327,18 @@ class Parser:
         else:
             # global variable
             results = []
-            # handle array
-            if self._try_eat(TK.LBRACKET):
+            # handle array (including multi-dimensional: int a[M][N] → CArray(CArray(int,N),M))
+            dims = []
+            while self._try_eat(TK.LBRACKET):
                 if self._at(TK.INT_LIT):
-                    length = self._eat(TK.INT_LIT).value
+                    dims.append(self._eat(TK.INT_LIT).value)
                 else:
-                    length = None
+                    dims.append(None)
                 self._eat(TK.RBRACKET)
-                vtype = CArray(ret_type, length)
+            if dims:
+                vtype = ret_type
+                for d in reversed(dims):
+                    vtype = CArray(vtype, d)
             else:
                 vtype = ret_type
 
@@ -570,7 +578,10 @@ class Parser:
         self._eat(TK.LBRACE)
         elems = []
         while not self._at(TK.RBRACE, TK.EOF):
-            elems.append(self._parse_assign())
+            if self._at(TK.LBRACE):
+                elems.append(self._parse_init_list())
+            else:
+                elems.append(self._parse_assign())
             if not self._try_eat(TK.COMMA):
                 break
         self._eat(TK.RBRACE)
