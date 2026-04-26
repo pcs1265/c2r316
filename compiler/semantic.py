@@ -223,7 +223,7 @@ class Analyzer:
             return expr.ctype
 
         if isinstance(expr, StringLit):
-            expr.ctype = CPointer(CChar())
+            expr.ctype = CArray(CChar(), len(expr.chars) + 1)
             self.string_lits.append(expr)
             return expr.ctype
 
