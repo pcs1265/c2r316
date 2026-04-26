@@ -792,13 +792,22 @@ class IRGen:
         end_lbl = self._new_label('sc_end')
         result  = self._tmp()
 
+        # Pre-initialize result to the short-circuit value so that if the LHS
+        # causes an early jump (and result is never written by the RHS path),
+        # the register already holds the correct answer.  Without this, fused
+        # compare+branch codegen skips materializing the LHS as 0/1, leaving
+        # result with whatever happened to be in the register slot (often
+        # non-zero), making the whole expression appear true when it should be
+        # false (or vice versa for ||).
+        sc_val = 1 if is_or else 0
+        self._emit(IConst(result, sc_val, loc))
+
         left = self._gen_expr(expr.left)
-        self._emit(ICopy(result, left, loc))
 
         if is_or:
-            self._emit(IJumpIf(result, end_lbl, loc))
+            self._emit(IJumpIf(left, end_lbl, loc))
         else:
-            self._emit(IJumpIfNot(result, end_lbl, loc))
+            self._emit(IJumpIfNot(left, end_lbl, loc))
 
         right = self._gen_expr(expr.right)
         self._emit(ICopy(result, right, loc))
