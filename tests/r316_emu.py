@@ -300,8 +300,8 @@ class Machine:
 
     SENTINEL_LR = 0xDEAD   # invalid PC: when jmp r31 lands here, we halt
 
-    def __init__(self, prog: Program, sp_init: int = 0x8000, max_cycles: int = 1_000_000,
-                 stdin: str = ''):
+    def __init__(self, prog: Program, sp_init: int = 0x8000, max_cycles: int | None = 1_000_000,
+                 stdin: str = '', freq: float | None = None):
         self.prog = prog
         self.regs = [0] * 32
         self.regs[30] = sp_init        # sp
@@ -313,7 +313,8 @@ class Machine:
         self.stdin: list[int] = [ord(c) for c in stdin]
         self.stdin_pos: int = 0
         self.cycles = 0
-        self.max_cycles = max_cycles
+        self.max_cycles = max_cycles  # None = unlimited
+        self.freq = freq              # Hz throttle, or None for full speed
         self.halted = False
 
     # ── register R/W ────────────────────────────────────────────────────────
@@ -521,13 +522,34 @@ class Machine:
             self.pc = target_pc
 
     def run(self) -> None:
-        while not self.halted and self.cycles < self.max_cycles:
+        import time
+        freq = self.freq
+        if freq is not None:
+            # Throttle to target frequency using a simple sleep-based approach.
+            # We accumulate a "credit" of cycles owed and sleep when ahead.
+            _BATCH = max(1, int(freq / 100))  # check time every ~10 ms of sim
+            _batch_period = _BATCH / freq      # wall seconds per batch
+            _deadline = time.monotonic() + _batch_period
+            _batch = 0
+
+        while not self.halted:
+            if self.max_cycles is not None and self.cycles >= self.max_cycles:
+                raise RuntimeError(
+                    f"emulator timeout after {self.max_cycles} cycles "
+                    f"(likely infinite loop). pc={self.pc}, "
+                    f"cur={self.prog.insns[self.pc] if self.pc < len(self.prog.insns) else None}"
+                )
             self.step()
             self.cycles += 1
-        if not self.halted:
-            raise RuntimeError(f"emulator timeout after {self.max_cycles} cycles "
-                               f"(likely infinite loop). pc={self.pc}, "
-                               f"cur={self.prog.insns[self.pc] if self.pc < len(self.prog.insns) else None}")
+            if freq is not None:
+                _batch += 1
+                if _batch >= _BATCH:
+                    _batch = 0
+                    _now = time.monotonic()
+                    _sleep = _deadline - _now
+                    if _sleep > 0:
+                        time.sleep(_sleep)
+                    _deadline = time.monotonic() + _batch_period
 
     def stdout_str(self) -> str:
         return ''.join(chr(c) for c in self.stdout)
@@ -535,12 +557,13 @@ class Machine:
 
 # ── public helper ──────────────────────────────────────────────────────────
 
-def run_main(asm: str, max_cycles: int = 1_000_000, stdin: str = '') -> tuple[int, str]:
+def run_main(asm: str, max_cycles: int | None = 1_000_000, stdin: str = '',
+             freq: float | None = None) -> tuple[int, str]:
     """Compile output → (return_value_of_main, stdout). Starts at `_C_main:`."""
     prog = parse_asm(asm)
     if '_C_main' not in prog.labels:
         raise RuntimeError("no _C_main in asm")
-    m = Machine(prog, max_cycles=max_cycles, stdin=stdin)
+    m = Machine(prog, max_cycles=max_cycles, stdin=stdin, freq=freq)
     m.pc = prog.labels['_C_main']
     m.run()
     return m.regs[1] & _MASK16, m.stdout_str()
@@ -556,11 +579,17 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(
         description='Run a .asm or .c file through the R316 emulator.')
     ap.add_argument('file', help='.asm file (or .c file, compiled first)')
-    ap.add_argument('--cycles', type=int, default=1_000_000,
+    ap.add_argument('--cycles', '-c', type=int, default=1_000_000,
                     metavar='N', help='max emulated cycles (default: 1 000 000)')
-    ap.add_argument('--show-retval', action='store_true',
+    ap.add_argument('--unlimited-cycles', '-u', action='store_true',
+                    help='run without a cycle limit (no timeout guard)')
+    ap.add_argument('--freq', '-f', type=float, default=None,
+                    metavar='HZ', help='throttle emulation to HZ cycles/s (e.g. 1000000 for 1 MHz)')
+    ap.add_argument('--show-retval', '-r', action='store_true',
                     help='print main() return value after program output')
     args = ap.parse_args()
+    if args.unlimited_cycles:
+        args.cycles = None
 
     path = args.file
     if path.endswith('.c'):
@@ -584,7 +613,7 @@ if __name__ == '__main__':
         with open(path, encoding='utf-8') as fh:
             asm = fh.read()
 
-    retval, out = run_main(asm, max_cycles=args.cycles)
+    retval, out = run_main(asm, max_cycles=args.cycles, freq=args.freq)
     sys.stdout.write(out)
     if args.show_retval:
         print(f'\n[exit {retval}]')
