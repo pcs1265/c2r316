@@ -156,7 +156,8 @@ class FuncContext:
 
 
 class Codegen:
-    def __init__(self):
+    def __init__(self, no_opt: bool = False):
+        self._no_opt = no_opt
         self._out:  list[str] = []
         self._ctx:  Optional[FuncContext] = None
         self._is_leaf = False
@@ -437,7 +438,8 @@ class Codegen:
         return result
 
     def _gen_func(self, fn: IRFunction):
-        fn = IRFunction(fn.name, fn.params, self._peephole(fn.instrs), fn.local_sizes,
+        instrs = fn.instrs if self._no_opt else self._peephole(fn.instrs)
+        fn = IRFunction(fn.name, fn.params, instrs, fn.local_sizes,
                         is_variadic=fn.is_variadic)
         self._scratch_a_temp = None
         self._scratch_c_temp = None
@@ -544,7 +546,8 @@ class Codegen:
             self._gen_instr(instr, lr_slot, total)
             self._ctx.free_dead_temps(idx)
 
-        self._asm_peephole(func_start)
+        if not self._no_opt:
+            self._asm_peephole(func_start)
         self._emit('')
 
     def _asm_peephole(self, func_start: int):

@@ -101,7 +101,8 @@ def compile_c(src: str, src_name: str = '<stdin>',
               dump_opt_stats: bool = False,
               stop_after: str = None,
               verbose: bool = False,
-              annotate_asm: bool = False) -> str:
+              annotate_asm: bool = False,
+              no_opt: bool = False) -> str:
     """C source string → R316 assembly string"""
 
     def _v(msg):
@@ -186,7 +187,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
     if stop_after == 'ir':
         raise SystemExit(0)  # stop before optimization
 
-    # 4.5. Optimization passes
+    # 4.5. Optimization passes (skipped when no_opt=True)
     def _instr_count(prog):
         return sum(len(fn.instrs) for fn in prog.functions)
 
@@ -195,31 +196,32 @@ def compile_c(src: str, src_name: str = '<stdin>',
 
     stats = []
 
-    def _run_pass(name, fn):
-        before_i = _instr_count(ir)
-        before_f = _func_count(ir)
-        fn(ir)
-        after_i  = _instr_count(ir)
-        after_f  = _func_count(ir)
-        stats.append((name, before_f, after_f, before_i, after_i))
-        _v(f'{name}: {before_i} -> {after_i} instrs, {before_f} -> {after_f} fns')
+    if not no_opt:
+        def _run_pass(name, fn):
+            before_i = _instr_count(ir)
+            before_f = _func_count(ir)
+            fn(ir)
+            after_i  = _instr_count(ir)
+            after_f  = _func_count(ir)
+            stats.append((name, before_f, after_f, before_i, after_i))
+            _v(f'{name}: {before_i} -> {after_i} instrs, {before_f} -> {after_f} fns')
 
-    _run_pass('Inlining', inline)
+        _run_pass('Inlining', inline)
 
-    # Run fold→DCE iteratively until fixed point (max 5 iterations)
-    initial_instrs = _instr_count(ir)
-    prev_instrs = initial_instrs
-    for iteration in range(1, 6):
-        fold(ir)
-        dce(ir)
-        curr_instrs = _instr_count(ir)
-        if curr_instrs == prev_instrs:
-            _v(f'Fold/DCE converged after {iteration} iteration(s)')
-            break
-        prev_instrs = curr_instrs
-    else:
-        _v('Fold/DCE hit iteration limit (5)')
-    stats.append(('Fold/DCE iterations', 0, 0, initial_instrs, curr_instrs))
+        # Run fold→DCE iteratively until fixed point (max 5 iterations)
+        initial_instrs = _instr_count(ir)
+        prev_instrs = initial_instrs
+        for iteration in range(1, 6):
+            fold(ir)
+            dce(ir)
+            curr_instrs = _instr_count(ir)
+            if curr_instrs == prev_instrs:
+                _v(f'Fold/DCE converged after {iteration} iteration(s)')
+                break
+            prev_instrs = curr_instrs
+        else:
+            _v('Fold/DCE hit iteration limit (5)')
+        stats.append(('Fold/DCE iterations', 0, 0, initial_instrs, curr_instrs))
 
     if dump_ir_post or dump_ir:
         print(_ir_header('IR (post-optimization)'), file=sys.stderr)
@@ -233,16 +235,17 @@ def compile_c(src: str, src_name: str = '<stdin>',
     # 5. code generation (IR → asm)
     _v('Code generation ...')
     try:
-        gen = Codegen()
+        gen = Codegen(no_opt=no_opt)
         if annotate_asm:
             gen.set_source(src, src_name)
         asm = gen.generate(ir)
     except CodegenError as e:
         raise SystemExit(f"Codegen error: {e}")
 
-    asm_lines = asm.count('\n') + 1
-    elim = gen._peephole_eliminated
-    stats.append(('ASM peephole', 0, 0, asm_lines + elim, asm_lines))
+    if not no_opt:
+        asm_lines = asm.count('\n') + 1
+        elim = gen._peephole_eliminated
+        stats.append(('ASM peephole', 0, 0, asm_lines + elim, asm_lines))
 
     if dump_opt_stats or (verbose and stats):
         _print_opt_stats(stats)
@@ -278,6 +281,8 @@ def main():
     ap.add_argument('--stop-after',
                     choices=['lex', 'parse', 'semantic', 'ir', 'opt', 'codegen'],
                     help='Stop after the given stage: ir=pre-opt IR, opt=post-opt IR, codegen=final asm')
+    ap.add_argument('--no-opt', action='store_true',
+                    help='Disable all IR optimization passes (inlining, fold/DCE, regalloc)')
     ap.add_argument('-g', '--annotate', action='store_true',
                     help='Annotate ASM output with source line comments')
     ap.add_argument('-I', dest='include_dirs', action='append', default=[],
@@ -304,7 +309,8 @@ def main():
                         dump_opt_stats=args.dump_opt_stats,
                         stop_after=args.stop_after,
                         verbose=args.verbose,
-                        annotate_asm=args.annotate)
+                        annotate_asm=args.annotate,
+                        no_opt=args.no_opt)
     except SystemExit as e:
         # Clean exit for --stop-after with code 0
         if e.code == 0:
