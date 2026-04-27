@@ -207,7 +207,8 @@ def compile_c(src: str, src_name: str = '<stdin>',
     _run_pass('Inlining', inline)
 
     # Run fold→DCE iteratively until fixed point (max 5 iterations)
-    prev_instrs = _instr_count(ir)
+    initial_instrs = _instr_count(ir)
+    prev_instrs = initial_instrs
     for iteration in range(1, 6):
         fold(ir)
         dce(ir)
@@ -218,7 +219,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
         prev_instrs = curr_instrs
     else:
         _v('Fold/DCE hit iteration limit (5)')
-    stats.append(('Fold/DCE iterations', 0, 0, prev_instrs, curr_instrs))
+    stats.append(('Fold/DCE iterations', 0, 0, initial_instrs, curr_instrs))
 
     if dump_ir_post or dump_ir:
         print(_ir_header('IR (post-optimization)'), file=sys.stderr)
