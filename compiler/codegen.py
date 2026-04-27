@@ -674,6 +674,10 @@ class Codegen:
         and_pat = re.compile(r'^(\s*)and (r\d+), (r\d+), 65535$')
         or_pat  = re.compile(r'^(\s*)or  (r\d+), (r\d+), 0$')
         xor_pat = re.compile(r'^(\s*)xor (r\d+), (r\d+), 0$')
+        # Additional peephole patterns
+        mul_one_pat = re.compile(r'^(\s*)mul (r\d+), (r\d+), 1$')   # mul rX, rY, 1 -> drop
+        mul_zero_pat = re.compile(r'^(\s*)mul (r\d+), (r\d+), 0$')  # mul rX, rY, 0 -> mov rX, r0
+        
         for i in range(func_start, n):
             if i in drop:
                 continue
@@ -703,13 +707,31 @@ class Codegen:
             if m:
                 drop.add(i)
                 continue
+            # mul rX, rY, 1 -> drop (no-op, identity)
+            m = mul_one_pat.match(ln)
+            if m:
+                drop.add(i)
+                continue
+            # mul rX, rY, 0 -> mov rX, r0 (zero result)
+            m = mul_zero_pat.match(ln)
+            if m:
+                dst = m.group(2)
+                if dst != 'r0':
+                    patch[i] = f'{m.group(1)}mov {dst}, r0'
+                else:
+                    drop.add(i)
+                continue
 
-        # Apply pass 3 drops
+        # Apply pass 3 drops and patches
         _before = len(lines)
-        for i in sorted(drop, reverse=True):
-            lines.pop(i)
+        for i in sorted(drop | set(patch.keys()), reverse=True):
+            if i in drop:
+                lines.pop(i)
+            elif i in patch:
+                lines[i] = patch[i]
         self._peephole_eliminated += _before - len(lines)
         drop.clear()
+        patch.clear()
         n = len(lines)
 
         # Pass 4: mov chain collapsing (only scratch intermediates, r7–r18)
@@ -1098,7 +1120,9 @@ class Codegen:
         end_lbl  = f'._cmp_e_{id(instr)}'
 
         self._ins(f'{j} {true_lbl}')
-        self._ins(f'mov {dst}, 0')
+        # Use r0 (zero register) for 0 instead of loading immediate
+        if dst != 'r0':
+            self._ins(f'mov {dst}, r0')
         self._ins(f'jmp {end_lbl}')
         self._lbl(true_lbl)
         self._ins(f'mov {dst}, 1')
@@ -1133,6 +1157,9 @@ class Codegen:
     # ── Call ──────────────────────────────────────────────────────────────────
 
     def _gen_call(self, instr: ICall):
+        # Check for tail call optimization
+        is_tail_call = getattr(instr, '_is_tail_call', False)
+        
         # Load first 6 arguments into a0-a5 (r1-r6)
         for i, arg in enumerate(instr.args):
             if i < len(ARG_REGS):
@@ -1149,16 +1176,52 @@ class Codegen:
                 self._load_op(arg, SCRATCH_A)
                 self._ins(f'st {SCRATCH_A}, {SP}, {overflow_idx}')
 
+        if is_tail_call:
+            # Tail call: restore callee-saved regs, deallocate frame, then jump
+            # This reuses the current stack frame for the callee
+            self._gen_tail_call_epilogue(instr)
+        else:
+            if isinstance(instr.func, Global):
+                self._ins(f'jmp {LR}, {self._mangle_global(instr.func.name)}')
+            else:
+                # function pointer in a temp
+                self._load_op(instr.func, SCRATCH_A)
+                self._ins(f'jmp {LR}, {SCRATCH_A}')
+
+            if instr.dst is not None:
+                preg = self._regmap.reg(instr.dst.id) if self._regmap else None
+                if preg is not None and preg != RET_REG:
+                    self._ins(f'mov {preg}, {RET_REG}')
+                elif preg is None:
+                    self._store_op(RET_REG, instr.dst)
+
+    def _gen_tail_call_epilogue(self, instr: ICall):
+        """Generate tail call: restore state and jump to callee.
+        
+        For tail calls, we:
+        1. Restore callee-saved registers
+        2. Deallocate our stack frame
+        3. Jump to the callee (they will use our return address in LR)
+        """
+        # Restore callee-saved registers
+        F = self._frame_size - self._va_spill_n - self._callee_save_n - (1 if not self._is_leaf else 0)
+        VS = self._va_spill_n
+        for i, reg in enumerate(self._callee_saves):
+            self._ins(f'ld {reg}, {SP}, {F + VS + i}')
+
+        # Restore link register (non-leaf only)
+        if not self._is_leaf:
+            lr_slot = F + VS + self._callee_save_n
+            self._ins(f'ld {LR}, {SP}, {lr_slot}')
+
+        # Deallocate stack frame
+        if self._frame_size > 0:
+            self._ins(f'add {SP}, {self._frame_size}')
+
+        # Jump to callee - they will return to our caller
         if isinstance(instr.func, Global):
-            self._ins(f'jmp {LR}, {self._mangle_global(instr.func.name)}')
+            self._ins(f'jmp {self._mangle_global(instr.func.name)}')
         else:
             # function pointer in a temp
             self._load_op(instr.func, SCRATCH_A)
-            self._ins(f'jmp {LR}, {SCRATCH_A}')
-
-        if instr.dst is not None:
-            preg = self._regmap.reg(instr.dst.id) if self._regmap else None
-            if preg is not None and preg != RET_REG:
-                self._ins(f'mov {preg}, {RET_REG}')
-            elif preg is None:
-                self._store_op(RET_REG, instr.dst)
+            self._ins(f'jmp {SCRATCH_A}')

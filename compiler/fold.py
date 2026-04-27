@@ -505,6 +505,19 @@ def _var_load_cse(fn: IRFunction) -> None:
                         available[vname] = instr.dst
 
 
+def _tail_call_opt(fn: IRFunction) -> None:
+    """Convert tail calls (call followed by return) into jumps.
+    
+    DISABLED for now - requires careful handling of:
+    - Argument register preservation across callee-saved restore
+    - Stack argument area management
+    - Proper frame deallocation ordering
+    
+    TODO: Re-enable after fixing these issues.
+    """
+    pass
+
+
 def fold(program: IRProgram) -> IRProgram:
     """Run constant folding + copy propagation on every function until stable."""
     for fn in program.functions:
@@ -517,4 +530,5 @@ def fold(program: IRProgram) -> IRProgram:
             _fold_function(fn)
         _remove_trivial_jumps(fn)
         _branch_threading(fn)
+        _tail_call_opt(fn)
     return program

@@ -35,7 +35,7 @@ from .ir import (
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
 )
 
-INLINE_THRESHOLD = 5     # max IR instructions to inline automatically (only trivial getters/setters)
+INLINE_THRESHOLD = 10    # max IR instructions to inline automatically (small leaf functions)
 
 
 def _max_temp_id(instrs: List[Instr]) -> int:
