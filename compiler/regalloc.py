@@ -15,7 +15,9 @@ Algorithm:
      (or spill); non-crossing Temps can use caller-saved registers.
   3. Linear scan: sort intervals by start, greedily assign registers,
      expire intervals that have ended, spill when no register is free.
-  4. Return RegMap: Temp.id → physical register name (or None = spilled).
+  4. Move coalescing: when a Temp is copied to another Temp and their live
+     ranges don't overlap, assign them the same register.
+  5. Return RegMap: Temp.id → physical register name (or None = spilled).
 
 The codegen queries RegMap in _load_op/_store_op:
   - If a Temp has a register, load/store emit mov/nothing instead of ld/st.
@@ -109,7 +111,7 @@ def allocate(fn: IRFunction) -> RegMap:
     callee_used: Set[str] = set()
 
     def _expire(active: List, pool: List, at: int):
-        """Free registers for intervals that ended before `at`."""
+        """Free registers for intervals before `at`."""
         still_active = []
         for (end, tid, reg) in active:
             if end < at:

@@ -243,7 +243,13 @@ class Codegen:
                 self._scratch_a_temp = None
             elif reg == SCRATCH_C and self._scratch_c_temp is not None:
                 self._scratch_c_temp = None
-            self._ins(f'mov {reg}, {op.value & 0xFFFF}')
+            val = op.value & 0xFFFF
+            if val == 0:
+                # Use r0 (zero register) instead of loading 0
+                if reg != 'r0':
+                    self._ins(f'mov {reg}, r0')
+            else:
+                self._ins(f'mov {reg}, {val}')
         elif isinstance(op, StrLabel):
             self._ins(f'mov {reg}, {op.name}')
         elif isinstance(op, Global):
@@ -662,7 +668,51 @@ class Codegen:
         patch.clear()
         n = len(lines)
 
-        # Pass 3: mov chain collapsing (only scratch intermediates, r7–r18)
+        # Pass 3: eliminate no-op ALU operations (add/sub 0, and 0xFFFF, or 0, xor 0)
+        add_pat = re.compile(r'^(\s*)add (r\d+), (r\d+), 0$')
+        sub_pat = re.compile(r'^(\s*)sub (r\d+), (r\d+), 0$')
+        and_pat = re.compile(r'^(\s*)and (r\d+), (r\d+), 65535$')
+        or_pat  = re.compile(r'^(\s*)or  (r\d+), (r\d+), 0$')
+        xor_pat = re.compile(r'^(\s*)xor (r\d+), (r\d+), 0$')
+        for i in range(func_start, n):
+            if i in drop:
+                continue
+            ln = lines[i]
+            # add rX, rY, 0 -> drop (no-op)
+            m = add_pat.match(ln)
+            if m:
+                drop.add(i)
+                continue
+            # sub rX, rY, 0 -> drop (no-op)
+            m = sub_pat.match(ln)
+            if m:
+                drop.add(i)
+                continue
+            # and rX, rY, 65535 -> drop (no-op, 0xFFFF mask)
+            m = and_pat.match(ln)
+            if m:
+                drop.add(i)
+                continue
+            # or rX, rY, 0 -> drop (no-op)
+            m = or_pat.match(ln)
+            if m:
+                drop.add(i)
+                continue
+            # xor rX, rY, 0 -> drop (no-op)
+            m = xor_pat.match(ln)
+            if m:
+                drop.add(i)
+                continue
+
+        # Apply pass 3 drops
+        _before = len(lines)
+        for i in sorted(drop, reverse=True):
+            lines.pop(i)
+        self._peephole_eliminated += _before - len(lines)
+        drop.clear()
+        n = len(lines)
+
+        # Pass 4: mov chain collapsing (only scratch intermediates, r7–r18)
         # Also eliminates mov rX, rX.
         # Repeat until stable (handles 3+ hop chains).
         changed = True

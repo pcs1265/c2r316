@@ -22,7 +22,7 @@ Copy propagation:
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
@@ -89,6 +89,14 @@ def _simplify_binop(instr: IBinOp) -> Instr:
         if op == '*' and rv > 0 and (rv & (rv - 1)) == 0:
             n = rv.bit_length() - 1
             return IBinOp(dst, '<<', left, ImmInt(n), loc)
+        # Strength reduction for unsigned modulo: x % 2^n → x & (2^n - 1)
+        # Note: This is only valid for unsigned modulo. Signed modulo needs
+        # special handling for negative numbers. We conservatively apply this
+        # only when the right operand is a power of 2.
+        # The '%' operator in our IR represents unsigned modulo ('%u').
+        if op == '%' and rv > 0 and (rv & (rv - 1)) == 0:
+            mask = rv - 1
+            return IBinOp(dst, '&', left, ImmInt(mask), loc)
 
     # Identity / absorbing rules — left-hand constant
     if isinstance(left, ImmInt):
@@ -371,6 +379,90 @@ def _remove_trivial_jumps(fn: IRFunction) -> None:
         instrs = fn.instrs
 
 
+def _branch_threading(fn: IRFunction) -> None:
+    """Thread branches: if a jump target is itself a jump, retarget to the final destination.
+
+    Transforms:
+        jmp L1      →  jmp L2
+        ...
+    L1: jmp L2
+    L2: ...
+
+    Also handles conditional branches:
+        jz L1       →  jz L2
+        ...
+    L1: jmp L2
+
+    This reduces the depth of jump chains.
+    """
+    instrs = fn.instrs
+
+    # Build a map: label → (instruction_index, instruction)
+    label_map: Dict[str, int] = {}
+    for i, instr in enumerate(instrs):
+        if isinstance(instr, ILabel):
+            label_map[instr.name] = i
+
+    # Build jump chain map: label → final_target
+    # A label maps to another label if the first non-label instruction after it is a jump
+    jump_chain: Dict[str, str] = {}
+    for lbl, idx in label_map.items():
+        j = idx + 1
+        # Skip additional labels
+        while j < len(instrs) and isinstance(instrs[j], ILabel):
+            j += 1
+        if j < len(instrs) and isinstance(instrs[j], IJump):
+            # This label leads directly to another jump
+            target = instrs[j].target
+            jump_chain[lbl] = target
+
+    # Resolve jump chains to their final targets (follow the chain)
+    def resolve_target(target: str, visited: set = None) -> str:
+        if visited is None:
+            visited = set()
+        if target in visited:
+            return target  # cycle detected
+        visited.add(target)
+        if target in jump_chain:
+            return resolve_target(jump_chain[target], visited)
+        return target
+
+    # Apply threading to all jumps
+    changed = False
+    for i, instr in enumerate(instrs):
+        if isinstance(instr, IJump):
+            final = resolve_target(instr.target)
+            if final != instr.target:
+                instrs[i] = IJump(final, instr.loc)
+                changed = True
+        elif isinstance(instr, IJumpIf):
+            final = resolve_target(instr.target)
+            if final != instr.target:
+                instrs[i] = IJumpIf(instr.cond, final, instr.loc)
+                changed = True
+        elif isinstance(instr, IJumpIfNot):
+            final = resolve_target(instr.target)
+            if final != instr.target:
+                instrs[i] = IJumpIfNot(instr.cond, final, instr.loc)
+                changed = True
+
+    # If we changed anything, remove unreachable labels
+    if changed:
+        # Find all labels that are still referenced
+        used_labels: Set[str] = set()
+        for instr in instrs:
+            if isinstance(instr, IJump):
+                used_labels.add(instr.target)
+            elif isinstance(instr, IJumpIf):
+                used_labels.add(instr.target)
+            elif isinstance(instr, IJumpIfNot):
+                used_labels.add(instr.target)
+
+        # Remove labels that are no longer referenced
+        fn.instrs = [instr for instr in instrs
+                     if not isinstance(instr, ILabel) or instr.name in used_labels]
+
+
 def _var_load_cse(fn: IRFunction) -> None:
     """Replace redundant Var loads within a basic block.
 
@@ -424,4 +516,6 @@ def fold(program: IRProgram) -> IRProgram:
             prev_len = len(fn.instrs)
             _fold_function(fn)
         _remove_trivial_jumps(fn)
+        # Branch threading disabled for now - can create infinite loops
+        # _branch_threading(fn)
     return program

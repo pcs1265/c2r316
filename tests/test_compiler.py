@@ -312,7 +312,7 @@ def test_examples_run():
             stdin_path = path.replace('.c', '.stdin')
             stdin = open(stdin_path, encoding='utf-8').read() if os.path.isfile(stdin_path) else ''
             asm = mod.compile_c(src, src_name=rel, src_path=path)
-            ret, out = _emu_run_main(asm, max_cycles=20_000_000, stdin=stdin)
+            ret, out = _emu_run_main(asm, max_cycles=500_000, stdin=stdin)
             actual = _normalize(out)
             
             # Check for FAIL in output - test programs should have PASS: N, FAIL: 0
