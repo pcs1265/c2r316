@@ -5,6 +5,26 @@ Sized for one engineer; XL means "a multi-week project, plan first."
 
 ---
 
+## 0. Completed Improvements
+
+The following items have been implemented since the last survey:
+
+| Item | Size | Value | Notes |
+|---|---|---|---|
+| `switch` / `case` / `default` / fallthrough | M | ★★★ | Implemented — dispatch + fallthrough + break + default |
+| `goto` and labels | S | ★★ | Implemented — `Label` and `Goto` IR ops; labels mangled to `._user_<name>` |
+| Multi-dimensional arrays `int a[3][4]` | S | ★★ | Implemented — parser builds nested `CArray`; subscripting and address arithmetic work |
+| Static local variables | S | ★★ | Implemented — static locals lowered to globals with mangled names |
+| `sizeof(type)` and `sizeof expr` | S | ★★ | Implemented — parser creates `Sizeof` nodes |
+| `enum` with optional tag and initializers | S | ★★ | Implemented — auto-incrementing int constants |
+| `typedef` (aliases, function-pointer typedefs) | S | ★★ | Implemented — simple aliases and function-pointer typedefs |
+| `const` keyword | S | ★ | Implemented — parsed but ignored (no semantic effect) |
+| Function pointer declarators | S | ★ | Implemented — `int (*fp)(int)` parsed in params, locals, globals, typedefs, return types |
+| Strength reduction | S | ★★ | Implemented — `x * 2^n` → `x << n`, unsigned `x / 2^n` → `x >> n`, unsigned `x % 2^n` → `x & (2^n - 1)` |
+| Algebraic identities | S | ★★ | Implemented — `x & 0`, `x & 0xFFFF`, `x | 0`, `x | 0xFFFF`, `x ^ 0`, self-ops |
+
+---
+
 ## 1. Language Correctness & Coverage
 
 ### Critical — known bugs / silent miscompiles
@@ -12,7 +32,6 @@ Sized for one engineer; XL means "a multi-week project, plan first."
 |---|---|---|---|
 | 32-bit `long` arithmetic | XL | ★★★ | Type parses but codegen is 16-bit. Need `add+adc`, `sub+sbb`, `mul+mulh` on register pairs, even-register alignment per ABI §9. Touches IR (split `IBinOp` for long, or post-pass that lowers long ops), codegen, regalloc, fold (constant fold of long), and runtime helpers (`__lmul`, `__ldiv`). |
 | Integer literals > 16 bits | M | ★★★ | Currently truncated at IR generation. Needs multi-word `ImmInt` (or `ImmLong`) and codegen that emits two `mov` instructions. Blocked by long arithmetic. |
-| Static local variables | S | ★★ | `is_static` flag exists but irgen treats them as ordinary locals. Need to lower static locals to globals with mangled names (e.g. `_C_func_var`) and skip frame allocation. |
 | Struct/union pass-by-value | M | ★★ | ABI §4 hidden-pointer convention not generated. Caller allocates result slot and passes its address as implicit first arg; callee writes through it. Symmetric for parameters. |
 | Pointer arithmetic scaling | S | ★★ | Verify `p + n` scales by `sizeof(*p)`. Spot-check codegen for non-`int*` pointers; if missing, add scaling in irgen. |
 | Standard integer promotions | M | ★★ | `char + char` should promote to `int` per C99 §6.3.1.1. Likely partial. Audit semantic + irgen. |
@@ -20,19 +39,15 @@ Sized for one engineer; XL means "a multi-week project, plan first."
 ### Missing language features
 | Item | Size | Value | Notes |
 |---|---|---|---|
-| `switch` / `case` / `default` / fallthrough | M | ★★★ | Add tokens, parse statement, lower to either chained `if` (simple) or jump table (when cases are dense). Jump table needs a label-array IR op. |
-| `goto` and labels | S | ★★ | Add `Label` and `Goto` IR ops; parser collects labels per function and emits `LabelDef`/`IGoto`. Validate labels resolve at end of function. |
-| Multi-dimensional arrays `int a[3][4]` | S | ★★ | Parser already builds `CArray`; just iterate the bracket loop. Subscripting `a[i][j]` and address arithmetic must scale by inner dim. |
 | `__func__` / `__FUNCTION__` | S | ★ | Per-function implicit `static const char[]` initialized to function name. Inject at irgen during function prologue if referenced. |
 | Designated initializers `{.field = val, [3] = x}` | M | ★★ | Parse `.field` and `[idx]` prefixes inside init lists; resolve to offset, fill remaining slots with zero. |
 | Compound literals `(Type){...}` | M | ★ | Lower to a temporary local of `Type` initialized in place. |
 | Inline asm output operands + clobbers | M | ★★ | Currently input-only. Output `=r` needs to bind a temp and write it back; clobbers force regalloc to spill. Real value for hand-tuned routines. |
 | Bitfield struct members `: N` | M | ★ | Need bit-level load/store and packed layout rules. |
 | `enum` constant expressions | S | ★ | Currently only literal `= INT` is allowed; extend to a tiny constant evaluator (handles `+ - * / & | ^ << >> ~ ! && \|\|`). |
-| `short`, `signed`, `const`, `volatile`, `register` | S each | ★★ | `const`/`volatile` parsed-and-ignored is fine for now (no harm). `short` should map to a 16-bit type (already the natural width). `signed` is a no-op modifier on `int`/`char`. |
+| `short`, `signed`, `register` | S each | ★★ | `short` should map to a 16-bit type (already the natural width). `signed` is a no-op modifier on `int`/`char`. |
 | `_Bool` / `bool` | S | ★ | One-bit type that normalizes to 0/1 on store. Trivial via `& 1`. |
 | `float` / `double` | XL | ★ | Would require a soft-float runtime (or fixed-point). Probably not worth it on a 16-bit ALU unless there's a specific use case. |
-| Function-pointer declarators in more positions | S | ★ | Already in params/locals/globals; verify in `typedef`, returns. |
 | Variable-length arrays (VLAs) | L | ★ | Stack allocation with dynamic size. Low priority. |
 
 ### Standard-conformance polish
@@ -52,14 +67,12 @@ Sized for one engineer; XL means "a multi-week project, plan first."
 | Common subexpression elimination (CSE) | M | ★★★ | Per the existing TODO note: `&arr` recomputed on every array access. Hash `(op, operands)` within a basic block; replace duplicates with the first temp. |
 | Dead store elimination | M | ★★ | Requires liveness analysis on `Var`s, not just `Temp`s. Catches "x = 5; x = 6" and writes-then-overwrite patterns. |
 | Loop-invariant code motion (LICM) | L | ★★ | Detect natural loops, hoist invariant computations out of the header. Non-trivial without dominator tree. |
-| Strength reduction | S | ★★ | `x * 2^n` → `x << n`, `x / 2^n` (unsigned) → `x >> n`, `x % 2^n` (unsigned) → `x & (2^n - 1)`. Pure local rewrite in `fold.py`. |
-| Algebraic simplification | S | ★★ | `x + 0`, `x * 1`, `x & 0`, `x \| 0`, `x ^ x`, `x - x`, `x && 1`, etc. Add to `fold.py`. |
 | Branch threading | M | ★ | If `if (c) goto L1; else goto L2;` and L1 is `goto L3`, retarget. Cleans up fold/DCE leftovers. |
 | Tail-call optimization | M | ★★ | When a function ends with `return f(args)`, jump instead of call+ret. Saves a frame on recursive helpers. Needs ABI compatibility check (same arity, same return type). |
 | Better inlining heuristics | M | ★ | Today appears `always_inline`-only. Add small-leaf-function auto-inlining (size < N IR instrs, no recursion, called ≤ K times). Run fold→DCE iteratively until fixed point. |
 | Copy propagation through `Var` sources | M | ★ | Blocked per TODO: needs distinguishing address-position vs. value-position uses of a `Var`. Mark IR ops with which operands are addresses (already implicit in op kind — formalize). |
 | Constant propagation across basic blocks | M | ★ | Today's `fold.py` is local. Add a tiny worklist-based sparse conditional constant propagation. |
-| Switch jump-table lowering | S | ★ | Once `switch` exists, emit `jmp [tbl + r]` for dense cases. R316 has indirect jumps via register; encode the table as 16-bit words. |
+| Switch jump-table lowering | S | ★ | For dense cases, emit `jmp [tbl + r]` instead of chained comparisons. R316 has indirect jumps via register; encode the table as 16-bit words. |
 
 ### Codegen / ASM peephole
 | Item | Size | Value | Notes |
@@ -191,12 +204,10 @@ If picking one improvement at a time, this is the order I'd take based on **valu
 
 1. **Run-on-VM execution tests** (5 + 6). Without these, every change in §1–§2 is shipping blind. Highest ROI single item.
 2. **Golden ASM snapshots** (§6). Cheap, catches regressions immediately.
-3. **`switch` / `case`** (§1). Big language feature, unblocks real programs.
-4. **Strength reduction + algebraic simplification** (§2). Smallest possible code change for visible improvement in generated ASM.
-5. **`string.h` + real `printf`** (§4). Most-asked-for runtime gap.
-6. **Static locals + struct pass-by-value** (§1). Removes the two main "gotchas" users hit when porting C code.
-7. **32-bit `long` arithmetic** (§1). Big project; do it after the test infrastructure is solid because it touches every layer.
-8. **Pass manager refactor** (§7) — only when there's a third or fourth optimization pass and the ad-hoc invocation in `compiler.py` starts to hurt.
-9. **Graph-coloring regalloc** (§2) — only if generated code is benchmarked to actually be regalloc-bound. Linear scan is usually fine for hobby compilers.
+3. **`string.h` + real `printf`** (§4). Most-asked-for runtime gap.
+4. **Static locals + struct pass-by-value** (§1). Removes the two main "gotchas" users hit when porting C code.
+5. **32-bit `long` arithmetic** (§1). Big project; do it after the test infrastructure is solid because it touches every layer.
+6. **Pass manager refactor** (§7) — only when there's a third or fourth optimization pass and the ad-hoc invocation in `compiler.py` starts to hurt.
+7. **Graph-coloring regalloc** (§2) — only if generated code is benchmarked to actually be regalloc-bound. Linear scan is usually fine for hobby compilers.
 
 Skip indefinitely unless a concrete need appears: float/double, VLAs, LSP, fuzz testing, full graph-coloring regalloc.

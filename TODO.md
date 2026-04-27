@@ -7,17 +7,17 @@
 - `long`, `unsigned long` — parsed and type-checked; **no working codegen** (see Known Issues)
 - Pointers (single and multi-level)
 - 1D arrays (with initializers, inferred size from `{}` or string literal)
+- Multi-dimensional arrays (`int a[3][4]`, with initializers and subscripting)
 - `struct` and `union` (field access via `.` and `->`, nested, global, arrays of structs)
 - `va_list` (as `int*` alias)
 - `enum` (with optional tag, optional initializers — auto-incrementing int constants)
 - `typedef` (simple aliases, function-pointer typedefs)
-- `goto` and labels (label names are mangled to `._user_<name>` in the asm)
 
 ### Declarations
 - Global and local variable declarations with optional initializers
 - Multiple declarators in one statement: `int a, b = 2, c;`
 - Function declarations (forward declarations) and definitions
-- `static` and `extern` storage class modifiers (parsed; `static` local semantics — persistent across calls — **not implemented**)
+- `static` and `extern` storage class modifiers (including static local persistence)
 - Global array `{...}` initializers (literal values only)
 - Local array `{...}` initializers with zero-fill for partial init
 - Inferred array size: `int arr[] = {1,2,3}` and `char s[] = "hello"`
@@ -27,6 +27,8 @@
 - `while`, `do-while`, `for` (with optional init/cond/step; init may declare a variable)
 - `return` (with or without expression)
 - `break`, `continue`
+- `switch` / `case` / `default` (with fallthrough support)
+- `goto` and labels (label names are mangled to `._user_<name>` in the asm)
 - Inline assembly: `asm("template" : "r"(expr), ...)` — input operands only
 
 ### Expressions
@@ -43,7 +45,7 @@
 - Ternary `? :`
 - Cast `(type)expr`
 - Address-of `&`, dereference `*`
-- Array subscript `a[i]`
+- Array subscript `a[i]` (including multi-dimensional)
 - Member access `.` and `->` (with field offset arithmetic)
 - Function calls (≤6 args in registers, 7th+ via stack)
 - Variadic calls via `va_start` / `va_arg` / `va_end`
@@ -90,12 +92,9 @@
 
 | Feature | Notes |
 |---|---|
-| `short`, `signed`, `const`, `volatile`, `register` | No lexer tokens |
+| `short`, `signed`, `const`, `volatile`, `register` | `const`/`volatile` parsed but ignored; `short` not implemented |
 | `float`, `double` | No support at any level |
-| `switch` / `case` / `default` | Implemented — dispatch + fallthrough + break + default |
-| Multi-dimensional arrays | `int a[3][4]` is not parsed |
 | Struct/union pass-by-value | Hidden pointer not generated |
-| Function pointer declarator syntax | Implemented — `int (*fp)(int)` parsed in params, locals, globals |
 | `__func__` / `__FUNCTION__` | C99 implicit per-function string variable; not yet implemented |
 | Designated initializers (`{.field = val}`) | Not supported |
 | Compound literals (`(Type){...}`) | Not supported |
@@ -106,4 +105,3 @@
 ---
 
 ## Potential Optimizations (Future)
-

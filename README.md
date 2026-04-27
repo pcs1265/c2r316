@@ -85,17 +85,20 @@ Provided library functions: `putchar`, `getchar`, `puts`, `print_int`, `print_ui
 | `int`, `unsigned int` | Full support |
 | `char`, `unsigned char` | Full support |
 | `void` | Full support |
+| `long`, `unsigned long` | Parsed and type-checked; **16-bit arithmetic only** (see Limitations) |
 | Pointers (single and multi-level) | Full support |
 | 1D arrays (fixed size, inferred size, initializer lists) | Full support |
+| Multi-dimensional arrays | Full support |
 | `struct`, `union` (nested, global, arrays of) | Full support |
-| `long`, `unsigned long` | Parsed and type-checked; **16-bit arithmetic only** (see Limitations) |
+| `enum` (with optional tag, initializers) | Full support |
+| `typedef` (aliases, function-pointer typedefs) | Full support |
 | `va_list` | Full support (alias for `int*`) |
 
 ### Declarations
 - Global and local variable declarations with optional initializer
 - Multiple declarators: `int a, b = 2, c;`
 - Function declarations (forward declarations) and definitions
-- `static` and `extern` storage class (parsed; static local persistence not implemented)
+- `static` and `extern` storage class (global and local static with persistence)
 - Array initializer lists `{...}` with zero-fill for partial initializers
 - Inferred array size: `int arr[] = {1,2,3}`, `char s[] = "hello"`
 
@@ -103,6 +106,8 @@ Provided library functions: `putchar`, `getchar`, `puts`, `print_int`, `print_ui
 - `if` / `if-else`
 - `while`, `do-while`, `for` (init may declare a variable)
 - `return`, `break`, `continue`
+- `switch` / `case` / `default` (with fallthrough support)
+- `goto` and labels
 - Inline assembly: `asm("template" : "r"(expr), ...)` — input operands, `%0`–`%9` substitution
 
 ### Expressions
@@ -113,16 +118,17 @@ Provided library functions: `putchar`, `getchar`, `puts`, `print_int`, `print_ui
 - Bitwise: `& | ^ ~ << >>`
 - Comparison: `== != < > <= >=`
 - Logical: `&& ||` (short-circuit)
-- Compound assignment: `+= -= *= /= %= &= |= ^=`
+- Compound assignment: `+= -= *= /= %= &= |= ^= <<= >>=`
 - Pre/post `++` / `--`
 - Ternary `? :`
+- `sizeof(type)` and `sizeof expr`
 - Cast `(type)expr`
 - Address-of `&`, dereference `*`
-- Array subscript `a[i]`
+- Array subscript `a[i]` (including multi-dimensional)
 - Member access `.` and `->` (with field offset arithmetic)
 - Function calls: ≤6 args in registers (`r1`–`r6`), 7th+ args via stack
 - Variadic calls: `va_start` / `va_arg` / `va_end`
-- Function pointer calls (call-through; declarator syntax requires cast)
+- Function pointer calls (typedef, local/global declarators, arrays of function pointers, passing as argument)
 
 ### Preprocessor
 - `#include "file"` and `#include <file>`
@@ -141,13 +147,16 @@ Provided library functions: `putchar`, `getchar`, `puts`, `print_int`, `print_ui
 See [TODO.md](TODO.md) for the full list. Key gaps:
 
 - **`long` arithmetic** — type is tracked but all arithmetic is 16-bit; multi-word codegen not implemented
-- **`sizeof`** — IR node exists but the parser never creates it; `sizeof` is not a keyword token
-- **`typedef`** — token exists, no parser branch; `typedef struct { } Name;` produces a parse error
-- **`switch`/`case`**, **`goto`**, **`enum`** — not implemented
-- **`short`, `const`, `volatile`, `float`, `double`** — no lexer tokens; not supported
-- **Multi-dimensional arrays** — `int a[3][4]` not parsed
-- **Struct pass-by-value** — use pointers; hidden-pointer ABI not generated
+- **Integer literals > 16 bits** — truncated at IR generation; multi-word constants not emitted
+- **Struct/union pass-by-value** — use pointers; hidden-pointer ABI not generated
+- **`short`, `signed`, `const`, `volatile`, `register`** — parsed but `const`/`volatile` ignored; `short` not implemented
+- **`float`, `double`** — no support at any level
 - **`__func__` / `__FUNCTION__`** — C99 implicit per-function string; not yet implemented
+- **Designated initializers** — `{.field = val, [3] = x}` not supported
+- **Compound literals** — `(Type){...}` not supported
+- **Inline asm output operands / clobbers** — input-only `asm()`
+- **Bitfield struct members** — `: N` not supported
+- **Variable-length arrays (VLAs)** — not supported
 - **Signed division** — `__udiv`/`__umod` are unsigned helpers; no signed division
 
 ## Usage
