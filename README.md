@@ -75,7 +75,14 @@ C Source
 
 At boot, the runtime binary-searches the address space to find the top of writable RAM, initializes `r30` (sp), configures the terminal MMIO (geometry, colors, newline mode), clears the screen, then jumps to `main`.
 
-Provided library functions: `putchar`, `getchar`, `puts`, `print_int`, `print_uint`, `print_hex`, `printf` (supports `%d %u %x %c %s %%`), `strlen`, `strcmp`, `strcpy`, `memset`, `memcpy`.
+### Standard Library (`include/`)
+
+The compiler provides C header files with inline implementations:
+
+- **`stdio.h`**: `putchar`, `getchar`, `puts`, `print_str`, `print_int`, `print_uint`, `print_hex`, `printf` (supports `%d %u %x %c %s %%`), `scanf` (supports `%d %u %x %c %s`)
+- **`string.h`**: `memset`, `memcpy`, `memmove`, `memcmp`, `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`, `strchr`, `strstr`
+- **`terminal.h`**: Low-level terminal I/O primitives (`term_putch`, `term_getch`, etc.)
+- **`stdarg.h`**: Variadic argument handling (`va_list`, `va_start`, `va_arg`, `va_end`)
 
 ## Supported C Features
 
@@ -149,7 +156,7 @@ See [TODO.md](TODO.md) for the full list. Key gaps:
 - **`long` arithmetic** — type is tracked but all arithmetic is 16-bit; multi-word codegen not implemented
 - **Integer literals > 16 bits** — truncated at IR generation; multi-word constants not emitted
 - **Struct/union pass-by-value** — use pointers; hidden-pointer ABI not generated
-- **`short`, `signed`, `const`, `volatile`, `register`** — parsed but `const`/`volatile` ignored; `short` not implemented
+- **`const`, `volatile`, `register`** — parsed and accepted but semantically ignored
 - **`float`, `double`** — no support at any level
 - **`__func__` / `__FUNCTION__`** — C99 implicit per-function string; not yet implemented
 - **Designated initializers** — `{.field = val, [3] = x}` not supported
@@ -195,12 +202,21 @@ compiler/
   semantic.py        — Type checking and symbol table
   irgen.py           — AST → Three-Address Code IR
   ir.py              — IR instruction and operand definitions
-  fold.py            — Constant folding and copy propagation
+  fold.py            — Constant folding, copy propagation, CSE, DSE
   dce.py             — Dead code and dead function elimination
+  inline.py          — Function inlining
   regalloc.py        — Linear-scan register allocator
   codegen.py         — IR → R316 assembly
+  preprocessor.py    — C preprocessor (#include, #define, etc.)
+  builtins.h         — Auto-prepended built-in helpers
+include/
+  stdio.h            — Standard I/O functions (printf, scanf, etc.)
+  stdlib.h           — Standard library stubs
+  string.h           — String and memory functions
+  stdarg.h           — Variadic argument macros
+  stdint.h           — Integer type definitions
+  terminal.h         — Low-level terminal I/O
 runtime/
-  stdlib.h           — C standard library declarations
   runtime.asm        — Bootstrap and runtime helpers
 docs/
   ABI.md             — Calling convention and register usage specification

@@ -22,6 +22,14 @@ The following items have been implemented since the last survey:
 | Function pointer declarators | S | ★ | Implemented — `int (*fp)(int)` parsed in params, locals, globals, typedefs, return types |
 | Strength reduction | S | ★★ | Implemented — `x * 2^n` → `x << n`, unsigned `x / 2^n` → `x >> n`, unsigned `x % 2^n` → `x & (2^n - 1)` |
 | Algebraic identities | S | ★★ | Implemented — `x & 0`, `x & 0xFFFF`, `x | 0`, `x | 0xFFFF`, `x ^ 0`, self-ops |
+| `short`, `signed`, `register` keywords | S | ★★ | Implemented — all parsed and accepted; `short` maps to 16-bit type |
+| `string.h` core functions | M | ★★★ | Implemented — `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`, `strchr`, `strstr` in `include/string.h` |
+| `printf` | L | ★★★ | Implemented — `%d %u %x %c %s %%` in `include/stdio.h` |
+| `scanf` | M | ★★ | Implemented — `%d %u %x %c %s` in `include/stdio.h` |
+| Dead store elimination (DSE) | S | ★★ | Implemented in `compiler/fold.py` — removes stores to locals overwritten before read |
+| Common subexpression elimination (CSE) | S | ★★ | Implemented in `compiler/fold.py` — deduplicates `IAddrOf` and `Var` loads within basic blocks |
+| Trivial jump removal | S | ★ | Implemented in `compiler/fold.py` — eliminates jumps to immediately-following labels |
+| Function inlining | M | ★★ | Implemented in `compiler/inline.py` — inlines `always_inline` functions |
 
 ---
 
@@ -45,7 +53,6 @@ The following items have been implemented since the last survey:
 | Inline asm output operands + clobbers | M | ★★ | Currently input-only. Output `=r` needs to bind a temp and write it back; clobbers force regalloc to spill. Real value for hand-tuned routines. |
 | Bitfield struct members `: N` | M | ★ | Need bit-level load/store and packed layout rules. |
 | `enum` constant expressions | S | ★ | Currently only literal `= INT` is allowed; extend to a tiny constant evaluator (handles `+ - * / & | ^ << >> ~ ! && \|\|`). |
-| `short`, `signed`, `register` | S each | ★★ | `short` should map to a 16-bit type (already the natural width). `signed` is a no-op modifier on `int`/`char`. |
 | `_Bool` / `bool` | S | ★ | One-bit type that normalizes to 0/1 on store. Trivial via `& 1`. |
 | `float` / `double` | XL | ★ | Would require a soft-float runtime (or fixed-point). Probably not worth it on a 16-bit ALU unless there's a specific use case. |
 | Variable-length arrays (VLAs) | L | ★ | Stack allocation with dynamic size. Low priority. |
@@ -64,8 +71,6 @@ The following items have been implemented since the last survey:
 ### IR-level passes (new)
 | Item | Size | Value | Notes |
 |---|---|---|---|
-| Common subexpression elimination (CSE) | M | ★★★ | Per the existing TODO note: `&arr` recomputed on every array access. Hash `(op, operands)` within a basic block; replace duplicates with the first temp. |
-| Dead store elimination | M | ★★ | Requires liveness analysis on `Var`s, not just `Temp`s. Catches "x = 5; x = 6" and writes-then-overwrite patterns. |
 | Loop-invariant code motion (LICM) | L | ★★ | Detect natural loops, hoist invariant computations out of the header. Non-trivial without dominator tree. |
 | Branch threading | M | ★ | If `if (c) goto L1; else goto L2;` and L1 is `goto L3`, retarget. Cleans up fold/DCE leftovers. |
 | Tail-call optimization | M | ★★ | When a function ends with `return f(args)`, jump instead of call+ret. Saves a frame on recursive helpers. Needs ABI compatibility check (same arity, same return type). |
@@ -119,9 +124,7 @@ The following items have been implemented since the last survey:
 
 | Item | Size | Value | Notes |
 |---|---|---|---|
-| `string.h` core: `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat` | M | ★★★ | Most C programs need these. Implement in C in `runtime/string.h`/`.c` and let DCE drop unused. |
 | `stdlib.h`: `abs`, `atoi`, `min/max` macros | S | ★★ | Trivial. |
-| Real `printf` | L | ★★★ | Currently `print_int`, `puts`. Add `%s %d %u %x %o %c %%` plus width/precision/padding. Variadic-aware. |
 | `malloc`/`free` (bump or freelist) | M | ★ | If heap is desired. Bump allocator first; freelist later. Document heap region in ABI. |
 | `assert(x)` | S | ★★ | Macro that calls `__assert_fail(file, line, msg)` runtime. Critical for finding bugs in test programs. |
 | `setjmp`/`longjmp` | M | ★ | Saves callee-saved regs + sp/lr to a `jmp_buf`. Useful but niche. |

@@ -72,6 +72,10 @@
 - Algebraic identities: `x & 0`, `x & 0xFFFF`, `x | 0`, `x | 0xFFFF`, `x ^ 0`; self-ops on identical Temps (`t - t`, `t ^ t`, `t == t`, etc.)
 - Unary constant folding for `-` and `~`
 - Dead code elimination + dead function elimination (`compiler/dce.py`)
+- Dead store elimination (`compiler/fold.py`): removes stores to locals that are overwritten before being read
+- Common subexpression elimination (CSE) (`compiler/fold.py`): deduplicates `IAddrOf` and `Var` loads within basic blocks
+- Trivial jump removal: eliminates jumps to immediately-following labels
+- Function inlining (`compiler/inline.py`): inlines `always_inline` functions
 - Linear-scan register allocator (`compiler/regalloc.py`): Temps → r10–r18 (caller-saved) and r19–r29 (call-crossing, callee-saved)
 - Compare-branch fusion: `t = a < b; if t goto L` → `sub r0,a,b; jl L`
 - Peephole: `st Rx,r30,N` + `ld Ry,r30,N` → `mov Ry,Rx`
