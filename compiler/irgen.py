@@ -754,6 +754,11 @@ class IRGen:
         """Store val into an lvalue target."""
         loc = self._loc(target)
         addr = self._gen_addr(target)
+        # Truncate to 8 bits when storing to char
+        if isinstance(getattr(target, 'ctype', None), CChar):
+            t = self._tmp()
+            self._emit(IBinOp(t, '&', val, ImmInt(0xFF), loc))
+            val = t
         self._emit(IStore(addr, val, loc))
 
     # ── BinOp ─────────────────────────────────────────────────────────────────
