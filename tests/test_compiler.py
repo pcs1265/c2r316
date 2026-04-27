@@ -314,8 +314,17 @@ def test_examples_run():
             asm = mod.compile_c(src, src_name=rel, src_path=path)
             ret, out = _emu_run_main(asm, max_cycles=20_000_000, stdin=stdin)
             actual = _normalize(out)
+            
+            # Check for FAIL in output - test programs should have PASS: N, FAIL: 0
+            fail_match = re.search(r'FAIL:\s*(\d+)', actual)
+            fail_count = int(fail_match.group(1)) if fail_match else 0
+            
             if actual == expected:
-                check(f'execute {rel}', True)
+                if fail_count > 0:
+                    # Output matches golden but test program reports failures
+                    check(f'execute {rel}', False, f'test program has {fail_count} FAIL(s)')
+                else:
+                    check(f'execute {rel}', True)
             else:
                 # short, locating diff: first 60 chars at the divergence point
                 idx = next((i for i in range(min(len(actual), len(expected)))
