@@ -27,9 +27,14 @@ The following items have been implemented since the last survey:
 | `printf` | L | ★★★ | Implemented — `%d %u %x %c %s %%` in `include/stdio.h` |
 | `scanf` | M | ★★ | Implemented — `%d %u %x %c %s` in `include/stdio.h` |
 | Dead store elimination (DSE) | S | ★★ | Implemented in `compiler/fold.py` — removes stores to locals overwritten before read |
-| Common subexpression elimination (CSE) | S | ★★ | Implemented in `compiler/fold.py` — deduplicates `IAddrOf` and `Var` loads within basic blocks |
-| Trivial jump removal | S | ★ | Implemented in `compiler/fold.py` — eliminates jumps to immediately-following labels |
-| Function inlining | M | ★★ | Implemented in `compiler/inline.py` — inlines `always_inline` functions |
+| Common subexpression elimination (CSE) | S | ★★ | Implemented in `compiler/fold.py` — `IAddrOf` CSE and Var-load CSE within basic blocks |
+| Trivial jump removal | S | ★ | Implemented in `compiler/fold.py` — eliminates `jmp L` where L is the immediately following label |
+| Branch / jump threading | S | ★ | Implemented in `compiler/fold.py` — resolves jump chains (`jmp L1; L1: jmp L2` → `jmp L2`); removes labels no longer referenced after threading |
+| Copy propagation | S | ★★ | Implemented in `compiler/fold.py` — propagates `ImmInt`/`StrLabel` constants to all use sites; propagates `Var`/`Temp`/`Global` sources at single-use sites; validates Var sources for clobber safety |
+| Constant folding | S | ★★ | Implemented in `compiler/fold.py` — folds all arithmetic, bitwise, shift, and comparison binops; folds unary `-`/`~` on constants; runs after copy propagation until stable |
+| Dead function elimination | S | ★★ | Implemented in `compiler/dce.py` — removes functions unreachable from `main` via call-graph reachability (handles function-pointer address-taken references) |
+| Function inlining | M | ★★ | Implemented in `compiler/inline.py` — inlines `always_inline` functions unconditionally; auto-inlines small static functions (≤ 10 IR instrs) and non-static functions called exactly once; collapses arbitrarily deep `always_inline` chains in phase 1 |
+| Linear scan register allocation | M | ★★ | Implemented in `compiler/regalloc.py` — builds live intervals, classifies call-crossing temps (→ callee-saved) vs. non-crossing (→ caller-saved), spills when no register is free, includes move coalescing |
 
 ---
 
@@ -68,18 +73,89 @@ The following items have been implemented since the last survey:
 
 ## 2. Optimization
 
-### IR-level passes (new)
-| Item | Size | Value | Notes |
-|---|---|---|---|
-| Loop-invariant code motion (LICM) | L | ★★ | Detect natural loops, hoist invariant computations out of the header. Non-trivial without dominator tree. |
-| Branch threading | M | ★ | If `if (c) goto L1; else goto L2;` and L1 is `goto L3`, retarget. Cleans up fold/DCE leftovers. |
-| Tail-call optimization | M | ★★ | When a function ends with `return f(args)`, jump instead of call+ret. Saves a frame on recursive helpers. Needs ABI compatibility check (same arity, same return type). |
-| Better inlining heuristics | M | ★ | Today appears `always_inline`-only. Add small-leaf-function auto-inlining (size < N IR instrs, no recursion, called ≤ K times). Run fold→DCE iteratively until fixed point. |
-| Copy propagation through `Var` sources | M | ★ | Blocked per TODO: needs distinguishing address-position vs. value-position uses of a `Var`. Mark IR ops with which operands are addresses (already implicit in op kind — formalize). |
-| Constant propagation across basic blocks | M | ★ | Today's `fold.py` is local. Add a tiny worklist-based sparse conditional constant propagation. |
-| Switch jump-table lowering | S | ★ | For dense cases, emit `jmp [tbl + r]` instead of chained comparisons. R316 has indirect jumps via register; encode the table as 16-bit words. |
+### What is already implemented
 
-### Codegen / ASM peephole
+The compiler runs the following passes in order (see `compiler.py`):
+
+| Pass | Module | Scope | Algorithm |
+|---|---|---|---|
+| Constant folding | `fold.py` | Per-function, block-local | Fold binop/unary on `ImmInt` operands; arithmetic, bitwise, shift, comparisons |
+| Copy propagation | `fold.py` | Per-function, block-local | Forward substitution of constants (multi-use) and single-use `Var`/`Temp`/`Global` sources |
+| Algebraic simplification | `fold.py` | Per-instruction | Identities: `x+0`, `x*1`, `x&0`, `x|0xFFFF`, `x^0`, `x-x=0`, `x^x=0`, self-`&`/`|` |
+| Strength reduction | `fold.py` | Per-instruction | `x * 2^n → x << n`; `x % 2^n → x & (2^n-1)` (unsigned only) |
+| Dead store elimination | `fold.py` | Per-function, block-local | Removes `IStore(Var, _)` overwritten before read; conservative: skips escaped vars, invalidates on call/label |
+| Var-load CSE | `fold.py` | Per-function, block-local | Replaces duplicate `ICopy(t, Var('x'))` with `ICopy(t, prior_temp)`; invalidates on store/call/label |
+| AddrOf CSE | `fold.py` | Per-function, block-local | Deduplicates `IAddrOf` instructions for the same variable within a basic block |
+| Trivial jump removal | `fold.py` | Per-function | Removes `jmp L` where `L` is the immediately following label; iterates until stable |
+| Branch / jump threading | `fold.py` | Per-function | Resolves jump chains to their final targets using a chain map; removes labels that become unreferenced |
+| Dead code elimination | `dce.py` | Per-function | Mark-sweep on `Temp` liveness; void-result `ICall` always kept; drops dead temp definitions |
+| Dead function elimination | `dce.py` | Whole-program | Call-graph reachability from `main`; address-taken functions (`IAddrOf(t, Global)`) kept |
+| Function inlining | `inline.py` | Whole-program | `always_inline`: unconditional; static functions ≤ 10 IR instrs: auto-inline; non-static called exactly once, ≤ 10 instrs, address not taken: auto-inline. Phase 1 collapses deep `always_inline` chains; phase 2 inlines into all other callers |
+| Linear scan register allocation | `regalloc.py` | Per-function | Live intervals; call-crossing temps → callee-saved registers, non-crossing → caller-saved; spill on exhaustion; move coalescing |
+| Peephole | `codegen.py` | Per-function, ASM level | Patterns applied during ASM emission (e.g. redundant moves) |
+
+Fold + DCE are run iteratively until the IR instruction count stabilizes. Inlining runs before fold/DCE so that the optimizer sees the inlined bodies.
+
+---
+
+### Optimization survey relative to this compiler
+
+The table below classifies every optimization from the survey against the R316 target.
+
+#### Already implemented
+Constant Folding, Copy Propagation, Algebraic Simplification, Strength Reduction, Dead Store Elimination, Common Subexpression Elimination (local), Dead Code Elimination, Dead Function Elimination (= Interprocedural DCE), Jump Threading / Branch Threading, Function Inlining (with auto-inline heuristics), Linear Scan Register Allocation, Move Coalescing (within regalloc), Peephole Optimization.
+
+#### Applicable — not yet implemented
+
+| Optimization | Size | Value | Notes |
+|---|---|---|---|
+| **Unreachable code elimination** | S | ★★ | After branch threading, some blocks become unreachable. A forward reachability sweep from the entry label removes them. Pairs naturally with the existing trivial-jump + threading passes. |
+| **Tail call / tail recursion elimination** | M | ★★ | Stub exists in `fold.py` (`_tail_call_opt`) but is disabled. When a function ends with `return f(args)` where `f` has compatible arity and return type, replace call+ret with a jump. Saves a full stack frame on recursive helpers. Needs careful ordering relative to frame teardown. |
+| **Inter-block constant propagation** | M | ★ | Today's `fold.py` is block-local; constants do not flow across labels. A small worklist-based pass (simplified sparse conditional constant propagation) would propagate `ImmInt` definitions across unconditional edges. Handles the common pattern `x = 0; if (...) x = 1; use(x)` only partially without full SCCP. |
+| **Loop-invariant code motion (LICM)** | L | ★★ | Detect natural loops (needs dominator tree or back-edge detection), hoist invariant computations out of the loop header. High payoff when loops contain repeated address computations or constant-value loads. Main cost: building and maintaining the CFG. |
+| **Switch jump-table lowering** | S | ★ | For dense `switch` cases, emit a jump table (`jmp [base + r]`) instead of chained comparisons. R316 supports register-indirect jumps. Only applicable when cases form a dense integer range. |
+| **Leaf function prologue/epilogue elimination** | M | ★★ | If a function makes no calls and uses only caller-saved registers, skip pushing/restoring `lr` and frame pointer setup entirely. Halves the entry/exit cost of small helpers. Requires the regalloc to report which callee-saved regs it actually used. |
+| **More peephole patterns** | S | ★★ | `mov rX, rX` → delete; `add rX, 0` → delete; `sub r0, a, b` followed by `jl L` → `cmp + jl`; redundant adjacent `st`/`ld` of the same slot. |
+| **Zero register (`r0`) promotion** | S | ★ | Anywhere a literal `0` is needed in a value position, use `r0` directly instead of emitting `mov rX, 0`. Reduces instruction count for zero-initializations. |
+| **Constant pool** | S | ★ | Repeated 16-bit literals used multiple times within one function can be emitted once as a local data word and loaded with `ld`. Saves one instruction per extra use. |
+| **Dead argument elimination** | S | ★ | Remove parameters that are never read inside the function body. Saves argument-passing instructions at every call site. Only safe for functions not called through function pointers. |
+| **Spill cost heuristic** | S | ★ | Current spill selection is FIFO (earliest interval). Prefer to spill the temp with the lowest use-density (uses ÷ live-range-length) to minimize spill-reload overhead. |
+| **Live-range splitting** | L | ★ | Split a temp's range at a call boundary so the pre-call portion uses caller-saved registers and the post-call portion uses callee-saved. Reduces unnecessary callee-save/restore pairs. |
+
+#### Not applicable to R316
+
+The following optimizations from the survey do not apply because of hardware or target constraints:
+
+| Category | Optimizations | Reason |
+|---|---|---|
+| SIMD / vectorization | Loop Vectorization, SLP, Auto-vectorization, SIMD Optimization, Vector Register Allocation | No SIMD hardware |
+| Parallelism | Auto-parallelization, OpenMP, Thread-level parallelism, GPU offloading, Kernel Fusion/Fission | Single-core embedded target |
+| Profile-guided | PGO, FDO, Hot/Cold Splitting | No runtime profile infrastructure |
+| Link-time | LTO, ThinLTO, Whole Program Optimization | Single-TU compiler; `dce.py` already does whole-program DCE |
+| Cache / memory topology | Loop Tiling, Loop Interchange, Cache Optimization, Prefetch Insertion, NUMA Optimization, False Sharing Reduction, Memory Coalescing, Bank Conflict Reduction | R316 has no cache hierarchy |
+| Floating point | Soft-float passes, NRVO/RVO for float structs | No float support; out of scope |
+| Instruction-level parallelism | Software Pipelining, Modulo Scheduling, Superblock / Hyperblock, Trace Scheduling, Speculative Execution | In-order single-issue core |
+| C++-specific | Return Value Optimization (RVO), Named RVO, Copy Elision, Temporary Object Elimination, Devirtualization, Virtual Call Elimination, Object Lifetime Optimization | C target only |
+| GC / managed memory | GC Optimization, Escape-based Deallocation, Region-based Allocation, Arena Allocation | No heap allocator; not applicable |
+| Speculative / guarded | Guarded Devirtualization, Control/Data Speculation, Warp Divergence Optimization | Not applicable to target |
+| Graph-coloring regalloc | Graph Coloring Register Allocation | XL effort; linear scan is adequate for the register count and function sizes typical in R316 programs |
+
+#### Deferred / low priority
+
+| Optimization | Reason deferred |
+|---|---|
+| Sparse Conditional Constant Propagation (SCCP) | Requires full CFG and SSA form; high complexity for marginal gain over inter-block CP |
+| Partial Redundancy Elimination / Lazy Code Motion | Subsumes LICM and CSE but requires SSA + dominance; large implementation surface |
+| Induction Variable Simplification / Elimination | Useful only after LICM exists and loops are identified |
+| Loop Unrolling / Peeling / Rotation / Fusion / Fission | R316 programs are typically small; code-size increase likely outweighs speed gain |
+| Escape Analysis | No heap allocator yet; revisit if `malloc` is added |
+| Mem2Reg / Stack Allocation Promotion | IR already uses `Temp` for SSA-like values; `Var` slots are the "memory" layer. Full Mem2Reg would require a proper dominator tree and phi-node insertion |
+| Function Cloning / Partial Inlining | Useful for specializing hot paths; deferred until profiling infrastructure exists |
+| Code Layout Optimization / Basic Block Reordering | Benefits only appear with branch prediction hardware; R316 has none |
+
+---
+
+### Codegen / ASM peephole (existing + planned)
 | Item | Size | Value | Notes |
 |---|---|---|---|
 | More peephole patterns | S | ★★ | `mov rX, rX` → delete. `add rX, 0` → delete. `mov rX, 0` after a jc/jz that already cleared via `r0` → use `r0`. Adjacent `st`/`ld` of same slot beyond current pattern. `sub r0, a, b; jl L` → `cmp+jl`. |
@@ -87,16 +163,15 @@ The following items have been implemented since the last survey:
 | Shorter prologue/epilogue for leaf functions | M | ★★ | If a function calls nothing and uses no callee-saved regs, skip pushing/popping `lr` and frame setup. Halves the prologue cost on small helpers. |
 | Coalesce contiguous spill slots | S | ★ | Reorder spills so the frame can use one `sub r30, N` and one `add r30, N` for the whole batch. |
 
-### Register allocator
+### Register allocator (planned improvements)
 | Item | Size | Value | Notes |
 |---|---|---|---|
-| Graph-coloring allocator | XL | ★★ | Replace linear scan. Better spill choices, especially around long-lived call-crossing values. |
+| Graph-coloring allocator | XL | ★★ | Replace linear scan. Better spill choices, especially around long-lived call-crossing values. Deferred: linear scan is adequate at current program sizes. |
 | Live-range splitting | L | ★ | Split a temp's range at a call boundary so part lives in caller-saved, part in callee-saved. Reduces spill pressure. |
-| Move coalescing | M | ★★ | After regalloc, fold `mov rA, rB` when ranges don't conflict. Often eliminated by peephole today, but coalescing during alloc avoids the spill in the first place. |
 | Spill cost heuristic | S | ★ | Today probably FIFO. Spill the temp with the lowest use-density (uses / live-range-length). |
 
 ### R316-specific
-- Memory-mapped I/O builtins (`__builtin_putchar` → direct `st rX, 0x9F80`) — bypasses runtime call overhead in tight loops.
+- Memory-mapped I/O builtins (`__builtin_putchar` → direct `st rX, 0x9FB5`) — bypasses runtime call overhead in tight loops.
 - `jc` after subtract for unsigned compare — already used; document the pattern in ABI.md.
 - Constant pool for repeated 16-bit literals in a function — emit once, `ld` from a local label.
 
