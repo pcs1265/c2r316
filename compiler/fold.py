@@ -516,6 +516,5 @@ def fold(program: IRProgram) -> IRProgram:
             prev_len = len(fn.instrs)
             _fold_function(fn)
         _remove_trivial_jumps(fn)
-        # Branch threading disabled for now - can create infinite loops
-        # _branch_threading(fn)
+        _branch_threading(fn)
     return program

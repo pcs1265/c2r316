@@ -205,8 +205,20 @@ def compile_c(src: str, src_name: str = '<stdin>',
         _v(f'{name}: {before_i} -> {after_i} instrs, {before_f} -> {after_f} fns')
 
     _run_pass('Inlining', inline)
-    _run_pass('Constant folding / copy propagation / CSE / DSE', fold)
-    _run_pass('Dead code / dead function elimination', dce)
+
+    # Run fold→DCE iteratively until fixed point (max 5 iterations)
+    prev_instrs = _instr_count(ir)
+    for iteration in range(1, 6):
+        fold(ir)
+        dce(ir)
+        curr_instrs = _instr_count(ir)
+        if curr_instrs == prev_instrs:
+            _v(f'Fold/DCE converged after {iteration} iteration(s)')
+            break
+        prev_instrs = curr_instrs
+    else:
+        _v('Fold/DCE hit iteration limit (5)')
+    stats.append(('Fold/DCE iterations', 0, 0, prev_instrs, curr_instrs))
 
     if dump_ir_post or dump_ir:
         print(_ir_header('IR (post-optimization)'), file=sys.stderr)
