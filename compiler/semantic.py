@@ -241,6 +241,12 @@ class Analyzer:
             rt = self._analyze_expr(expr.right)
             if expr.op in ('==', '!=', '<', '>', '<=', '>=', '&&', '||'):
                 expr.ctype = CInt()
+            elif expr.op == '-' and is_pointer(lt) and is_pointer(rt):
+                # Pointer subtraction yields ptrdiff_t (int)
+                expr.ctype = CInt()
+            elif expr.op in ('+', '-') and ((is_pointer(lt) and is_integer(rt)) or (is_pointer(rt) and is_integer(lt))):
+                # Pointer +/- int yields pointer of same type
+                expr.ctype = lt if is_pointer(lt) else rt
             else:
                 expr.ctype = common_type(lt, rt)
             return expr.ctype
