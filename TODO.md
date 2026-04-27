@@ -4,6 +4,8 @@
 
 ### Types
 - `int`, `unsigned int`, `char`, `unsigned char`, `void`
+- `short`, `unsigned short` — equivalent to `int` on this 16-bit platform
+- `signed` — explicit signedness keyword (no-op, int/char are signed by default)
 - `long`, `unsigned long` — parsed and type-checked; **no working codegen** (see Known Issues)
 - Pointers (single and multi-level)
 - 1D arrays (with initializers, inferred size from `{}` or string literal)
@@ -18,6 +20,8 @@
 - Multiple declarators in one statement: `int a, b = 2, c;`
 - Function declarations (forward declarations) and definitions
 - `static` and `extern` storage class modifiers (including static local persistence)
+- `const` and `volatile` type qualifiers (parsed and accepted; semantically ignored)
+- `register` storage class (parsed and accepted; semantically ignored)
 - Global array `{...}` initializers (literal values only)
 - Local array `{...}` initializers with zero-fill for partial init
 - Inferred array size: `int arr[] = {1,2,3}` and `char s[] = "hello"`
@@ -92,7 +96,7 @@
 
 | Feature | Notes |
 |---|---|
-| `short`, `signed`, `const`, `volatile`, `register` | `const`/`volatile` parsed but ignored; `short` not implemented |
+| ~~`short`, `signed`, `const`, `volatile`, `register`~~ | **Implemented** — `short`/`signed`/`const`/`volatile`/`register` all parsed and accepted; `const`/`volatile`/`register` semantically ignored |
 | `float`, `double` | No support at any level |
 | Struct/union pass-by-value | Hidden pointer not generated |
 | `__func__` / `__FUNCTION__` | C99 implicit per-function string variable; not yet implemented |

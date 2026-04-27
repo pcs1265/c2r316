@@ -33,6 +33,13 @@ class CChar(CType):
     def size(self): return 1
 
 @dataclass
+class CShort(CType):
+    """16-bit short integer (same as int on this 16-bit platform)"""
+    unsigned: bool = False
+    def __repr__(self): return f"{'unsigned ' if self.unsigned else ''}short"
+    def size(self): return 1   # 1 word, same as int
+
+@dataclass
 class CVoid(CType):
     def __repr__(self): return "void"
     def size(self): return 0
@@ -105,7 +112,7 @@ class CUnion(CType):
 
 
 def is_integer(t: CType) -> bool:
-    return isinstance(t, (CInt, CLong, CChar))
+    return isinstance(t, (CInt, CLong, CChar, CShort))
 
 def is_pointer(t: CType) -> bool:
     return isinstance(t, (CPointer, CArray))

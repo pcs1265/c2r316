@@ -41,6 +41,10 @@ class TK(Enum):
     CASE       = auto()
     DEFAULT    = auto()
     CONST      = auto()
+    SHORT      = auto()
+    SIGNED     = auto()
+    VOLATILE   = auto()
+    REGISTER   = auto()
 
     # operators
     PLUS       = auto()   # +
@@ -123,6 +127,10 @@ KEYWORDS = {
     'case':     TK.CASE,
     'default':  TK.DEFAULT,
     'const':    TK.CONST,
+    'short':    TK.SHORT,
+    'signed':   TK.SIGNED,
+    'volatile': TK.VOLATILE,
+    'register': TK.REGISTER,
 }
 
 

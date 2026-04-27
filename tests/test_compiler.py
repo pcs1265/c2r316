@@ -558,6 +558,96 @@ int main() { return LIMIT; }
     check('const global compiles', isinstance(asm2, str) and len(asm2) > 0)
 
 
+def test_type_specifiers():
+    print('\n[parser: short, signed, const, volatile, register]')
+
+    # short
+    src = "short main() { short x = 5; return x; }"
+    asm = _compile_via_main(src)
+    check('short compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # signed short
+    src = "int main() { signed short x = -1; return x; }"
+    asm = _compile_via_main(src)
+    check('signed short compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # unsigned short
+    src = "int main() { unsigned short x = 65535; return x; }"
+    asm = _compile_via_main(src)
+    check('unsigned short compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # short int
+    src = "int main() { short int x = 10; return x; }"
+    asm = _compile_via_main(src)
+    check('short int compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # unsigned short int
+    src = "int main() { unsigned short int x = 10; return x; }"
+    asm = _compile_via_main(src)
+    check('unsigned short int compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # signed int (explicit)
+    src = "int main() { signed int x = -10; return x; }"
+    asm = _compile_via_main(src)
+    check('signed int compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # signed alone (treated as int)
+    src = "int main() { signed x = -10; return x; }"
+    asm = _compile_via_main(src)
+    check('signed alone compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # signed char
+    src = "int main() { signed char c = -1; return c; }"
+    asm = _compile_via_main(src)
+    check('signed char compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # const (already parsed, verify no errors)
+    src = "int main() { const int x = 42; return x; }"
+    asm = _compile_via_main(src)
+    check('const int compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # volatile (should parse without error)
+    src = "int main() { volatile int x; return 0; }"
+    asm = _compile_via_main(src)
+    check('volatile int compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # register (should parse without error)
+    src = "int main() { register int x = 1; return x; }"
+    asm = _compile_via_main(src)
+    check('register int compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # combination: const volatile unsigned short
+    src = "int main() { const volatile unsigned short x = 10; return x; }"
+    asm = _compile_via_main(src)
+    check('const volatile unsigned short compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # volatile pointer
+    src = "int main() { volatile int *p; return 0; }"
+    asm = _compile_via_main(src)
+    check('volatile pointer compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # register short function
+    src = "short main() { register short x = 1; return x; }"
+    asm = _compile_via_main(src)
+    check('register short compiles', isinstance(asm, str) and len(asm) > 0)
+
+    # invalid: both signed and unsigned
+    src = "int main() { signed unsigned int x; return 0; }"
+    try:
+        _compile_via_main(src)
+        check('signed unsigned rejected', False, 'expected error')
+    except (Exception, SystemExit):
+        check('signed unsigned rejected', True)
+
+    # invalid: short long
+    src = "int main() { short long x; return 0; }"
+    try:
+        _compile_via_main(src)
+        check('short long rejected', False, 'expected error')
+    except (Exception, SystemExit):
+        check('short long rejected', True)
+
+
 def test_scanf():
     """End-to-end: scanf reads integers/chars/strings from a simulated stdin."""
     print('\n[execution: scanf]')
@@ -651,6 +741,7 @@ if __name__ == '__main__':
     test_switch()
     test_typedef_still_works()
     test_const_qualifier()
+    test_type_specifiers()
     test_scanf()
     test_examples_compile()
     print(f'\n=== {PASS} passed, {FAIL} failed ===')

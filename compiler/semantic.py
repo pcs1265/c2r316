@@ -48,6 +48,9 @@ def common_type(a: CType, b: CType) -> CType:
         return a
     if isinstance(b, (CPointer, CArray)):
         return b
+    # If both are CShort, preserve unsigned info
+    if isinstance(a, CShort) and isinstance(b, CShort):
+        return CShort(unsigned=a.unsigned or b.unsigned)
     return CInt()
 
 

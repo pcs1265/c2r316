@@ -61,7 +61,7 @@ class Parser:
 
     # ── Type Parsing ─────────────────────────────────────────────────────────────
 
-    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION, TK.ENUM, TK.CONST}
+    TYPE_STARTS = {TK.INT, TK.LONG, TK.CHAR, TK.VOID, TK.UNSIGNED, TK.STRUCT, TK.UNION, TK.ENUM, TK.CONST, TK.SHORT, TK.SIGNED, TK.VOLATILE}
 
     # identifiers that act as type names
     _TYPE_IDENTS = {'__builtin_va_list'}  # __builtin_va_list is int* alias
@@ -99,24 +99,104 @@ class Parser:
         # typedef alias
         if self._at(TK.IDENT) and self._cur().value in self._typedefs:
             return self._typedefs[self._eat(TK.IDENT).value]
-        while self._try_eat(TK.CONST):
-            pass
-        unsigned = bool(self._try_eat(TK.UNSIGNED))
-        while self._try_eat(TK.CONST):
-            pass
-        if self._try_eat(TK.INT):
-            return CInt(unsigned)
-        if self._try_eat(TK.LONG):
-            return CLong(unsigned)
-        if self._try_eat(TK.CHAR):
-            return CChar(unsigned)
-        if self._try_eat(TK.VOID):
-            if unsigned:
-                raise self._err("unsigned void is invalid")
+
+        # Collect type specifier flags — C allows them in any order
+        # e.g., `unsigned short int`, `short unsigned`, `const volatile signed short`
+        unsigned_seen = False
+        signed_seen   = False
+        short_seen    = False
+        int_seen      = False
+        long_seen     = False
+        char_seen     = False
+        void_seen     = False
+
+        # Consume type specifiers and qualifiers in any order
+        while True:
+            if self._try_eat(TK.CONST):
+                continue
+            if self._try_eat(TK.VOLATILE):
+                continue
+            if self._at(TK.UNSIGNED):
+                if unsigned_seen:
+                    raise self._err("duplicate 'unsigned'")
+                if signed_seen:
+                    raise self._err("both 'signed' and 'unsigned' specified")
+                self._eat(TK.UNSIGNED)
+                unsigned_seen = True
+                continue
+            if self._at(TK.SIGNED):
+                if signed_seen:
+                    raise self._err("duplicate 'signed'")
+                if unsigned_seen:
+                    raise self._err("both 'signed' and 'unsigned' specified")
+                self._eat(TK.SIGNED)
+                signed_seen = True
+                continue
+            if self._at(TK.SHORT):
+                if short_seen:
+                    raise self._err("duplicate 'short'")
+                if long_seen:
+                    raise self._err("both 'short' and 'long' specified")
+                self._eat(TK.SHORT)
+                short_seen = True
+                continue
+            if self._at(TK.LONG):
+                if long_seen:
+                    raise self._err("duplicate 'long'")
+                if short_seen:
+                    raise self._err("both 'short' and 'long' specified")
+                self._eat(TK.LONG)
+                long_seen = True
+                continue
+            if self._at(TK.INT):
+                if int_seen:
+                    raise self._err("duplicate 'int'")
+                self._eat(TK.INT)
+                int_seen = True
+                continue
+            if self._at(TK.CHAR):
+                if char_seen:
+                    raise self._err("duplicate 'char'")
+                if short_seen or long_seen:
+                    raise self._err(f"'{'short' if short_seen else 'long'}' with 'char' is invalid")
+                self._eat(TK.CHAR)
+                char_seen = True
+                continue
+            if self._at(TK.VOID):
+                if void_seen:
+                    raise self._err("duplicate 'void'")
+                self._eat(TK.VOID)
+                void_seen = True
+                continue
+            break
+
+        # Validate combinations
+        if void_seen:
+            if unsigned_seen or signed_seen or short_seen or int_seen or long_seen or char_seen:
+                raise self._err("void cannot combine with other type specifiers")
             return CVoid()
-        # unsigned alone → unsigned int
-        if unsigned:
-            return CInt(unsigned=True)
+
+        if char_seen:
+            # signed char / unsigned char / char (char is signed by default)
+            if int_seen or long_seen or short_seen:
+                raise self._err("invalid type specifier combination with 'char'")
+            return CChar(unsigned=unsigned_seen)
+
+        if short_seen:
+            # short [= short int], unsigned short, signed short
+            if long_seen:
+                raise self._err("both 'short' and 'long' specified")
+            return CShort(unsigned=unsigned_seen)
+
+        if long_seen:
+            # long [= long int], unsigned long, signed long
+            return CLong(unsigned=unsigned_seen)
+
+        if unsigned_seen or signed_seen or int_seen:
+            # unsigned/signed alone → int; signed int → int; unsigned int → unsigned int
+            return CInt(unsigned=unsigned_seen)
+
+        # No type specifier consumed at all
         raise self._err("Expected type specifier")
 
     def _parse_struct_or_union(self, is_union: bool) -> CType:
@@ -187,7 +267,7 @@ class Parser:
     def _parse_type(self) -> CType:
         base = self._parse_base_type()
         while self._try_eat(TK.STAR):
-            while self._try_eat(TK.CONST):
+            while self._try_eat(TK.CONST) or self._try_eat(TK.VOLATILE):
                 pass
             base = CPointer(base)
         return base
@@ -198,7 +278,7 @@ class Parser:
         # pointer modifiers
         stars = 0
         while self._try_eat(TK.STAR):
-            while self._try_eat(TK.CONST):
+            while self._try_eat(TK.CONST) or self._try_eat(TK.VOLATILE):
                 pass
             stars += 1
         # function pointer declarator: ret (*name)(params)
@@ -289,6 +369,8 @@ class Parser:
 
         # __attribute__((always_inline)) may appear before or after storage class
         attr1 = self._parse_attribute()
+        # register is a storage class hint — consume and ignore
+        self._try_eat(TK.REGISTER)
         is_static = bool(self._try_eat(TK.STATIC))
         is_extern = bool(self._try_eat(TK.EXTERN))
         attr2 = self._parse_attribute()
@@ -453,9 +535,10 @@ class Parser:
         if self._at(TK.ASM):
             return self._stamp(self._parse_asm(), tok)
 
-        # local variable declaration (optionally prefixed with 'static')
+        # local variable declaration (optionally prefixed with 'register' or 'static')
+        is_register = bool(self._try_eat(TK.REGISTER))
         is_local_static = self._at(TK.STATIC)
-        if is_local_static or self._at_type_start():
+        if is_local_static or is_register or self._at_type_start():
             if is_local_static:
                 self._eat(TK.STATIC)
             decls = self._parse_local_decl(is_static=is_local_static)
