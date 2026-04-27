@@ -233,7 +233,8 @@ def test_execution_smoke():
     mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
     def run(src, max_cycles=500_000):
-        return _emu_run_main(mod.compile_c(src, src_name='<t>'), max_cycles=max_cycles)
+        ret, out, _ = _emu_run_main(mod.compile_c(src, src_name='<t>'), max_cycles=max_cycles)
+        return ret, out
 
     # Arithmetic + control flow
     cases = [
@@ -312,7 +313,7 @@ def test_examples_run():
             stdin_path = path.replace('.c', '.stdin')
             stdin = open(stdin_path, encoding='utf-8').read() if os.path.isfile(stdin_path) else ''
             asm = mod.compile_c(src, src_name=rel, src_path=path)
-            ret, out = _emu_run_main(asm, max_cycles=500_000, stdin=stdin)
+            ret, out, cycles = _emu_run_main(asm, max_cycles=500_000, stdin=stdin)
             actual = _normalize(out)
             
             # Check for FAIL in output - test programs should have PASS: N, FAIL: 0
@@ -322,9 +323,9 @@ def test_examples_run():
             if actual == expected:
                 if fail_count > 0:
                     # Output matches golden but test program reports failures
-                    check(f'execute {rel}', False, f'test program has {fail_count} FAIL(s)')
+                    check(f'execute {rel} [{cycles} cycles]', False, f'test program has {fail_count} FAIL(s)')
                 else:
-                    check(f'execute {rel}', True)
+                    check(f'execute {rel} [{cycles} cycles]', True)
             else:
                 # short, locating diff: first 60 chars at the divergence point
                 idx = next((i for i in range(min(len(actual), len(expected)))
@@ -352,7 +353,7 @@ def test_print_int_signed():
         src = f'#include <stdio.h>\nint main() {{ print_int({n}); return 0; }}\n'
         try:
             asm = mod.compile_c(src, src_name='<t>')
-            ret, out = _emu_run_main(asm, max_cycles=2_000_000)
+            ret, out, _ = _emu_run_main(asm, max_cycles=2_000_000)
             check(f'print_int({n}) == {n!r}',
                   out == str(n),
                   f'expected {str(n)!r} got {out!r}')
@@ -488,7 +489,8 @@ def test_switch():
     mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
     def run(src):
-        return _emu_run_main(mod.compile_c(src, src_name='<t>'))
+        ret, out, _ = _emu_run_main(mod.compile_c(src, src_name='<t>'))
+        return ret, out
 
     src = """
 #include <stdio.h>
@@ -666,7 +668,8 @@ def test_scanf():
 
     def run(src, stdin='', max_cycles=2_000_000):
         asm = mod.compile_c(src, src_name='<t>')
-        return _emu_run_main(asm, max_cycles=max_cycles, stdin=stdin)
+        ret, out, _ = _emu_run_main(asm, max_cycles=max_cycles, stdin=stdin)
+        return ret, out
 
     # %d positive
     src = '#include <stdio.h>\nint main() { int x; scanf("%d", &x); return x; }\n'

@@ -558,15 +558,15 @@ class Machine:
 # ── public helper ──────────────────────────────────────────────────────────
 
 def run_main(asm: str, max_cycles: int | None = 1_000_000, stdin: str = '',
-             freq: float | None = None) -> tuple[int, str]:
-    """Compile output → (return_value_of_main, stdout). Starts at `_C_main:`."""
+             freq: float | None = None) -> tuple[int, str, int]:
+    """Compile output → (return_value_of_main, stdout, cycles). Starts at `_C_main:`."""
     prog = parse_asm(asm)
     if '_C_main' not in prog.labels:
         raise RuntimeError("no _C_main in asm")
     m = Machine(prog, max_cycles=max_cycles, stdin=stdin, freq=freq)
     m.pc = prog.labels['_C_main']
     m.run()
-    return m.regs[1] & _MASK16, m.stdout_str()
+    return m.regs[1] & _MASK16, m.stdout_str(), m.cycles
 
 
 # ── standalone entry point ─────────────────────────────────────────────────
@@ -613,8 +613,9 @@ if __name__ == '__main__':
         with open(path, encoding='utf-8') as fh:
             asm = fh.read()
 
-    retval, out = run_main(asm, max_cycles=args.cycles, freq=args.freq)
+    retval, out, cycles = run_main(asm, max_cycles=args.cycles, freq=args.freq)
     sys.stdout.write(out)
+    print(f'[{cycles} cycles]')
     if args.show_retval:
-        print(f'\n[exit {retval}]')
+        print(f'[exit {retval}]')
     sys.exit(retval)
