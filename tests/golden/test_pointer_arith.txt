@@ -1,0 +1,24 @@
+=== test_pointer_arith ===
+char* init: PASS
+char* + 1: PASS
+char* + 5: PASS
+char* + 9: PASS
+int* init: PASS
+int* + 1: PASS
+int* + 5: PASS
+struct* init: PASS
+struct* + 1: PASS
+struct* + 2: PASS
+ptr diff: PASS
+int** deref: PASS
+p[0] after ++: PASS
+p[0] after --: PASS
+np[0]: PASS
+np[1]: PASS
+np[2]: PASS
+sizeof(int): PASS
+sizeof(int*): PASS
+================
+PASS: 19
+FAIL: 0
+=== done ===

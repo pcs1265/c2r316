@@ -1,0 +1,26 @@
+=== test_long_truncation ===
+long truncate: PASS
+ulong truncate: PASS
+long fits 16: PASS
+long neg fits: PASS
+long lit 70000: PASS
+long 0x10001: PASS
+long +: PASS
+long *: PASS
+long -: PASS
+long+int: PASS
+int+long: PASS
+long cmp <: PASS
+long cmp >: PASS
+long cmp ==: PASS
+long cond true: PASS
+long cond false: PASS
+long to int: PASS
+ulong 0xFFFF: PASS
+ulong 0x10000: PASS
+sizeof(long): PASS
+long/int mix: PASS
+================
+PASS: 21
+FAIL: 0
+=== done ===

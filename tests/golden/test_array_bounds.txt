@@ -1,0 +1,39 @@
+=== test_array_bounds ===
+arr[0]: PASS
+arr[1]: PASS
+arr[2]: PASS
+arr[3]: PASS
+arr[4]: PASS
+mat[0][0]: PASS
+mat[0][1]: PASS
+mat[1][0]: PASS
+mat[2][2]: PASS
+flat[0]: PASS
+flat[1]: PASS
+flat[3]: PASS
+flat[8]: PASS
+cube[0][0][0]: PASS
+cube[0][1][0]: PASS
+cube[1][0][1]: PASS
+cube[1][1][1]: PASS
+pts[0].x: PASS
+pts[0].y: PASS
+pts[1].x: PASS
+pts[2].y: PASS
+grid[0][0].x: PASS
+grid[0][1].y: PASS
+grid[1][0].x: PASS
+grid[1][1].y: PASS
+vals[idx] 0: PASS
+vals[idx] 2: PASS
+vals[idx] 4: PASS
+vals[idx-2]: PASS
+vals[1+1]: PASS
+str[0]: PASS
+str[4]: PASS
+*p: PASS
+*(p+1): PASS
+================
+PASS: 34
+FAIL: 0
+=== done ===

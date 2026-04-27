@@ -1,0 +1,40 @@
+=== test_switch_edge ===
+dense 0: PASS
+dense 1: PASS
+dense 2: PASS
+dense 3: PASS
+dense 4: PASS
+dense 5 (default): PASS
+sparse 0: PASS
+sparse 100: PASS
+sparse 1000: PASS
+sparse 10000: PASS
+sparse 50 (default): PASS
+fall 1: PASS
+fall 2: PASS
+fall 3: PASS
+fall 4: PASS
+fall 5: PASS
+fall 0 (default): PASS
+default first 1: PASS
+default first 2: PASS
+default first 3: PASS
+default mid 1: PASS
+default mid 2: PASS
+default mid 3: PASS
+nested 1,1: PASS
+nested 1,2: PASS
+nested 1,3: PASS
+nested 2,1: PASS
+nested 2,2: PASS
+nested 3,1: PASS
+no default 1: PASS
+no default 2: PASS
+no default 3: PASS
+single 42: PASS
+single 0: PASS
+negative case: PASS
+================
+PASS: 35
+FAIL: 0
+=== done ===

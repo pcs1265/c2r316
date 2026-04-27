@@ -1,0 +1,21 @@
+=== test_variadic_edge ===
+sum0(0): PASS
+sum0(1, 42): PASS
+sum0(3, 1, 2, 3): PASS
+sum0(5, 10, 20, 30, 40, 50): PASS
+fixed_var(2, 3, 2, 4, 5): PASS
+many(7): PASS
+many(8): PASS
+many(10): PASS
+many(12): PASS
+sum large: PASS
+sum neg: PASS
+sum all neg: PASS
+sum unsigned: PASS
+sum unsigned large: PASS
+nested variadic: PASS
+variadic with ptr: PASS
+================
+PASS: 16
+FAIL: 0
+=== done ===

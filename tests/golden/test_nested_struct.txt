@@ -1,0 +1,31 @@
+=== test_nested_struct ===
+b.a_inner.a_val: PASS
+b.b_val: PASS
+c.b_inner.a_inner.a_val: PASS
+c.b_inner.b_val: PASS
+c.c_val: PASS
+d.c_inner.b_inner.a_inner.a_val: PASS
+d.d_val: PASS
+e.d_inner.c_inner.b_inner.a_inner.a_val: PASS
+e.e_val: PASS
+wa.data[0]: PASS
+wa.data[3]: PASS
+wa.count: PASS
+o.items[0].x: PASS
+o.items[1].y: PASS
+o.items[2].x: PASS
+o.total: PASS
+m.val: PASS
+m.arr[0].x: PASS
+m.arr[1].y: PASS
+m.single.a_val: PASS
+bp->a_inner.a_val: PASS
+bp->b_val: PASS
+b2.a_inner.a_val: PASS
+b2.b_val: PASS
+darr[0].c_inner.b_inner.a_inner.a_val: PASS
+darr[1].d_val: PASS
+================
+PASS: 26
+FAIL: 0
+=== done ===

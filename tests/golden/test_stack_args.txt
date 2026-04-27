@@ -1,0 +1,22 @@
+=== test_stack_args ===
+six(1..6): PASS
+six(10..60): PASS
+seven(1..7): PASS
+seven(10..70): PASS
+eight(1..8): PASS
+ten(1..10): PASS
+twelve(1..12): PASS
+twelve(12..1): PASS
+seven large: PASS
+seven neg: PASS
+caller_stack: PASS
+nested_b: PASS
+via func ptr: PASS
+seq 1: PASS
+seq 2: PASS
+seq 3: PASS
+expr args: PASS
+================
+PASS: 17
+FAIL: 0
+=== done ===

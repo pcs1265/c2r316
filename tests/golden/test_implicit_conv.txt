@@ -1,0 +1,28 @@
+=== test_implicit_conv ===
+null ptr cond: PASS
+non-null ptr cond: PASS
+int 0 cond: PASS
+int 1 cond: PASS
+int -5 cond: PASS
+ptr == 0: PASS
+ptr != 0: PASS
+ptr != 0 non-null: PASS
+ptr == 0 non-null: PASS
+ternary true: PASS
+ternary false: PASS
+ternary mixed: PASS
+int to char: PASS
+int to char trunc: PASS
+ptr to ptr: PASS
+func arg 0: PASS
+func arg 42: PASS
+char to int: PASS
+array decay: PASS
+int to uint: PASS
+&& result: PASS
+|| result: PASS
+! result: PASS
+================
+PASS: 23
+FAIL: 0
+=== done ===
