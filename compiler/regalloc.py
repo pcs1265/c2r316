@@ -133,7 +133,17 @@ def allocate(fn: IRFunction) -> RegMap:
                 callee_used.add(reg)
                 active_callee.append((iv.end, iv.tid, reg))
                 active_callee.sort(key=lambda x: x[0])
-            # else: spill (no register assigned)
+            else:
+                # Evict the callee-saved interval that ends latest — if it ends
+                # after the current interval, swapping gives us a net win.
+                if active_callee and active_callee[-1][0] > iv.end:
+                    evict_end, evict_tid, reg = active_callee.pop()
+                    del assignment[evict_tid]   # evicted → spilled
+                    assignment[iv.tid] = reg
+                    callee_used.add(reg)
+                    active_callee.append((iv.end, iv.tid, reg))
+                    active_callee.sort(key=lambda x: x[0])
+                # else: current interval is longer — spill it instead
         else:
             # prefer caller-saved
             if caller_pool:
@@ -147,6 +157,14 @@ def allocate(fn: IRFunction) -> RegMap:
                 callee_used.add(reg)
                 active_callee.append((iv.end, iv.tid, reg))
                 active_callee.sort(key=lambda x: x[0])
-            # else: spill
+            else:
+                # Evict from caller-saved active set if there's a longer interval
+                if active_caller and active_caller[-1][0] > iv.end:
+                    evict_end, evict_tid, reg = active_caller.pop()
+                    del assignment[evict_tid]
+                    assignment[iv.tid] = reg
+                    active_caller.append((iv.end, iv.tid, reg))
+                    active_caller.sort(key=lambda x: x[0])
+                # else: spill current interval
 
     return RegMap(assignment=assignment, callee_used=sorted(callee_used))

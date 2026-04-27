@@ -179,10 +179,14 @@ def test_strength_reduction():
                 pass
         return buf.getvalue()
 
+    # Use globals so the optimizer cannot constant-fold the function bodies away
+    # after inlining (globals are not known at compile time).
     src = """
+unsigned int gx = 10;
+int gy = 3;
 int test(unsigned int x) { return x * 8 + x / 16 + x % 4; }
 int sgn(int y) { return y * 4; }
-int main() { return test(10) + sgn(3); }
+int main() { return test(gx) + sgn(gy); }
 """
     ir = _ir_post(src)
     check('x * 8 → << 3 (unsigned)', '<< 3' in ir, ir[:400])
@@ -378,17 +382,28 @@ def test_left_operand_preserved_across_binop():
 
     # Anything matching the trigger pattern works; use the actual __builtin_sdiv
     # via test_div which exercises both sign branches.
+    # Use a global input so the optimizer cannot constant-fold the body away
+    # after inlining (test() is a single-call-site function and gets inlined).
     src = """
+int gx = -1;
 int test(int x) {
     if (x & 0x8000) {
         return 0 - x;   /* must use original x, not (x & 0x8000) */
     }
     return x;
 }
-int main() { return test(-1); }  /* expects 1 */
+int main() { return test(gx); }  /* expects 1 */
 """
     asm = mod.compile_c(src, src_name='<t>')
-    s = next(i for i, l in enumerate(asm.split('\n')) if l.strip() == '_C_test:')
+    # test() is inlined into main, so look for the body under _C_main.
+    lines = asm.split('\n')
+    label = '_C_main:'
+    s = next((i for i, l in enumerate(lines) if l.strip() == label), None)
+    if s is None:
+        # Fallback: function was not inlined, look for _C_test
+        label = '_C_test:'
+        s = next(i for i, l in enumerate(lines) if l.strip() == label)
+    body = lines[s:s + 30]
     body = asm.split('\n')[s:s + 30]
     # Look for the dangerous pattern: `and rX, rY` (2-op AND) followed within
     # a few instructions by a `sub rZ, ?, rX` reading rX.  After the fix,
@@ -424,14 +439,16 @@ def test_unsigned_comparison():
     spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
     mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
+    # Use globals so the function body is not constant-folded away after inlining.
     src = """
+unsigned int ga = 1; unsigned int gb = 2;
 int test(unsigned int a, unsigned int b) { return a < b; }
-int main() { return test(1, 2); }
+int main() { return test(ga, gb); }
 """
     asm = mod.compile_c(src, src_name='<t>')
-    # extract the test function body
     lines = asm.split('\n')
-    start = next(i for i, l in enumerate(lines) if l.strip() == '_C_test:')
+    # test() may be inlined into main — look for its body wherever it ended up
+    start = next((i for i, l in enumerate(lines) if l.strip() in ('_C_test:', '_C_main:')), 0)
     body = '\n'.join(lines[start:start + 20])
     check('unsigned < uses jnc / jc, not jge / jl',
           ('jnc' in body or 'jc ' in body) and 'jge' not in body and ' jl ' not in body,
@@ -439,6 +456,7 @@ int main() { return test(1, 2); }
 
     # All four ordering ops on unsigned
     src2 = """
+unsigned int ga2 = 5; unsigned int gb2 = 7;
 int test(unsigned int a, unsigned int b) {
     if (a < b) return 1;
     if (a > b) return 2;
@@ -446,12 +464,12 @@ int test(unsigned int a, unsigned int b) {
     if (a >= b) return 4;
     return 0;
 }
-int main() { return test(5, 7); }
+int main() { return test(ga2, gb2); }
 """
     asm2 = mod.compile_c(src2, src_name='<t>')
-    # all four compares should use jc/jnc, no signed jl/jge in test body
-    s = next(i for i, l in enumerate(asm2.split('\n')) if l.strip() == '_C_test:')
-    body2 = '\n'.join(asm2.split('\n')[s:s + 60])
+    lines2 = asm2.split('\n')
+    s = next((i for i, l in enumerate(lines2) if l.strip() in ('_C_test:', '_C_main:')), 0)
+    body2 = '\n'.join(lines2[s:s + 60])
     check('all 4 unsigned ordering ops avoid signed branches',
           'jge' not in body2 and ' jl ' not in body2 and ' jg ' not in body2 and 'jle' not in body2,
           body2[:500])

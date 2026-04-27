@@ -17,7 +17,8 @@ Instructions always kept regardless of liveness:
 """
 
 from __future__ import annotations
-from typing import Set
+from collections import deque
+from typing import Dict, List, Set
 
 from .ir import (
     Temp, Global,
@@ -44,44 +45,35 @@ def dce_function(fn: IRFunction) -> None:
     """Run DCE in-place on a single IRFunction."""
     instrs = fn.instrs
 
-    # --- pass 1: seed live set from roots ---
-    live: Set[Temp] = set()
+    # Build def→instruction indices map.  After inlining a function with
+    # multiple return paths the same temp (result_dst) may have several
+    # defining instructions, so we collect ALL of them.
+    def_instrs: Dict[int, List[int]] = {}
+    for i, instr in enumerate(instrs):
+        d = instr.defs()
+        if isinstance(d, Temp):
+            def_instrs.setdefault(d.id, []).append(i)
+
+    # --- pass 1: seed worklist from roots ---
+    live: Set[int] = set()   # set of Temp ids
+    worklist: deque = deque()
+
+    def _mark(op):
+        if isinstance(op, Temp) and op.id not in live:
+            live.add(op.id)
+            worklist.append(op.id)
 
     for instr in instrs:
-        if _always_keep(instr):
+        if _always_keep(instr) or isinstance(instr, ICall):
             for op in instr.uses():
-                if isinstance(op, Temp):
-                    live.add(op)
-        else:
-            # Non-root instructions: if their def is already live, their uses matter
-            # — handled in pass 2.  But ICall with a dst IS a root for side effects:
-            if isinstance(instr, ICall) and instr.dst is not None:
-                # Keep the call for side effects; mark its uses live;
-                # the dst temp may still be DCE'd if never used — but the call
-                # itself cannot be removed. We handle this in _always_keep by
-                # preserving ICall with dst too (calls always have side effects).
-                pass
+                _mark(op)
 
-    # Calls with a non-void dst also have side effects; always keep them but
-    # only if the dst is used.  Actually in C, a call's side effects are always
-    # observable — keep ALL ICall regardless.
-    for instr in instrs:
-        if isinstance(instr, ICall):
-            for op in instr.uses():
-                if isinstance(op, Temp):
-                    live.add(op)
-
-    # --- pass 2: backward propagation ---
-    changed = True
-    while changed:
-        changed = False
-        for instr in reversed(instrs):
-            d = instr.defs()
-            if isinstance(d, Temp) and d in live:
-                for op in instr.uses():
-                    if isinstance(op, Temp) and op not in live:
-                        live.add(op)
-                        changed = True
+    # --- pass 2: backward propagation via worklist (O(N)) ---
+    while worklist:
+        tid = worklist.popleft()
+        for idx in def_instrs.get(tid, ()):
+            for op in instrs[idx].uses():
+                _mark(op)
 
     # --- pass 3: remove dead definitions ---
     kept = []
@@ -90,13 +82,12 @@ def dce_function(fn: IRFunction) -> None:
             kept.append(instr)
             continue
         if isinstance(instr, ICall):
-            # All calls kept (side effects); if dst is dead, drop the dst
-            if instr.dst is not None and instr.dst not in live:
+            if instr.dst is not None and instr.dst.id not in live:
                 instr.dst = None
             kept.append(instr)
             continue
         d = instr.defs()
-        if isinstance(d, Temp) and d not in live:
+        if isinstance(d, Temp) and d.id not in live:
             continue  # dead — drop
         kept.append(instr)
 

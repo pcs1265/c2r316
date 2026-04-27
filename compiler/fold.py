@@ -149,27 +149,33 @@ def _fold_function(fn: IRFunction) -> None:
         if isinstance(d, Temp):
             def_count[d.id] = def_count.get(d.id, 0) + 1
 
-    # Map: temp id → (instr_index, propagatable operand)
-    # Only propagate if defined exactly once and used exactly once.
-    # Scalar sources (ImmInt, StrLabel, Global): safe everywhere.
-    # Temp sources: safe everywhere EXCEPT the addr field of IStore/ILoad,
-    #   where substituting a Temp would change "store through pointer" into
-    #   "store to slot".  _subst_instr handles this via addr_sub vs val_sub.
-    # Var sources: safe in value position only (addr_sub excludes them), AND only
-    #   when no clobbering instruction (store to same var, call, or label) lies
-    #   between the ICopy definition and its single use site.
-    copy_src: Dict[int, tuple] = {}
+    # Map: temp id → (instr_index, propagatable operand, multi_use)
+    # multi_use=True  → source is a pure constant (ImmInt/StrLabel): propagate
+    #                   to ALL use sites and drop the ICopy afterward.
+    # multi_use=False → source is Temp/Var/Global: only propagate when used
+    #                   exactly once (to avoid register pressure increase).
+    # Scalar sources (ImmInt, StrLabel): safe everywhere, any use count.
+    # Global: safe anywhere but keep single-use restriction to avoid copies.
+    # Temp sources: safe everywhere EXCEPT the addr field of IStore/ILoad.
+    # Var sources: safe in value position only, single-use, no clobber between
+    #   the ICopy definition and its single use site.
+    copy_src: Dict[int, tuple] = {}  # tid → (instr_index, src, multi_use)
     for i, instr in enumerate(instrs):
         if isinstance(instr, ICopy) and isinstance(instr.dst, Temp):
             tid = instr.dst.id
-            if use_count.get(tid, 0) == 1 and def_count.get(tid, 0) == 1:
-                src = instr.src
-                if isinstance(src, (ImmInt, StrLabel, Global, Temp, Var)):
-                    copy_src[tid] = (i, src)
+            if def_count.get(tid, 0) != 1:
+                continue
+            src = instr.src
+            n_uses = use_count.get(tid, 0)
+            if isinstance(src, (ImmInt, StrLabel)):
+                # Pure constants: always safe to propagate to any number of uses
+                copy_src[tid] = (i, src, True)
+            elif n_uses == 1 and isinstance(src, (Global, Temp, Var)):
+                copy_src[tid] = (i, src, False)
 
     # Validate Var-source entries: remove any where the variable is clobbered
     # between the definition and the single use (by a store, call, or label).
-    var_entries = [(tid, def_idx, src) for tid, (def_idx, src) in copy_src.items()
+    var_entries = [(tid, def_idx, src) for tid, (def_idx, src, _multi) in copy_src.items()
                    if isinstance(src, Var)]
     if var_entries:
         use_loc: Dict[int, int] = {}
@@ -202,7 +208,7 @@ def _fold_function(fn: IRFunction) -> None:
     # _fold_function iteration will propagate it cleanly.
     # This also subsumes the old Var-source-only guard.
     all_copy_keys = set(copy_src.keys())
-    for tid in [tid for tid, (_, src) in copy_src.items()
+    for tid in [tid for tid, (_, src, _multi) in copy_src.items()
                 if isinstance(src, Temp) and src.id in all_copy_keys]:
         del copy_src[tid]
 
@@ -221,6 +227,13 @@ def _fold_function(fn: IRFunction) -> None:
             return copy_src[op.id][1]
         return op
 
+    # Track remaining uses for multi-use (constant) propagation entries so we
+    # can drop the source ICopy after the last use has been substituted.
+    remaining_uses: Dict[int, int] = {
+        tid: use_count.get(tid, 0)
+        for tid, (_i, _s, multi) in copy_src.items() if multi
+    }
+
     to_drop = set()
     for i, instr in enumerate(instrs):
         uses = instr.uses()
@@ -230,10 +243,17 @@ def _fold_function(fn: IRFunction) -> None:
         instrs[i] = new_instr
         for op in uses:
             if isinstance(op, Temp) and op.id in copy_src:
-                # Only drop the source ICopy if this instruction consumed the temp
-                new_uses = new_instr.uses()
-                if not any(isinstance(u, Temp) and u.id == op.id for u in new_uses):
-                    to_drop.add(copy_src[op.id][0])
+                _def_idx, _src, multi = copy_src[op.id]
+                if multi:
+                    # Decrement remaining use count; drop ICopy after last use
+                    remaining_uses[op.id] -= 1
+                    if remaining_uses[op.id] <= 0:
+                        to_drop.add(_def_idx)
+                else:
+                    # Single-use: drop as soon as the temp is no longer in uses
+                    new_uses = new_instr.uses()
+                    if not any(isinstance(u, Temp) and u.id == op.id for u in new_uses):
+                        to_drop.add(_def_idx)
 
     if to_drop:
         fn.instrs = [instr for i, instr in enumerate(instrs) if i not in to_drop]
@@ -360,14 +380,6 @@ def _remove_trivial_jumps(fn: IRFunction) -> None:
         while i < len(instrs):
             instr = instrs[i]
             if isinstance(instr, IJump):
-                # find the next label, skipping no instructions in between
-                j = i + 1
-                while j < len(instrs) and isinstance(instrs[j], ILabel):
-                    if instrs[j].name == instr.target:
-                        break
-                    j += 1
-                else:
-                    j = len(instrs)   # didn't find it immediately
                 # only remove if target label is the very next instruction
                 if i + 1 < len(instrs) and isinstance(instrs[i + 1], ILabel) and instrs[i + 1].name == instr.target:
                     changed = True

@@ -151,7 +151,8 @@ def _clone_instrs(
         elif isinstance(instr, ICall):
             new_args = [_ro(a) for a in instr.args]
             new_dst = Temp(instr.dst.id + temp_offset) if instr.dst is not None else None
-            out.append(ICall(new_dst, instr.func, new_args, instr.loc))
+            new_func = _ro(instr.func) if isinstance(instr.func, (Temp, Var)) else instr.func
+            out.append(ICall(new_dst, new_func, new_args, instr.loc))
 
         elif isinstance(instr, IInlineAsm):
             # Rename any local labels (words starting with '.') in the asm
@@ -189,40 +190,53 @@ def _build_call_graph(program: IRProgram) -> Dict[str, Set[str]]:
 
 
 def _recursive_set(call_graph: Dict[str, Set[str]]) -> Set[str]:
-    """Return names of functions involved in any cycle (direct or mutual recursion)."""
+    """Return names of functions involved in any cycle (direct or mutual recursion).
+
+    Iterative Tarjan SCC — O(N + E).  Any SCC of size > 1, or a singleton
+    with a self-edge, is marked recursive.
+    """
+    index_of: Dict[str, int] = {}
+    lowlink:  Dict[str, int] = {}
+    on_stack: Set[str] = set()
+    scc_stack: List[str] = []
     recursive: Set[str] = set()
-    all_names = set(call_graph.keys())
+    counter = [0]
 
-    def _reachable(start: str, visited: Set[str]) -> Set[str]:
-        out: Set[str] = set()
-        stack = [start]
-        while stack:
-            n = stack.pop()
-            if n in out:
-                continue
-            out.add(n)
-            for callee in call_graph.get(n, ()):
-                if callee not in out:
-                    stack.append(callee)
-        return out
+    # DFS work-stack entries: (node, iterator-over-children, phase)
+    # phase=0: first visit; phase=1: returning from a child
+    WorkStack = List   # just a list of (node, child_iter)
 
-    for name in all_names:
-        if name in _reachable(name, set()) - {name}:
-            recursive.add(name)
-        # also mark if it reaches itself
-        if name in call_graph.get(name, ()):
-            recursive.add(name)
+    for root in list(call_graph.keys()):
+        if root in index_of:
+            continue
+        dfs: List = [(root, iter(call_graph.get(root, ())))]
+        index_of[root] = lowlink[root] = counter[0]; counter[0] += 1
+        scc_stack.append(root); on_stack.add(root)
 
-    # simpler: any function that can reach itself
-    for name in all_names:
-        reachable = _reachable(name, set())
-        if name in call_graph.get(name, ()):
-            recursive.add(name)
-        # mutual: if any callee can reach back to name
-        for callee in call_graph.get(name, ()):
-            if name in _reachable(callee, set()):
-                recursive.add(name)
-                recursive.add(callee)
+        while dfs:
+            v, children = dfs[-1]
+            try:
+                w = next(children)
+                if w not in index_of:
+                    index_of[w] = lowlink[w] = counter[0]; counter[0] += 1
+                    scc_stack.append(w); on_stack.add(w)
+                    dfs.append((w, iter(call_graph.get(w, ()))))
+                elif w in on_stack:
+                    lowlink[v] = min(lowlink[v], index_of[w])
+            except StopIteration:
+                dfs.pop()
+                if dfs:
+                    parent = dfs[-1][0]
+                    lowlink[parent] = min(lowlink[parent], lowlink[v])
+                if lowlink[v] == index_of[v]:
+                    scc: List[str] = []
+                    while True:
+                        w = scc_stack.pop(); on_stack.discard(w); scc.append(w)
+                        if w == v: break
+                    if len(scc) > 1:
+                        recursive.update(scc)
+                    elif v in call_graph.get(v, ()):
+                        recursive.add(v)
 
     return recursive
 
@@ -309,6 +323,21 @@ def inline(program: IRProgram) -> IRProgram:
     call_graph = _build_call_graph(program)
     recursive = _recursive_set(call_graph)
 
+    # Count call sites per callee across the whole program
+    call_site_count: Dict[str, int] = {}
+    for fn in program.functions:
+        for instr in fn.instrs:
+            if isinstance(instr, ICall) and isinstance(instr.func, Global):
+                name = instr.func.name
+                call_site_count[name] = call_site_count.get(name, 0) + 1
+    # Also count address-taken references — a function whose address is taken
+    # may be called indirectly, so it's unsafe to treat as single-call-site.
+    addr_taken: Set[str] = set()
+    for fn in program.functions:
+        for instr in fn.instrs:
+            if isinstance(instr, IAddrOf) and isinstance(instr.var, Global):
+                addr_taken.add(instr.var.name)
+
     # Build the inlineable set
     inlineable: Dict[str, IRFunction] = {}
     for fn in program.functions:
@@ -319,7 +348,15 @@ def inline(program: IRProgram) -> IRProgram:
         if fn.is_always_inline:
             inlineable[fn.name] = fn
             continue
-        if fn.is_static and not fn.name.startswith('__') and len(fn.instrs) <= INLINE_THRESHOLD:
+        if fn.name.startswith('__'):
+            continue
+        if fn.is_static and len(fn.instrs) <= INLINE_THRESHOLD:
+            inlineable[fn.name] = fn
+            continue
+        # Non-static but called exactly once and address never taken: inline it
+        if (fn.name not in addr_taken
+                and call_site_count.get(fn.name, 0) == 1
+                and len(fn.instrs) <= INLINE_THRESHOLD):
             inlineable[fn.name] = fn
 
     if not inlineable:
