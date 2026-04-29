@@ -45,27 +45,50 @@ void asm_putchar(int c) {
 
 void asm_memset(int *dst, int val, int n) {
     int i;
-    for (i = 0; i < n; i++) dst[i] = val;
+    for (i = 0; i < n; i++) {
+        int *p;
+        p = dst + i;
+        asm("st %0, %1" : "r"(val), "r"(p));
+    }
 }
 
 void asm_memcpy(int *dst, int *src, int n) {
     int i;
-    for (i = 0; i < n; i++) dst[i] = src[i];
+    for (i = 0; i < n; i++) {
+        int *ps; int *pd;
+        ps = src + i;
+        pd = dst + i;
+        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(ps), "r"(pd));
+    }
 }
 
 int asm_strlen(char *s) {
     int n;
+    int c;
+    int *pc;
+    pc = &c;
     n = 0;
-    while (s[n] != 0) n = n + 1;
+    while (1) {
+        int *ps;
+        ps = s + n;
+        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(ps), "r"(pc));
+        if (c == 0) return n;
+        n = n + 1;
+    }
     return n;
 }
 
 int asm_strcmp(char *a, char *b) {
     int i;
+    int ca; int cb;
+    int *pca; int *pcb;
+    pca = &ca; pcb = &cb;
     i = 0;
     while (1) {
-        int ca; int cb;
-        ca = a[i]; cb = b[i];
+        int *pa; int *pb;
+        pa = a + i; pb = b + i;
+        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(pa), "r"(pca));
+        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(pb), "r"(pcb));
         if (ca != cb) return ca - cb;
         if (ca == 0)  return 0;
         i = i + 1;
