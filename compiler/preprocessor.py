@@ -268,6 +268,36 @@ def _taking_parent(cond_stack: list) -> bool:
 # #define parsing
 # ---------------------------------------------------------------------------
 
+def _strip_body_comments(body: str) -> str:
+    """Strip // and /* */ comments from a macro body, preserving string/char literals."""
+    out = []
+    i = 0
+    n = len(body)
+    while i < n:
+        if body[i] in ('"', "'"):
+            quote = body[i]
+            j = i + 1
+            while j < n:
+                if body[j] == '\\':
+                    j += 2
+                    continue
+                if body[j] == quote:
+                    j += 1
+                    break
+                j += 1
+            out.append(body[i:j])
+            i = j
+        elif body[i:i+2] == '//':
+            break
+        elif body[i:i+2] == '/*':
+            j = body.find('*/', i + 2)
+            i = j + 2 if j != -1 else n
+        else:
+            out.append(body[i])
+            i += 1
+    return ''.join(out).rstrip()
+
+
 def _parse_define(rest: str, defines: dict, filename: str, lineno: int):
     if not rest:
         raise PreprocessorError('#define requires a name', filename, lineno)
@@ -277,7 +307,7 @@ def _parse_define(rest: str, defines: dict, filename: str, lineno: int):
     if m:
         name = m.group(1)
         raw_params = m.group(2).strip()
-        body = m.group(3)
+        body = _strip_body_comments(m.group(3))
         params = []
         variadic = False
         if raw_params:
@@ -298,7 +328,7 @@ def _parse_define(rest: str, defines: dict, filename: str, lineno: int):
     name = parts[0]
     if not re.match(r'^[A-Za-z_]\w*$', name):
         raise PreprocessorError(f'Invalid macro name: {name}', filename, lineno)
-    body = parts[1] if len(parts) > 1 else ''
+    body = _strip_body_comments(parts[1]) if len(parts) > 1 else ''
     defines[name] = _Macro(None, False, body)
 
 
