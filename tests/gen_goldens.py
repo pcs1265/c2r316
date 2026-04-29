@@ -47,7 +47,7 @@ def main() -> int:
         stdin_path = path.replace('.c', '.stdin')
         stdin = open(stdin_path, encoding='utf-8').read() if os.path.isfile(stdin_path) else ''
         asm = mod.compile_c(src, src_name=os.path.relpath(path, ROOT), src_path=path)
-        ret, out = run_main(asm, max_cycles=20_000_000, stdin=stdin)
+        ret, out, _ = run_main(asm, max_cycles=20_000_000, stdin=stdin)
         normalized = _normalize(out)
         with open(out_path, 'w', encoding='utf-8', newline='') as f:
             f.write(normalized)

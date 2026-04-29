@@ -16,7 +16,23 @@ memcpy[1]: PASS
 memcpy[2]: PASS
 asm_add: PASS
 asm_multiline: PASS
+weighted_sum: PASS
+asm_sum6: PASS
+live_across_4op: PASS
+live_across_7op: PASS
+accumulate_0: PASS
+accumulate_1: PASS
+accumulate_5: PASS
+accumulate_10: PASS
+double_arr[0]: PASS
+double_arr[1]: PASS
+double_arr[2]: PASS
+double_arr[3]: PASS
+asm_call_mix: PASS
+asm_then_call: PASS
+two_steps: PASS
+three_steps: PASS
 ================
-PASS: 16
+PASS: 32
 FAIL: 0
 === done ===
