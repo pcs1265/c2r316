@@ -97,6 +97,18 @@ def allocate(fn: IRFunction) -> RegMap:
         crosses = any(start < ci <= end for ci in call_sites)
         intervals.append(Interval(tid, start, end, crosses))
 
+    # Compute use density for each temp: uses / live-range-length.
+    # Used as spill cost — prefer spilling temps with lower use density
+    # (few uses spread over a long range) to minimize reload overhead.
+    use_count: Dict[int, int] = {}
+    for instr in instrs:
+        for op in instr.uses():
+            if isinstance(op, Temp):
+                use_count[op.id] = use_count.get(op.id, 0) + 1
+    def _spill_cost(tid: int, start: int, end: int) -> float:
+        span = max(1, end - start)
+        return use_count.get(tid, 0) / span
+
     intervals.sort()
 
     # ── Step 3: linear scan ─────────────────────────────────────────────────
@@ -121,6 +133,20 @@ def allocate(fn: IRFunction) -> RegMap:
         active.clear()
         active.extend(still_active)
 
+    def _find_lowest_cost_to_evict(active: List) -> Optional[int]:
+        """Return index in `active` of the entry with the lowest spill cost,
+        or None if active is empty."""
+        if not active:
+            return None
+        best_idx = 0
+        best_cost = _spill_cost(active[0][1], first_def[active[0][1]], active[0][0])
+        for k, (end, tid, reg) in enumerate(active[1:], 1):
+            cost = _spill_cost(tid, first_def[tid], end)
+            if cost < best_cost:
+                best_cost = cost
+                best_idx = k
+        return best_idx
+
     for iv in intervals:
         _expire(active_caller, caller_pool, iv.start)
         _expire(active_callee, callee_pool, iv.start)
@@ -134,16 +160,21 @@ def allocate(fn: IRFunction) -> RegMap:
                 active_callee.append((iv.end, iv.tid, reg))
                 active_callee.sort(key=lambda x: x[0])
             else:
-                # Evict the callee-saved interval that ends latest — if it ends
-                # after the current interval, swapping gives us a net win.
-                if active_callee and active_callee[-1][0] > iv.end:
-                    evict_end, evict_tid, reg = active_callee.pop()
-                    del assignment[evict_tid]   # evicted → spilled
-                    assignment[iv.tid] = reg
-                    callee_used.add(reg)
-                    active_callee.append((iv.end, iv.tid, reg))
-                    active_callee.sort(key=lambda x: x[0])
-                # else: current interval is longer — spill it instead
+                # Evict the callee-saved interval with the lowest spill cost,
+                # provided the current interval has a higher cost (net win).
+                evict_idx = _find_lowest_cost_to_evict(active_callee)
+                if evict_idx is not None:
+                    evict_end, evict_tid, reg = active_callee[evict_idx]
+                    cur_cost = _spill_cost(iv.tid, iv.start, iv.end)
+                    evict_cost = _spill_cost(evict_tid, first_def[evict_tid], evict_end)
+                    if evict_cost < cur_cost:
+                        active_callee.pop(evict_idx)
+                        del assignment[evict_tid]   # evicted → spilled
+                        assignment[iv.tid] = reg
+                        callee_used.add(reg)
+                        active_callee.append((iv.end, iv.tid, reg))
+                        active_callee.sort(key=lambda x: x[0])
+                # else: current interval is cheaper to spill — leave it spilled
         else:
             # prefer caller-saved
             if caller_pool:
@@ -158,13 +189,18 @@ def allocate(fn: IRFunction) -> RegMap:
                 active_callee.append((iv.end, iv.tid, reg))
                 active_callee.sort(key=lambda x: x[0])
             else:
-                # Evict from caller-saved active set if there's a longer interval
-                if active_caller and active_caller[-1][0] > iv.end:
-                    evict_end, evict_tid, reg = active_caller.pop()
-                    del assignment[evict_tid]
-                    assignment[iv.tid] = reg
-                    active_caller.append((iv.end, iv.tid, reg))
-                    active_caller.sort(key=lambda x: x[0])
-                # else: spill current interval
+                # Evict the caller-saved interval with the lowest spill cost
+                evict_idx = _find_lowest_cost_to_evict(active_caller)
+                if evict_idx is not None:
+                    evict_end, evict_tid, reg = active_caller[evict_idx]
+                    cur_cost = _spill_cost(iv.tid, iv.start, iv.end)
+                    evict_cost = _spill_cost(evict_tid, first_def[evict_tid], evict_end)
+                    if evict_cost < cur_cost:
+                        active_caller.pop(evict_idx)
+                        del assignment[evict_tid]
+                        assignment[iv.tid] = reg
+                        active_caller.append((iv.end, iv.tid, reg))
+                        active_caller.sort(key=lambda x: x[0])
+                # else: current interval has lower density — spill it instead
 
     return RegMap(assignment=assignment, callee_used=sorted(callee_used))

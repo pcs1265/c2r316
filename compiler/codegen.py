@@ -805,6 +805,79 @@ class Codegen:
             drop.clear()
             patch.clear()
 
+        # Pass 5: propagate scratch-register mov sources into the immediately
+        # following instruction.  Only applied within a straight-line block
+        # (no branches between the mov and its single use).
+        #
+        # When `mov rA, rX` (rA ∈ SCRATCH_REGS) is immediately followed by
+        # an instruction (not a label/branch) that uses rA as a source but NOT
+        # as its destination, AND rA has no uses in subsequent lines up to the
+        # next label or branch, substitute rX for rA and drop the mov.
+        #
+        # Safety: stop the "used-after" scan at any branch (conditional or
+        # unconditional) and at any label — rA might be live on the other side.
+        # If the scan ends at a branch/label without finding a write to rA
+        # first, we treat rA as "maybe live" (conservative) and skip.
+        n = len(lines)
+        uncond_jmp = re.compile(r'^\s*jmp\b')
+        for i in range(func_start, n - 1):
+            ms = mov_pat.match(lines[i])
+            if not ms:
+                continue
+            rA, rX = ms.group(2), ms.group(3)
+            if rA not in SCRATCH_REGS:
+                continue
+            j = i + 1
+            while j < n and lines[j].lstrip().startswith('; '):
+                j += 1
+            if j >= n:
+                continue
+            nxt = lines[j]
+            # Only apply within a straight-line block
+            if label.match(nxt) or branch.match(nxt):
+                continue
+            # rA must appear as a source (not the destination)
+            dm = dst_pat.match(nxt)
+            nxt_dst = dm.group(1) if dm else None
+            if nxt_dst == rA:
+                continue  # rA is the destination — skip
+            if not re.search(rf'\b{rA}\b', nxt):
+                continue  # rA not used in next instruction
+            # Verify rA is not used again before it is written or we hit a
+            # label/branch.  At any branch (even unconditional) or label we
+            # conservatively treat rA as live.
+            rA_safe = False
+            for k in range(j + 1, n):
+                lk = lines[k].strip()
+                if not lk or lk.startswith('; '):
+                    continue
+                if label.match(lines[k]):
+                    break  # merge point — might be live
+                if branch.match(lines[k]):
+                    # Unconditional jump: fall-through is dead, safe to stop
+                    if uncond_jmp.match(lines[k]):
+                        rA_safe = True
+                    break  # conditional branch — might be live on fall-through
+                dm2 = dst_pat.match(lines[k])
+                if dm2 and dm2.group(1) == rA:
+                    rA_safe = True  # rA is redefined before any use
+                    break
+                if re.search(rf'\b{rA}\b', lk):
+                    break  # rA used — not safe to eliminate the mov
+            if not rA_safe:
+                continue
+            # Substitute rA → rX in the next instruction
+            new_nxt = re.sub(rf'\b{rA}\b', rX, nxt)
+            if new_nxt != nxt:
+                lines[j] = new_nxt
+                drop.add(i)
+
+        _before = len(lines)
+        for idx in sorted(drop, reverse=True):
+            lines.pop(idx)
+        self._peephole_eliminated += _before - len(lines)
+        drop.clear()
+
     def _max_outgoing_stack_slots(self, fn: IRFunction) -> int:
         """Count the max overflow stack arg words needed across all calls."""
         max_slots = 0

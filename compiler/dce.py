@@ -21,7 +21,7 @@ from collections import deque
 from typing import Dict, List, Set
 
 from .ir import (
-    Temp, Global,
+    Temp, Var, Global,
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp,
     ILoad, IStore, ICall, IRet,
     ILabel, IJump, IJumpIf, IJumpIfNot,
@@ -144,9 +144,81 @@ def verify_temps(program: IRProgram) -> None:
                     )
 
 
+def _eliminate_dead_args(program: IRProgram) -> None:
+    """Remove parameters that are never read inside their function.
+
+    Only safe for functions not reachable via a function pointer (address-taken
+    functions have unknown call sites, so we cannot rewrite their signatures).
+
+    For each eligible function, we:
+      1. Find params that are never accessed (no Var(name) in any instruction's
+         uses(), and no IAddrOf(t, Var(name)) in the body).
+      2. Remove those params from fn.params.
+      3. Remove the corresponding argument from every ICall that names the function.
+    """
+    func_names = {fn.name for fn in program.functions}
+
+    # Collect address-taken functions (ineligible for signature changes)
+    address_taken: Set[str] = set()
+    for fn in program.functions:
+        for instr in fn.instrs:
+            if isinstance(instr, IAddrOf) and isinstance(instr.var, Global):
+                if instr.var.name in func_names:
+                    address_taken.add(instr.var.name)
+
+    changed = True
+    while changed:
+        changed = False
+        for fn in program.functions:
+            if fn.name in address_taken:
+                continue
+            if not fn.params:
+                continue
+            if fn.is_variadic:
+                continue
+
+            # Find which params are actually accessed (read or address-taken)
+            accessed: Set[str] = set()
+            param_set = set(fn.params)
+            for instr in fn.instrs:
+                for op in instr.uses():
+                    if isinstance(op, Var) and op.name in param_set:
+                        accessed.add(op.name)
+                # ICall.func is Var when calling via a local function-pointer param;
+                # uses() excludes non-Temp func operands, so check it explicitly.
+                if isinstance(instr, ICall) and isinstance(instr.func, Var):
+                    if instr.func.name in param_set:
+                        accessed.add(instr.func.name)
+                if isinstance(instr, IAddrOf) and isinstance(instr.var, Var):
+                    if instr.var.name in param_set:
+                        accessed.add(instr.var.name)
+
+            dead_params = [p for p in fn.params if p not in accessed]
+            if not dead_params:
+                continue
+
+            # Compute index map: old_index → keep?
+            dead_set = set(dead_params)
+            keep_mask = [p not in dead_set for p in fn.params]
+
+            # Update function signature
+            fn.params = [p for p, keep in zip(fn.params, keep_mask) if keep]
+
+            # Update all call sites in the whole program
+            for caller in program.functions:
+                for i, instr in enumerate(caller.instrs):
+                    if isinstance(instr, ICall) and isinstance(instr.func, Global):
+                        if instr.func.name == fn.name:
+                            new_args = [a for a, keep in zip(instr.args, keep_mask) if keep]
+                            caller.instrs[i] = ICall(instr.dst, instr.func, new_args, instr.loc)
+
+            changed = True
+
+
 def dce(program: IRProgram, entry: str = 'main') -> IRProgram:
     """Run dead function elimination then per-function DCE."""
     eliminate_dead_functions(program, entry)
+    _eliminate_dead_args(program)
     for fn in program.functions:
         dce_function(fn)
     verify_temps(program)

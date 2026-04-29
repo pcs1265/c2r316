@@ -103,23 +103,17 @@ Fold + DCE are run iteratively until the IR instruction count stabilizes. Inlini
 The table below classifies every optimization from the survey against the R316 target.
 
 #### Already implemented
-Constant Folding, Copy Propagation, Algebraic Simplification, Strength Reduction, Dead Store Elimination, Common Subexpression Elimination (local), Dead Code Elimination, Dead Function Elimination (= Interprocedural DCE), Jump Threading / Branch Threading, Function Inlining (with auto-inline heuristics), Linear Scan Register Allocation, Move Coalescing (within regalloc), Peephole Optimization.
+Constant Folding, Copy Propagation, Algebraic Simplification, Strength Reduction, Dead Store Elimination, Common Subexpression Elimination (local), Dead Code Elimination, Dead Function Elimination (= Interprocedural DCE), Jump Threading / Branch Threading, Unreachable Code Elimination (after branch threading), Function Inlining (with auto-inline heuristics), Tail Recursion Elimination (self-recursive tail calls → loop), Linear Scan Register Allocation, Move Coalescing (within regalloc), Peephole Optimization (including scratch-register source propagation), Dead Argument Elimination (non-address-taken functions), Spill Cost Heuristic (use-density based eviction), Zero Register (`r0`) Promotion.
 
 #### Applicable — not yet implemented
 
 | Optimization | Size | Value | Notes |
 |---|---|---|---|
-| **Unreachable code elimination** | S | ★★ | After branch threading, some blocks become unreachable. A forward reachability sweep from the entry label removes them. Pairs naturally with the existing trivial-jump + threading passes. |
-| **Tail call / tail recursion elimination** | M | ★★ | Stub exists in `fold.py` (`_tail_call_opt`) but is disabled. When a function ends with `return f(args)` where `f` has compatible arity and return type, replace call+ret with a jump. Saves a full stack frame on recursive helpers. Needs careful ordering relative to frame teardown. |
 | **Inter-block constant propagation** | M | ★ | Today's `fold.py` is block-local; constants do not flow across labels. A small worklist-based pass (simplified sparse conditional constant propagation) would propagate `ImmInt` definitions across unconditional edges. Handles the common pattern `x = 0; if (...) x = 1; use(x)` only partially without full SCCP. |
 | **Loop-invariant code motion (LICM)** | L | ★★ | Detect natural loops (needs dominator tree or back-edge detection), hoist invariant computations out of the loop header. High payoff when loops contain repeated address computations or constant-value loads. Main cost: building and maintaining the CFG. |
 | **Switch jump-table lowering** | S | ★ | For dense `switch` cases, emit a jump table (`jmp [base + r]`) instead of chained comparisons. R316 supports register-indirect jumps. Only applicable when cases form a dense integer range. |
 | **Leaf function prologue/epilogue elimination** | M | ★★ | If a function makes no calls and uses only caller-saved registers, skip pushing/restoring `lr` and frame pointer setup entirely. Halves the entry/exit cost of small helpers. Requires the regalloc to report which callee-saved regs it actually used. |
-| **More peephole patterns** | S | ★★ | `mov rX, rX` → delete; `add rX, 0` → delete; `sub r0, a, b` followed by `jl L` → `cmp + jl`; redundant adjacent `st`/`ld` of the same slot. |
-| **Zero register (`r0`) promotion** | S | ★ | Anywhere a literal `0` is needed in a value position, use `r0` directly instead of emitting `mov rX, 0`. Reduces instruction count for zero-initializations. |
 | **Constant pool** | S | ★ | Repeated 16-bit literals used multiple times within one function can be emitted once as a local data word and loaded with `ld`. Saves one instruction per extra use. |
-| **Dead argument elimination** | S | ★ | Remove parameters that are never read inside the function body. Saves argument-passing instructions at every call site. Only safe for functions not called through function pointers. |
-| **Spill cost heuristic** | S | ★ | Current spill selection is FIFO (earliest interval). Prefer to spill the temp with the lowest use-density (uses ÷ live-range-length) to minimize spill-reload overhead. |
 | **Live-range splitting** | L | ★ | Split a temp's range at a call boundary so the pre-call portion uses caller-saved registers and the post-call portion uses callee-saved. Reduces unnecessary callee-save/restore pairs. |
 
 #### Not applicable to R316

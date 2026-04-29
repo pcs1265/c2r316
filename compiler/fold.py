@@ -517,17 +517,112 @@ def _var_load_cse(fn: IRFunction) -> None:
                         available[vname] = instr.dst
 
 
-def _tail_call_opt(fn: IRFunction) -> None:
-    """Convert tail calls (call followed by return) into jumps.
-    
-    DISABLED for now - requires careful handling of:
-    - Argument register preservation across callee-saved restore
-    - Stack argument area management
-    - Proper frame deallocation ordering
-    
-    TODO: Re-enable after fixing these issues.
+def _unreachable_code_elim(fn: IRFunction) -> None:
+    """Remove instructions that follow an unconditional jump or return within a basic block.
+
+    After branch threading, some code becomes unreachable. This pass removes
+    instructions between an unconditional jump/return and the next label.
+    Only instructions between the terminator and the next ILabel are dropped;
+    labels themselves are kept as they may be jump targets from elsewhere.
     """
-    pass
+    instrs = fn.instrs
+    to_remove: set = set()
+    dead = False
+    for i, instr in enumerate(instrs):
+        if dead:
+            if isinstance(instr, ILabel):
+                dead = False
+            else:
+                to_remove.add(i)
+            continue
+        if isinstance(instr, (IJump, IRet)):
+            dead = True
+    if to_remove:
+        fn.instrs = [instr for i, instr in enumerate(instrs) if i not in to_remove]
+
+
+def _tail_call_opt(fn: IRFunction) -> None:
+    """Convert self-recursive tail calls into parameter reassignment + jump.
+
+    Finds patterns:
+        ICall(dst, Global(fn.name), args)
+        IRet(dst)   — or IRet(None) for void
+
+    and replaces them with:
+        ICopy(fresh_i, arg_i) for each arg   ← snapshot args before clobbering params
+        IStore(Var(param_i), fresh_i)         ← update each param in parallel
+        IJump(entry_label)
+
+    An ILabel(entry_label) is inserted at the very start of the function body
+    only when at least one such transformation is performed.  The label is
+    unique to the function so it cannot collide with user-defined labels.
+
+    General (non-self-recursive) TCO is not done here because it requires
+    coordinating with the frame teardown in codegen.
+    """
+    instrs = fn.instrs
+    fn_name = fn.name
+    params = fn.params  # list of param names in order
+
+    # Quick scan: any self-recursive tail call?
+    # Find pairs (call_idx, ret_idx) where call is immediately before ret.
+    pairs: List[tuple] = []
+    for i in range(len(instrs) - 1):
+        ci = instrs[i]
+        ri = instrs[i + 1]
+        if not isinstance(ci, ICall):
+            continue
+        if not isinstance(ci.func, Global) or ci.func.name != fn_name:
+            continue
+        if not isinstance(ri, IRet):
+            continue
+        # The return must use the call result (or both be void)
+        if ci.dst is not None and ri.src != ci.dst:
+            continue
+        if ci.dst is None and ri.src is not None:
+            continue
+        pairs.append((i, i + 1, ci.args))
+
+    if not pairs:
+        return
+
+    # Build a fresh-temp counter starting above the max existing temp id
+    max_id = -1
+    for instr in instrs:
+        d = instr.defs()
+        if isinstance(d, Temp) and d.id > max_id:
+            max_id = d.id
+    next_id = max_id + 1
+
+    entry_lbl = f'.__tce_{fn_name}'
+
+    # Replace pairs in reverse order so indices remain valid
+    new_instrs = list(instrs)
+    for call_idx, ret_idx, args in reversed(pairs):
+        loc = new_instrs[call_idx].loc
+        replacement: List[Instr] = []
+
+        # Step 1: snapshot all args into fresh temps (parallel assignment)
+        fresh_temps = []
+        for arg in args:
+            t = Temp(next_id)
+            next_id += 1
+            replacement.append(ICopy(t, arg, loc))
+            fresh_temps.append(t)
+
+        # Step 2: store fresh temps back into param vars
+        for param_name, ft in zip(params, fresh_temps):
+            replacement.append(IStore(Var(param_name), ft, loc))
+
+        # Step 3: jump to entry
+        replacement.append(IJump(entry_lbl, loc))
+
+        # Replace the call+ret pair
+        new_instrs[call_idx:ret_idx + 1] = replacement
+
+    # Prepend entry label at start of function
+    new_instrs.insert(0, ILabel(entry_lbl, None))
+    fn.instrs = new_instrs
 
 
 def fold(program: IRProgram) -> IRProgram:
@@ -542,5 +637,6 @@ def fold(program: IRProgram) -> IRProgram:
             _fold_function(fn)
         _remove_trivial_jumps(fn)
         _branch_threading(fn)
+        _unreachable_code_elim(fn)
         _tail_call_opt(fn)
     return program
