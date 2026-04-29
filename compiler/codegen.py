@@ -82,6 +82,9 @@ class FuncContext:
             if size > 1:
                 self._alloc_permanent_block(f'v_{name}', size)
 
+        # End of the permanent zone — temps are allocated above this.
+        self._perm_peak = self._next
+
         # compute last-use index for every Temp
         last_use: Dict[int, int] = {}
         for i, instr in enumerate(instrs):
@@ -153,6 +156,11 @@ class FuncContext:
     @property
     def frame_size(self) -> int:
         return self._peak
+
+    @property
+    def perm_peak(self) -> int:
+        """First slot index after the permanent (param + array-local) zone."""
+        return self._perm_peak
 
 
 class Codegen:
@@ -547,8 +555,62 @@ class Codegen:
             self._ctx.free_dead_temps(idx)
 
         if not self._no_opt:
+            self._compact_frame(func_start, F, VS, CS, total, self._ctx.perm_peak)
             self._asm_peephole(func_start)
         self._emit('')
+
+    def _compact_frame(self, func_start: int, F: int, VS: int, CS: int, total: int,
+                       perm_peak: int):
+        """Remove unused local spill slots from the frame.
+
+        Only the temp zone [perm_peak..F-1] is eligible for compaction.
+        Temps are always accessed via direct st/ld r30-relative instructions, so
+        scanning those instructions gives the true high-water mark.  Permanent
+        slots (params, local arrays) live in [0..perm_peak-1] and are left alone
+        even if they happen to be unaccessed (e.g. an unreachable param).
+        """
+        import re
+        lines = self._out
+
+        # st/ld DEST, r30, N  (two-register form with offset)
+        slot_re  = re.compile(r'^(\s*(?:st|ld)\s+\w+,\s*r30,\s*)(\d+)(\s*(?:;.*)?)$')
+        # add DEST, r30, N  (address-of-local / va_start)
+        addr_re  = re.compile(r'^(\s*add\s+\w+,\s*r30,\s*)(\d+)(\s*(?:;.*)?)$')
+        # sub/add r30, N  (frame alloc / dealloc)
+        frame_re = re.compile(r'^(\s*(?:sub|add)\s+r30,\s*)(\d+)(\s*(?:;.*)?)$')
+
+        # Find max temp slot (in [perm_peak..F-1]) actually accessed via st/ld.
+        max_temp = perm_peak - 1
+        for ln in lines[func_start:]:
+            m = slot_re.match(ln)
+            if m:
+                slot = int(m.group(2))
+                if perm_peak <= slot < F:
+                    max_temp = max(max_temp, slot)
+
+        true_F = max_temp + 1  # = perm_peak if no temp slot was ever touched
+        savings = F - true_F
+        if savings <= 0:
+            return
+
+        new_total = total - savings
+
+        for i in range(func_start, len(lines)):
+            ln = lines[i]
+            # Patch frame allocation/deallocation (sub/add r30, total).
+            m = frame_re.match(ln)
+            if m and int(m.group(2)) == total:
+                lines[i] = f'{m.group(1)}{new_total}{m.group(3)}'
+                continue
+            # Shift callee-save / LR / VA-spill slots (offset >= F) down by savings.
+            m = slot_re.match(ln)
+            if m and int(m.group(2)) >= F:
+                lines[i] = f'{m.group(1)}{int(m.group(2)) - savings}{m.group(3)}'
+                continue
+            # Shift va_start address-of references (add DEST, r30, offset >= F).
+            m = addr_re.match(ln)
+            if m and int(m.group(2)) >= F:
+                lines[i] = f'{m.group(1)}{int(m.group(2)) - savings}{m.group(3)}'
 
     def _asm_peephole(self, func_start: int):
         """Post-process emitted assembly lines for a function.
