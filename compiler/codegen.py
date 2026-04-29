@@ -17,9 +17,9 @@ Stack frame layout (per function):
   [sp+F+CS+1 .. ]           : stack arguments (7th+, caller's responsibility)
 
 Register allocation:
-  Each Temp/Var gets a fixed spill slot allocated linearly.
-  Small number of physical regs used as scratch; values always
-  loaded into scratch before use and stored back after def.
+  Linear-scan allocator (regalloc.py) assigns Temps to physical registers.
+  Temps not assigned a register are spilled to stack slots in FuncContext.
+  Vars (locals/params) always get permanent stack slots.
 
   scratch regs: r7 (primary/left/dst), r8 (secondary/right), r9 (address)
 """
@@ -33,6 +33,7 @@ from .ir import (
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
+    ASM_REGS,
 )
 from .regalloc import allocate, RegMap
 
@@ -61,17 +62,19 @@ class FuncContext:
     Spill-slot allocator with temp recycling.
     Vars (locals/params) get permanent slots.
     Temps get slots recycled after their last use.
+    Temps with a physical register in regmap are skipped entirely (no slot).
 
     outgoing_slots: number of words at [sp+0..sp+outgoing_slots-1] reserved
     for outgoing stack arguments; all other slots start above this area.
     """
 
     def __init__(self, instrs: list, params: list[str], local_sizes: Dict[str, int] = None,
-                 outgoing_slots: int = 0):
+                 outgoing_slots: int = 0, regmap: Optional[RegMap] = None):
         self._slots:    Dict[str, int] = {}
         self._free:     list[int]      = []   # recycled slots available
         self._next      = outgoing_slots       # start above the outgoing-arg area
         self._peak      = outgoing_slots
+        self._regmap    = regmap
 
         # params first — permanent slots starting at outgoing_slots
         for name in params:
@@ -81,9 +84,6 @@ class FuncContext:
         for name, size in (local_sizes or {}).items():
             if size > 1:
                 self._alloc_permanent_block(f'v_{name}', size)
-
-        # End of the permanent zone — temps are allocated above this.
-        self._perm_peak = self._next
 
         # compute last-use index for every Temp
         last_use: Dict[int, int] = {}
@@ -127,6 +127,8 @@ class FuncContext:
 
     def slot(self, op: Operand) -> int:
         if isinstance(op, Temp):
+            if self._regmap is not None and self._regmap.reg(op.id) is not None:
+                return -1  # lives in a physical register; no stack slot needed
             key = f't{op.id}'
             if key not in self._slots:
                 self._alloc_temp(key)
@@ -156,12 +158,6 @@ class FuncContext:
     @property
     def frame_size(self) -> int:
         return self._peak
-
-    @property
-    def perm_peak(self) -> int:
-        """First slot index after the permanent (param + array-local) zone."""
-        return self._perm_peak
-
 
 class Codegen:
     def __init__(self, no_opt: bool = False):
@@ -458,8 +454,9 @@ class Codegen:
         # Reserve that many slots at [sp+0..sp+OA-1] so calls can write args there.
         outgoing_slots = self._max_outgoing_stack_slots(fn)
 
-        # dry run to compute true peak frame size with recycling
-        dry = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots)
+        # dry run to compute true peak frame size with recycling.
+        # Pass regmap so register-assigned temps don't consume spill slots.
+        dry = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots, self._regmap)
         for i, instr in enumerate(fn.instrs):
             for op in instr.uses():
                 if isinstance(op, Var):
@@ -470,7 +467,7 @@ class Codegen:
             dry.free_dead_temps(i)
         peak = dry.frame_size
 
-        self._ctx = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots)
+        self._ctx = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots, self._regmap)
 
         # pre-scan: ensure all Var operands get permanent slots
         for instr in fn.instrs:
@@ -480,10 +477,7 @@ class Codegen:
 
         self._is_leaf = not any(isinstance(i, ICall) for i in fn.instrs)
 
-        # Determine which callee-saved registers this function uses.
-        # For now, with the spill-only allocator, we don't allocate callee-saved
-        # registers to temporaries.  When a register allocator is added, this
-        # scan will detect which callee-saved regs are assigned.
+        # Callee-saved registers assigned by the register allocator.
         self._callee_saves = self._detect_callee_saves(fn)
         self._callee_save_n = len(self._callee_saves)
 
@@ -555,62 +549,8 @@ class Codegen:
             self._ctx.free_dead_temps(idx)
 
         if not self._no_opt:
-            self._compact_frame(func_start, F, VS, CS, total, self._ctx.perm_peak)
             self._asm_peephole(func_start)
         self._emit('')
-
-    def _compact_frame(self, func_start: int, F: int, VS: int, CS: int, total: int,
-                       perm_peak: int):
-        """Remove unused local spill slots from the frame.
-
-        Only the temp zone [perm_peak..F-1] is eligible for compaction.
-        Temps are always accessed via direct st/ld r30-relative instructions, so
-        scanning those instructions gives the true high-water mark.  Permanent
-        slots (params, local arrays) live in [0..perm_peak-1] and are left alone
-        even if they happen to be unaccessed (e.g. an unreachable param).
-        """
-        import re
-        lines = self._out
-
-        # st/ld DEST, r30, N  (two-register form with offset)
-        slot_re  = re.compile(r'^(\s*(?:st|ld)\s+\w+,\s*r30,\s*)(\d+)(\s*(?:;.*)?)$')
-        # add DEST, r30, N  (address-of-local / va_start)
-        addr_re  = re.compile(r'^(\s*add\s+\w+,\s*r30,\s*)(\d+)(\s*(?:;.*)?)$')
-        # sub/add r30, N  (frame alloc / dealloc)
-        frame_re = re.compile(r'^(\s*(?:sub|add)\s+r30,\s*)(\d+)(\s*(?:;.*)?)$')
-
-        # Find max temp slot (in [perm_peak..F-1]) actually accessed via st/ld.
-        max_temp = perm_peak - 1
-        for ln in lines[func_start:]:
-            m = slot_re.match(ln)
-            if m:
-                slot = int(m.group(2))
-                if perm_peak <= slot < F:
-                    max_temp = max(max_temp, slot)
-
-        true_F = max_temp + 1  # = perm_peak if no temp slot was ever touched
-        savings = F - true_F
-        if savings <= 0:
-            return
-
-        new_total = total - savings
-
-        for i in range(func_start, len(lines)):
-            ln = lines[i]
-            # Patch frame allocation/deallocation (sub/add r30, total).
-            m = frame_re.match(ln)
-            if m and int(m.group(2)) == total:
-                lines[i] = f'{m.group(1)}{new_total}{m.group(3)}'
-                continue
-            # Shift callee-save / LR / VA-spill slots (offset >= F) down by savings.
-            m = slot_re.match(ln)
-            if m and int(m.group(2)) >= F:
-                lines[i] = f'{m.group(1)}{int(m.group(2)) - savings}{m.group(3)}'
-                continue
-            # Shift va_start address-of references (add DEST, r30, offset >= F).
-            m = addr_re.match(ln)
-            if m and int(m.group(2)) >= F:
-                lines[i] = f'{m.group(1)}{int(m.group(2)) - savings}{m.group(3)}'
 
     def _asm_peephole(self, func_start: int):
         """Post-process emitted assembly lines for a function.
@@ -1129,25 +1069,97 @@ class Codegen:
         else:
             raise CodegenError(f"Unhandled IR instruction: {type(instr)}")
 
-    # Caller-saved regs available as operand slots for inline asm (%0..%9)
-    _ASM_REGS = ['r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'r16']
-
     def _gen_inline_asm(self, instr: IInlineAsm):
-        if len(instr.srcs) > len(self._ASM_REGS):
+        """Emit inline assembly, resolving operand-loading order as a parallel copy.
+
+        Loading N operands sequentially into ASM_REGS[0..N-1] is a parallel
+        assignment problem: a source value may currently live in a register that
+        will be overwritten when an earlier operand is loaded (read-after-write
+        hazard).  We resolve this with a dependency-aware ordering:
+
+          1. For each operand i, find which physical register currently holds its
+             value (cur[i]).  A source whose value is in memory/immediate has
+             cur[i]=None and is always safe to load.
+          2. A safe operand to load now is one where no other unfinished operand j
+             reads from targets[i] (i.e., loading i cannot yet destroy j's source).
+          3. Iteratively load safe operands until stable.
+          4. Any remaining operands form register cycles (a ↔ b swap, a → b → c → a,
+             etc.).  Break each cycle by moving one register's content to a parking
+             register outside the asm target range, then rerun the safe-load loop.
+        """
+        if len(instr.srcs) > len(ASM_REGS):
             raise CodegenError(
-                f"asm: too many input operands ({len(instr.srcs)}, max {len(self._ASM_REGS)})"
+                f"asm: too many input operands ({len(instr.srcs)}, max {len(ASM_REGS)})"
             )
-        regs = []
-        for i, src in enumerate(instr.srcs):
-            reg = self._ASM_REGS[i]
-            self._load_op(src, reg)
-            regs.append(reg)
-        # substitute %0..%N in each line of the template
+        n = len(instr.srcs)
+        targets = list(ASM_REGS[:n])
+
+        def _src_preg(src) -> Optional[str]:
+            """Physical register currently holding src's value, or None."""
+            if isinstance(src, Temp) and self._regmap is not None:
+                r = self._regmap.reg(src.id)
+                if r is not None:
+                    return r
+            if self._scratch_a_temp is src:
+                return SCRATCH_A
+            if self._scratch_c_temp is src:
+                return SCRATCH_C
+            return None  # value is in memory or is an immediate
+
+        # cur[i]: where operand i's value currently lives (None = memory/immediate).
+        # This array is updated when cycle-breaking moves redirect a source.
+        cur: List[Optional[str]] = [_src_preg(instr.srcs[i]) for i in range(n)]
+        done: List[bool] = [False] * n
+        target_set: Set[str] = set(targets)
+
+        def _emit_load(i: int) -> None:
+            r = cur[i]
+            if r is not None:
+                if r != targets[i]:
+                    self._ins(f'mov {targets[i]}, {r}')
+                # else: value is already in the right register
+            else:
+                self._load_op(instr.srcs[i], targets[i])
+            done[i] = True
+
+        def _try_safe_loads() -> bool:
+            """One pass: load every operand that can safely be loaded now.
+            Returns True if any progress was made."""
+            progress = False
+            for i in range(n):
+                if done[i]:
+                    continue
+                # Safe if no other unfinished operand j reads from targets[i].
+                if all(done[j] or cur[j] != targets[i] for j in range(n) if j != i):
+                    _emit_load(i)
+                    progress = True
+            return progress
+
+        while not all(done):
+            while _try_safe_loads():
+                pass
+            if all(done):
+                break
+            # A register cycle prevents further progress.  Break it by parking
+            # one register's occupant in a register outside the asm target range.
+            i = next(x for x in range(n) if not done[x])
+            park = next(
+                r for r in ('r17', 'r18', 'r19', 'r20', 'r21')
+                if r not in target_set
+            )
+            self._ins(f'mov {park}, {targets[i]}')
+            # Redirect any operand whose source was targets[i] to the parking reg.
+            for j in range(n):
+                if not done[j] and cur[j] == targets[i]:
+                    cur[j] = park
+
+        self._invalidate_scratch()
+        # Substitute %0..%N in each template line and emit.
         for line in instr.text.split('\n'):
             text = line.strip()
             if not text:
                 continue
-            for i, reg in enumerate(regs):
+            for i, reg in enumerate(targets):
                 text = text.replace(f'%{i}', reg)
             self._ins(text)
 

@@ -76,10 +76,9 @@
 - Common subexpression elimination (CSE) (`compiler/fold.py`): deduplicates `IAddrOf` and `Var` loads within basic blocks
 - Trivial jump removal: eliminates jumps to immediately-following labels
 - Function inlining (`compiler/inline.py`): inlines `always_inline` functions
-- Linear-scan register allocator (`compiler/regalloc.py`): Temps → r10–r18 (caller-saved) and r19–r29 (call-crossing, callee-saved)
+- Linear-scan register allocator (`compiler/regalloc.py`): Temps → r10–r18 (caller-saved) and r19–r29 (call-crossing, callee-saved); `FuncContext` skips spill-slot allocation for register-assigned temps so the frame is correct from the start
 - Compare-branch fusion: `t = a < b; if t goto L` → `sub r0,a,b; jl L`
 - Peephole: `st Rx,r30,N` + `ld Ry,r30,N` → `mov Ry,Rx`
-- **Stack frame compaction** (`compiler/codegen.py`, `_compact_frame`): post-codegen pass that removes unused temp spill slots from the frame.  The spill-slot allocator (dry run in `_gen_function`) pre-allocates a stack slot for every IR temporary based on peak simultaneous liveness, but many temps end up held entirely in scratch registers (r7–r18) and never actually spill.  After emitting a function's body, `_compact_frame` scans the emitted `st/ld r30, N` instructions to find the highest temp-zone slot actually touched (temp zone = `[perm_peak..F-1]`; permanent zone `[0..perm_peak-1]` covering params and array/struct locals is left alone).  The true `F` is set to `max_used_temp_slot + 1`, and all callee-save, LR, and va-spill offsets (`>= old F`) plus the frame alloc/dealloc instructions (`sub/add r30, total`) are patched down by the savings.  `add DEST, r30, N` (va_start base pointer) is also patched when `N >= old F`.  For example, `power(int base, int a)` went from 8-word to 5-word frames (3 dead temp slots eliminated per recursive call).
 
 ---
 
