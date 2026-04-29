@@ -114,6 +114,8 @@ static int _cursor_row;
 static char _ibuf[_IBUF_SIZE];
 static int  _ibuf_len;
 static int  _ibuf_pos;
+static int  _ungetc_buf;    /* pushed-back char (valid when _ungetc_valid != 0) */
+static int  _ungetc_valid;
 
 /* --Output --------------------------------------------------------------- */
 
@@ -175,6 +177,12 @@ static void term_set_color(int fg, int bg) {
 static int term_getch(void) {
     int *port;
     int c;
+
+    if (_ungetc_valid) {
+        c = _ungetc_buf;
+        _ungetc_valid = 0;
+        return c;
+    }
 
     if (_ibuf_pos < _ibuf_len) {
         c = _ibuf[_ibuf_pos];

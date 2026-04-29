@@ -4,11 +4,18 @@
  * Builds on terminal.h for character I/O primitives.
  *
  * Public API:
- *   putchar(c), getchar()
+ *   putchar(c), putc(c, stream), fputc(c, stream)
+ *   getchar(), getc(stream), fgetc(stream), ungetc(c, stream)
  *   puts(s), print_str(s)
+ *   fputs(s, stream), fgets(s, n, stream)
+ *   fflush(stream)
  *   print_int(n), print_uint(n), print_hex(n)
- *   printf(fmt, ...)  — %d %u %x %c %s %%
- *   scanf(fmt, ...)   — %d %u %x %c %s
+ *   printf(fmt, ...)         — %d %u %x %c %s %%
+ *   fprintf(stream, fmt, ...)
+ *   sprintf(buf, fmt, ...)
+ *   snprintf(buf, n, fmt, ...)
+ *   scanf(fmt, ...)          — %d %u %x %c %s
+ *   fscanf(stream, fmt, ...)
  */
 
 #ifndef STDIO_H
@@ -17,14 +24,57 @@
 #include <terminal.h>
 #include <stdarg.h>
 
+/* ── FILE / streams / EOF ───────────────────────────────────────────────── */
+
+typedef int FILE;
+
+#define stdin  ((FILE *)0)
+#define stdout ((FILE *)1)
+#define stderr ((FILE *)2)
+#define EOF    (-1)
+
 /* ── putchar / getchar ──────────────────────────────────────────────────── */
 
 __attribute__((always_inline)) static void putchar(int c) {
     term_putch(c);
 }
 
+__attribute__((always_inline)) static int putc(int c, FILE *stream) {
+    (void)stream;
+    term_putch(c);
+    return c;
+}
+
+__attribute__((always_inline)) static int fputc(int c, FILE *stream) {
+    (void)stream;
+    term_putch(c);
+    return c;
+}
+
 __attribute__((always_inline)) static int getchar(void) {
     return term_getch();
+}
+
+__attribute__((always_inline)) static int getc(FILE *stream) {
+    (void)stream;
+    return term_getch();
+}
+
+__attribute__((always_inline)) static int fgetc(FILE *stream) {
+    (void)stream;
+    return term_getch();
+}
+
+static int ungetc(int c, FILE *stream) {
+    (void)stream;
+    _ungetc_buf = c;
+    _ungetc_valid = 1;
+    return c;
+}
+
+__attribute__((always_inline)) static int fflush(FILE *stream) {
+    (void)stream;
+    return 0;
 }
 
 /* ── puts / print_str ───────────────────────────────────────────────────── */
@@ -43,6 +93,38 @@ static void print_str(const char *s) {
         term_putch(*s);
         s++;
     }
+}
+
+/* ── fputs / fgets ──────────────────────────────────────────────────────── */
+/* All streams map to the single terminal device.                            */
+
+static int fputs(const char *s, FILE *stream) {
+    (void)stream;
+    while (*s) {
+        term_putch(*s);
+        s++;
+    }
+    return 0;
+}
+
+/* Reads at most n-1 chars, stops after '\n' (included) or EOF.
+   Returns s on success, NULL if no characters were read.              */
+static char *fgets(char *s, int n, FILE *stream) {
+    int c;
+    int i;
+    (void)stream;
+    if (n <= 0) return 0;
+    i = 0;
+    while (i < n - 1) {
+        c = term_getch();
+        if (c == 0) break;
+        s[i] = c;
+        i++;
+        if (c == '\n') break;
+    }
+    if (i == 0) return 0;
+    s[i] = 0;
+    return s;
 }
 
 /* ── print_int / print_uint ─────────────────────────────────────────────── */
@@ -322,6 +404,191 @@ static int printf(const char *fmt, ...) {
     return n;
 }
 
+/* ── fprintf ────────────────────────────────────────────────────────────── */
+
+static int fprintf(FILE *stream, const char *fmt, ...) {
+    va_list ap;
+    int n;
+    (void)stream;
+    va_start(ap, fmt);
+    /* reuse printf's va_list path via vprintf-style forwarding not available;
+       duplicate the call through printf by re-invoking with the same ap.
+       Since printf takes (fmt, ...) we must call it directly. */
+    n = 0;
+    {
+        /* inline: same body as printf but driven by ap already started */
+        int flag_left, flag_zero, flag_plus, flag_space, flag_hash;
+        int width, prec, spec, is_signed, negative;
+        unsigned int uval; int ival;
+        int buf[20]; int prefix[4];
+        int blen, plen, zero_pad, content_width, total_pad, pad;
+        int lo, hi, bi, pi, zi, tmp, d;
+        unsigned int v;
+        const char *s; int slen;
+        while (*fmt) {
+            if (*fmt != '%') { term_putch(*fmt); n++; fmt++; }
+            else {
+                fmt++;
+                flag_left=0; flag_zero=0; flag_plus=0; flag_space=0; flag_hash=0;
+                while (*fmt=='-'||*fmt=='0'||*fmt=='+'||*fmt==' '||*fmt=='#') {
+                    if (*fmt=='-') flag_left=1;
+                    else if (*fmt=='0') flag_zero=1;
+                    else if (*fmt=='+') flag_plus=1;
+                    else if (*fmt==' ') flag_space=1;
+                    else if (*fmt=='#') flag_hash=1;
+                    fmt++;
+                }
+                width=0;
+                while (*fmt>='0'&&*fmt<='9') { width=width*10+(*fmt-'0'); fmt++; }
+                prec=-1;
+                if (*fmt=='.') { fmt++; prec=0; while (*fmt>='0'&&*fmt<='9') { prec=prec*10+(*fmt-'0'); fmt++; } }
+                spec=*fmt; if (*fmt) fmt++;
+                if (spec=='%') { term_putch('%'); n++; }
+                else if (spec=='c') {
+                    ival=va_arg(ap,int);
+                    if (!flag_left) { pad=width-1; while(pad>0){term_putch(' ');n++;pad--;} }
+                    term_putch(ival); n++;
+                    if (flag_left) { pad=width-1; while(pad>0){term_putch(' ');n++;pad--;} }
+                } else if (spec=='s') {
+                    s=va_arg(ap,char*); slen=0; while(s[slen]) slen++;
+                    if (prec>=0&&slen>prec) slen=prec;
+                    pad=width-slen;
+                    if (!flag_left) { while(pad>0){term_putch(' ');n++;pad--;} }
+                    bi=0; while(bi<slen){term_putch(s[bi]);n++;bi++;}
+                    if (flag_left) { while(pad>0){term_putch(' ');n++;pad--;} }
+                } else if (spec=='d'||spec=='i'||spec=='u'||spec=='x'||spec=='X'||spec=='o') {
+                    is_signed=(spec=='d'||spec=='i'); negative=0;
+                    if (is_signed) { ival=va_arg(ap,int); if(ival&0x8000){negative=1;uval=(unsigned int)(0-ival);}else uval=(unsigned int)ival; }
+                    else { ival=va_arg(ap,int); uval=(unsigned int)ival; }
+                    blen=0;
+                    if (uval==0) { if(prec!=0){buf[0]='0';blen=1;} }
+                    else { v=uval;
+                        if (spec=='x') { while(v){d=v&0xF;buf[blen]=(d<10)?'0'+d:'a'+d-10;blen++;v=v>>4;} }
+                        else if (spec=='X') { while(v){d=v&0xF;buf[blen]=(d<10)?'0'+d:'A'+d-10;blen++;v=v>>4;} }
+                        else if (spec=='o') { while(v){buf[blen]='0'+(v&7);blen++;v=v>>3;} }
+                        else { while(v){buf[blen]='0'+v%10;blen++;v=v/10;} }
+                        lo=0;hi=blen-1; while(lo<hi){tmp=buf[lo];buf[lo]=buf[hi];buf[hi]=tmp;lo++;hi--;}
+                    }
+                    plen=0;
+                    if (negative){prefix[plen]='-';plen++;} else if(flag_plus){prefix[plen]='+';plen++;} else if(flag_space){prefix[plen]=' ';plen++;}
+                    if (flag_hash){if(spec=='x'){prefix[plen]='0';plen++;prefix[plen]='x';plen++;}else if(spec=='X'){prefix[plen]='0';plen++;prefix[plen]='X';plen++;}else if(spec=='o'&&!(blen>0&&buf[0]=='0')){prefix[plen]='0';plen++;}}
+                    zero_pad=0; if(prec>blen) zero_pad=prec-blen;
+                    if (flag_left) flag_zero=0;
+                    content_width=plen+zero_pad+blen; total_pad=width-content_width; if(total_pad<0)total_pad=0;
+                    if (!flag_left&&!flag_zero){pad=total_pad;while(pad>0){term_putch(' ');n++;pad--;}}
+                    pi=0; while(pi<plen){term_putch(prefix[pi]);n++;pi++;}
+                    if (!flag_left&&flag_zero){pad=total_pad;while(pad>0){term_putch('0');n++;pad--;}}
+                    zi=0; while(zi<zero_pad){term_putch('0');n++;zi++;}
+                    bi=0; while(bi<blen){term_putch(buf[bi]);n++;bi++;}
+                    if (flag_left){pad=total_pad;while(pad>0){term_putch(' ');n++;pad--;}}
+                }
+            }
+        }
+    }
+    va_end(ap);
+    return n;
+}
+
+/* ── vsnprintf / snprintf / sprintf ─────────────────────────────────────── */
+/* vsnprintf writes at most size-1 chars to buf and always NUL-terminates.   */
+
+static int vsnprintf(char *buf, int size, const char *fmt, va_list ap) {
+    int n, rem;
+    char *p;
+    int flag_left, flag_zero, flag_plus, flag_space, flag_hash;
+    int width, prec, spec, is_signed, negative;
+    unsigned int uval; int ival;
+    int ibuf[20]; int prefix[4];
+    int blen, plen, zero_pad, content_width, total_pad, pad;
+    int lo, hi, bi, pi, zi, tmp, d;
+    unsigned int v;
+    const char *s; int slen;
+
+#define _EMIT(c) do { if (rem > 0) { *p = (c); p++; rem--; } n++; } while (0)
+
+    p = buf; rem = (size > 0) ? size - 1 : 0; n = 0;
+    while (*fmt) {
+        if (*fmt != '%') { _EMIT(*fmt); fmt++; }
+        else {
+            fmt++;
+            flag_left=0; flag_zero=0; flag_plus=0; flag_space=0; flag_hash=0;
+            while (*fmt=='-'||*fmt=='0'||*fmt=='+'||*fmt==' '||*fmt=='#') {
+                if (*fmt=='-') flag_left=1;
+                else if (*fmt=='0') flag_zero=1;
+                else if (*fmt=='+') flag_plus=1;
+                else if (*fmt==' ') flag_space=1;
+                else if (*fmt=='#') flag_hash=1;
+                fmt++;
+            }
+            width=0;
+            while (*fmt>='0'&&*fmt<='9') { width=width*10+(*fmt-'0'); fmt++; }
+            prec=-1;
+            if (*fmt=='.') { fmt++; prec=0; while (*fmt>='0'&&*fmt<='9') { prec=prec*10+(*fmt-'0'); fmt++; } }
+            spec=*fmt; if (*fmt) fmt++;
+            if (spec=='%') { _EMIT('%'); }
+            else if (spec=='c') {
+                ival=va_arg(ap,int);
+                if (!flag_left) { pad=width-1; while(pad>0){_EMIT(' ');pad--;} }
+                _EMIT(ival);
+                if (flag_left) { pad=width-1; while(pad>0){_EMIT(' ');pad--;} }
+            } else if (spec=='s') {
+                s=va_arg(ap,char*); slen=0; while(s[slen]) slen++;
+                if (prec>=0&&slen>prec) slen=prec;
+                pad=width-slen;
+                if (!flag_left) { while(pad>0){_EMIT(' ');pad--;} }
+                bi=0; while(bi<slen){_EMIT(s[bi]);bi++;}
+                if (flag_left) { while(pad>0){_EMIT(' ');pad--;} }
+            } else if (spec=='d'||spec=='i'||spec=='u'||spec=='x'||spec=='X'||spec=='o') {
+                is_signed=(spec=='d'||spec=='i'); negative=0;
+                if (is_signed) { ival=va_arg(ap,int); if(ival&0x8000){negative=1;uval=(unsigned int)(0-ival);}else uval=(unsigned int)ival; }
+                else { ival=va_arg(ap,int); uval=(unsigned int)ival; }
+                blen=0;
+                if (uval==0) { if(prec!=0){ibuf[0]='0';blen=1;} }
+                else { v=uval;
+                    if (spec=='x') { while(v){d=v&0xF;ibuf[blen]=(d<10)?'0'+d:'a'+d-10;blen++;v=v>>4;} }
+                    else if (spec=='X') { while(v){d=v&0xF;ibuf[blen]=(d<10)?'0'+d:'A'+d-10;blen++;v=v>>4;} }
+                    else if (spec=='o') { while(v){ibuf[blen]='0'+(v&7);blen++;v=v>>3;} }
+                    else { while(v){ibuf[blen]='0'+v%10;blen++;v=v/10;} }
+                    lo=0;hi=blen-1; while(lo<hi){tmp=ibuf[lo];ibuf[lo]=ibuf[hi];ibuf[hi]=tmp;lo++;hi--;}
+                }
+                plen=0;
+                if (negative){prefix[plen]='-';plen++;} else if(flag_plus){prefix[plen]='+';plen++;} else if(flag_space){prefix[plen]=' ';plen++;}
+                if (flag_hash){if(spec=='x'){prefix[plen]='0';plen++;prefix[plen]='x';plen++;}else if(spec=='X'){prefix[plen]='0';plen++;prefix[plen]='X';plen++;}else if(spec=='o'&&!(blen>0&&ibuf[0]=='0')){prefix[plen]='0';plen++;}}
+                zero_pad=0; if(prec>blen) zero_pad=prec-blen;
+                if (flag_left) flag_zero=0;
+                content_width=plen+zero_pad+blen; total_pad=width-content_width; if(total_pad<0)total_pad=0;
+                if (!flag_left&&!flag_zero){pad=total_pad;while(pad>0){_EMIT(' ');pad--;}}
+                pi=0; while(pi<plen){_EMIT(prefix[pi]);pi++;}
+                if (!flag_left&&flag_zero){pad=total_pad;while(pad>0){_EMIT('0');pad--;}}
+                zi=0; while(zi<zero_pad){_EMIT('0');zi++;}
+                bi=0; while(bi<blen){_EMIT(ibuf[bi]);bi++;}
+                if (flag_left){pad=total_pad;while(pad>0){_EMIT(' ');pad--;}}
+            }
+        }
+    }
+#undef _EMIT
+    if (size > 0) *p = 0;
+    return n;
+}
+
+static int snprintf(char *buf, int size, const char *fmt, ...) {
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsnprintf(buf, size, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+static int sprintf(char *buf, const char *fmt, ...) {
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsnprintf(buf, 32767, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
 /* ── scanf ──────────────────────────────────────────────────────────────── */
 /* Supports: %d %u %x %c %s — no width/precision/length modifiers.         */
 /* Returns number of items successfully assigned (EOF=-1 not implemented).  */
@@ -444,6 +711,77 @@ static int scanf(const char *fmt, ...) {
             if (c != *fmt) break;
             c = 0;
             fmt++;
+        }
+    }
+
+    va_end(ap);
+    return assigned;
+}
+
+/* ── fscanf ─────────────────────────────────────────────────────────────── */
+
+static int fscanf(FILE *stream, const char *fmt, ...) {
+    va_list ap;
+    int assigned;
+    int c;
+    int neg;
+    unsigned int uval;
+    int *iptr;
+    unsigned int *uptr;
+    char *sptr;
+    (void)stream;
+
+    va_start(ap, fmt);
+    assigned = 0;
+    c = 0;
+
+    while (*fmt) {
+        if (*fmt == '%') {
+            fmt++;
+            if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x') {
+                if (c == 0) c = term_getch();
+                while (_is_space(c)) c = term_getch();
+                if (*fmt == 'x') {
+                    uval = 0;
+                    if (!_is_xdigit(c)) { fmt++; continue; }
+                    while (_is_xdigit(c)) { uval = uval * 16 + _xdigit_val(c); c = term_getch(); }
+                    uptr = va_arg(ap, unsigned int *); *uptr = uval; assigned++;
+                } else if (*fmt == 'u') {
+                    uval = 0;
+                    if (!_is_digit(c)) { fmt++; continue; }
+                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = term_getch(); }
+                    uptr = va_arg(ap, unsigned int *); *uptr = uval; assigned++;
+                } else {
+                    neg = 0;
+                    if (c == '-') { neg = 1; c = term_getch(); }
+                    uval = 0;
+                    if (!_is_digit(c)) { fmt++; continue; }
+                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = term_getch(); }
+                    iptr = va_arg(ap, int *);
+                    *iptr = neg ? (int)(0 - uval) : (int)uval;
+                    assigned++;
+                }
+                fmt++;
+            } else if (*fmt == 'c') {
+                if (c == 0) c = term_getch();
+                iptr = va_arg(ap, int *); *iptr = c; c = 0; assigned++; fmt++;
+            } else if (*fmt == 's') {
+                if (c == 0) c = term_getch();
+                while (_is_space(c)) c = term_getch();
+                sptr = va_arg(ap, char *);
+                while (c != 0 && !_is_space(c)) { *sptr = c; sptr++; c = term_getch(); }
+                *sptr = 0; assigned++; fmt++;
+            } else {
+                fmt++;
+            }
+        } else if (_is_space(*fmt)) {
+            if (c == 0) c = term_getch();
+            while (_is_space(c)) c = term_getch();
+            fmt++;
+        } else {
+            if (c == 0) c = term_getch();
+            if (c != *fmt) break;
+            c = 0; fmt++;
         }
     }
 

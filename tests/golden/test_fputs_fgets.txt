@@ -1,0 +1,24 @@
+=== test_fputs_fgets ===
+hello
+fputs_ret: PASS
+err
+fputs_stderr_ret: PASS
+world
+fgets_ret_nonnull: PASS
+fgets_buf_0: PASS
+fgets_buf_1: PASS
+fgets_buf_2: PASS
+fgets_buf_3: PASS
+fgets_buf_4: PASS
+fgets_buf_5: PASS
+fgets_buf_6: PASS
+abcdefgh
+fgets_trunc_ret: PASS
+fgets_trunc_0: PASS
+fgets_trunc_1: PASS
+fgets_trunc_2: PASS
+fgets_trunc_3: PASS
+=======================
+15
+0
+=== done ===
