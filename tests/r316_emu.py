@@ -60,9 +60,8 @@ class Flags:
         return result
 
     def from_sub(self, p: int, s: int, bin_: int = 0) -> int:
-        """Compute p - s - bin_. R316 sub semantics: sub D, P, S → D = P - S,
-        and the borrow flag is the inverse of carry-out from `add P, ~S, 1`.
-        We model it as "carry = there was a borrow"."""
+        """Compute p - s - bin_. Sets C=1 if a borrow occurred (i.e. result < 0
+        before masking), which matches the R316 borrow flag convention."""
         p &= _MASK16; s &= _MASK16
         full = p - s - bin_
         result = full & _MASK16
@@ -76,9 +75,6 @@ class Flags:
 
 
 # ── parser ─────────────────────────────────────────────────────────────────
-
-# Strip line comments (after `;`) but preserve string contents in directives.
-_COMMENT_RE = re.compile(r';.*$')
 
 # Parse an integer literal: 0xNN, decimal, or character literal 'x'
 def _parse_imm(tok: str, sym: dict) -> int:
@@ -369,6 +365,7 @@ class Machine:
         if c == 'z':   return bool(f.Z)
         if c == 'o':   return bool(f.O)
         if c == 'c':   return bool(f.C)
+        if c == 'n':   return False
         if c == 'nbe': return not (f.C or f.Z)
         if c == 'nl':  return not (f.S ^ f.O)
         if c == 'nle': return not (f.Z or (f.S ^ f.O))
@@ -549,7 +546,7 @@ class Machine:
                     _sleep = _deadline - _now
                     if _sleep > 0:
                         time.sleep(_sleep)
-                    _deadline = time.monotonic() + _batch_period
+                    _deadline += _batch_period
 
     def stdout_str(self) -> str:
         return ''.join(chr(c) for c in self.stdout)
