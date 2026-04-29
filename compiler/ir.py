@@ -245,12 +245,25 @@ class IJumpIfNot(Instr):
     def __str__(self): return f'  ifnot {self.cond} goto {self.target}{self._loc_str()}'
 
 
+# Physical registers used as inline-asm operand slots (%0..%9 → r7..r16).
+# Inline asm may clobber exactly the registers corresponding to its operands.
+ASM_REGS: List[str] = ['r7', 'r8', 'r9', 'r10', 'r11', 'r12',
+                        'r13', 'r14', 'r15', 'r16']
+
+
 @dataclass
 class IInlineAsm(Instr):
-    """asm("template" : srcs...)  — %0..%N substituted at codegen time"""
+    """asm("template" : srcs...)  — %0..%N substituted at codegen time.
+
+    clobbers: frozenset of physical register names that this instruction may
+    overwrite.  Set by irgen to ASM_REGS[:len(srcs)]; the register allocator
+    uses this to exclude those registers from Temps whose live range crosses
+    this instruction.
+    """
     text: str
     srcs: List[Operand]
     loc: Loc = field(default=None, repr=False)
+    clobbers: frozenset = field(default_factory=frozenset)
 
     def defs(self): return None
     def uses(self): return list(self.srcs)

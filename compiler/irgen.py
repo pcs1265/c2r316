@@ -14,6 +14,7 @@ from .ir import (
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram,
+    ASM_REGS,
 )
 
 
@@ -440,7 +441,8 @@ class IRGen:
 
         elif isinstance(stmt, AsmStmt):
             srcs = [self._gen_expr(e) for e in stmt.inputs]
-            self._emit(IInlineAsm(stmt.text, srcs, self._loc(stmt)))
+            self._emit(IInlineAsm(stmt.text, srcs, self._loc(stmt),
+                                  clobbers=frozenset(ASM_REGS[:len(srcs)])))
 
         else:
             raise IRGenError(f"Unhandled statement: {type(stmt)}")
