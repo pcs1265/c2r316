@@ -317,8 +317,309 @@ class Machine:
         # Terminal state for cursor tracking
         self._cursor_col = 0
         self._cursor_row = 0
+        # Debugging support
+        self._breakpoints: dict[int, dict] = {}  # pc -> breakpoint info
+        self._breakpoint_counter: int = 0
+        self._trace: list[dict] = []  # Execution trace history
+        self._trace_enabled: bool = False
         if interactive:
             self._setup_raw_terminal()
+
+    # ── debugging API ────────────────────────────────────────────────────────
+    def get_registers(self) -> dict[str, int]:
+        """Return all registers as a dict (r0-r31)."""
+        return {f'r{i}': self.regs[i] & _MASK16 for i in range(32)}
+
+    def get_flags(self) -> dict[str, int]:
+        """Return flags as a dict (Z, S, C, O)."""
+        return {'Z': self.flags.Z, 'S': self.flags.S, 'C': self.flags.C, 'O': self.flags.O}
+
+    def get_pc(self) -> int:
+        """Return current PC (instruction index)."""
+        return self.pc
+
+    def get_memory(self, addr: int, count: int = 1) -> list[int]:
+        """Read 'count' words starting at addr."""
+        addr &= _MASK16
+        return [self.mem.get(addr + i, 0) & _MASK16 for i in range(count)]
+
+    def get_current_instruction(self) -> dict | None:
+        """Return current instruction info, or None if halted/end."""
+        if self.pc < 0 or self.pc >= len(self.prog.insns):
+            return None
+        ins = self.prog.insns[self.pc]
+        return {'op': ins.op, 'args': list(ins.args), 'src_line': ins.src_line, 'scope': ins.scope}
+
+    def get_stdout(self) -> str:
+        """Return captured stdout as string."""
+        return ''.join(chr(c) for c in self.stdout)
+
+    def is_halted(self) -> bool:
+        """Return True if machine is halted."""
+        return self.halted
+
+    def get_trace(self) -> list[dict]:
+        """Return execution trace history."""
+        return list(self._trace)
+
+    def clear_trace(self) -> None:
+        """Clear execution trace history."""
+        self._trace = []
+
+    def enable_trace(self) -> None:
+        """Enable execution tracing."""
+        self._trace_enabled = True
+
+    def disable_trace(self) -> None:
+        """Disable execution tracing."""
+        self._trace_enabled = False
+
+    def snapshot(self) -> dict:
+        """Return complete machine state for debugging."""
+        return {
+            'pc': self.pc,
+            'cycles': self.cycles,
+            'halted': self.halted,
+            'regs': self.get_registers(),
+            'flags': self.get_flags(),
+            'stdout': self.get_stdout(),
+            'stdin': list(self.stdin),
+            'stdin_pos': self.stdin_pos,
+            'current_instruction': self.get_current_instruction(),
+            'breakpoints': self.list_breakpoints(),
+            'trace_count': len(self._trace),
+        }
+
+    def save_state(self) -> dict:
+        """Save complete state to a dict for later restoration."""
+        return {
+            'version': 1,
+            'pc': self.pc,
+            'cycles': self.cycles,
+            'halted': self.halted,
+            'regs': list(self.regs),
+            'flags': {'Z': self.flags.Z, 'S': self.flags.S, 'C': self.flags.C, 'O': self.flags.O},
+            'mem': dict(self.mem),
+            'stdout': list(self.stdout),
+            'stdin': list(self.stdin),
+            'stdin_pos': self.stdin_pos,
+            'cursor_col': self._cursor_col,
+            'cursor_row': self._cursor_row,
+            'trace': list(self._trace),
+            'breakpoints': {pc: bp.copy() for pc, bp in self._breakpoints.items()},
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore state from a dict saved by save_state()."""
+        if state.get('version', 0) != 1:
+            raise ValueError("Unsupported state version")
+        self.pc = state['pc']
+        self.cycles = state['cycles']
+        self.halted = state['halted']
+        self.regs = list(state['regs'])
+        self.flags.Z = state['flags']['Z']
+        self.flags.S = state['flags']['S']
+        self.flags.C = state['flags']['C']
+        self.flags.O = state['flags']['O']
+        self.mem = dict(state['mem'])
+        self.stdout = list(state['stdout'])
+        self.stdin = list(state['stdin'])
+        self.stdin_pos = state['stdin_pos']
+        self._cursor_col = state.get('cursor_col', 0)
+        self._cursor_row = state.get('cursor_row', 0)
+        self._trace = list(state.get('trace', []))
+        self._breakpoints = {int(pc): bp.copy() for pc, bp in state.get('breakpoints', {}).items()}
+
+    def save_state_file(self, filepath: str) -> None:
+        """Save complete state to a JSON file."""
+        import json
+        state = self.save_state()
+        # Convert non-JSON-serializable types
+        state['mem'] = {f'0x{addr:04X}': val for addr, val in state['mem'].items()}
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+
+    @classmethod
+    def load_state_file(cls, filepath: str, prog: Program) -> 'Machine':
+        """Load state from a JSON file and return a new Machine instance."""
+        import json
+        with open(filepath, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+        # Convert string keys back to int for mem
+        state['mem'] = {int(addr, 16): val for addr, val in state['mem'].items()}
+        # Convert string keys back to int for breakpoints
+        state['breakpoints'] = {int(pc): bp for pc, bp in state.get('breakpoints', {}).items()}
+        # Create machine instance
+        m = cls(prog)
+        m.restore_state(state)
+        return m
+
+    def set_breakpoint(self, label_or_pc) -> int:
+        """Set a breakpoint at a label or PC. Returns breakpoint ID."""
+        if isinstance(label_or_pc, str):
+            pc = self.prog.labels.get(label_or_pc)
+            if pc is None:
+                raise ValueError(f"Unknown label: {label_or_pc}")
+        else:
+            pc = int(label_or_pc)
+        self._breakpoint_counter += 1
+        bp_id = self._breakpoint_counter
+        self._breakpoints[pc] = {'id': bp_id, 'pc': pc, 'label': label_or_pc if isinstance(label_or_pc, str) else None}
+        return bp_id
+
+    def clear_breakpoint(self, bp_id: int) -> bool:
+        """Clear a breakpoint by ID. Returns True if found."""
+        for pc, bp in list(self._breakpoints.items()):
+            if bp['id'] == bp_id:
+                del self._breakpoints[pc]
+                return True
+        return False
+
+    def clear_all_breakpoints(self) -> None:
+        """Clear all breakpoints."""
+        self._breakpoints = {}
+
+    def list_breakpoints(self) -> list[dict]:
+        """List all breakpoints."""
+        return [bp.copy() for bp in self._breakpoints.values()]
+
+    def run_until_breakpoint(self) -> bool:
+        """Run until a breakpoint is hit or machine halts. Returns True if breakpoint hit."""
+        while not self.halted:
+            if self.pc in self._breakpoints:
+                return True
+            if not self._step_internal():
+                return False
+        return False
+
+    def run_until_pc(self, target_pc: int) -> bool:
+        """Run until PC reaches target_pc or machine halts. Returns True if target reached."""
+        while not self.halted and self.pc != target_pc:
+            if not self._step_internal():
+                return False
+        return self.pc == target_pc
+
+    def step(self, count: int = 1) -> bool:
+        """Execute one or more instructions. Returns True if still running, False if halted.
+        
+        Args:
+            count: Number of instructions to execute (default: 1)
+        """
+        for _ in range(count):
+            if not self._step_internal():
+                return False
+        return not self.halted
+
+    def _step_internal(self) -> bool:
+        """Internal step with trace recording."""
+        if self.halted:
+            return False
+        # Record state before for trace
+        if self._trace_enabled:
+            state_before = {
+                'pc': self.pc,
+                'regs': self.get_registers(),
+                'flags': self.get_flags(),
+            }
+        # Execute instruction
+        self._execute_step()
+        self.cycles += 1
+        # Record state after for trace
+        if self._trace_enabled:
+            insn_info = None
+            if state_before['pc'] < len(self.prog.insns):
+                ins = self.prog.insns[state_before['pc']]
+                insn_info = {'op': ins.op, 'args': list(ins.args)}
+            self._trace.append({
+                'pc': state_before['pc'],
+                'op': insn_info['op'] if insn_info else None,
+                'args': insn_info['args'] if insn_info else None,
+                'regs_before': state_before['regs'],
+                'regs_after': self.get_registers(),
+                'flags_before': state_before['flags'],
+                'flags_after': self.get_flags(),
+            })
+        return not self.halted
+
+    def _execute_step(self) -> None:
+        """Execute one instruction (internal implementation)."""
+        if self.pc < 0 or self.pc >= len(self.prog.insns):
+            self.halted = True
+            return
+        ins = self.prog.insns[self.pc]
+        op, args = ins.op, ins.args
+        self.pc += 1
+        # ── data movement ──
+        if op == 'mov':
+            d = args[0]; s = args[1]
+            self.wr(d, self.operand_value(s))
+            return
+        # ── arithmetic ──
+        if op == 'add':
+            d, p, s = self._three(args)
+            r = self.flags.from_add(self.operand_value(p), self.operand_value(s))
+            self.wr(d, r); return
+        if op == 'adc':
+            d, p, s = self._three(args)
+            r = self.flags.from_add(self.operand_value(p), self.operand_value(s), self.flags.C)
+            self.wr(d, r); return
+        if op == 'sub':
+            d, p, s = self._three(args)
+            pv = self.operand_value(p); sv = self.operand_value(s)
+            r = self.flags.from_sub(pv, sv)
+            self.wr(d, r); return
+        if op == 'sbb':
+            d, p, s = self._three(args)
+            r = self.flags.from_sub(self.operand_value(p), self.operand_value(s), self.flags.C)
+            self.wr(d, r); return
+        if op == 'mul':
+            d, p, s = self._three(args)
+            r = (self.operand_value(p) * self.operand_value(s)) & _MASK16
+            self.wr(d, r); return
+        # ── logic ──
+        if op in ('and', 'or', 'xor'):
+            d, p, s = self._three(args)
+            pv = self.operand_value(p); sv = self.operand_value(s)
+            r = {'and': pv & sv, 'or': pv | sv, 'xor': pv ^ sv}[op]
+            r &= _MASK16
+            self.flags.from_logic(r)
+            self.wr(d, r); return
+        # ── shift ──
+        if op == 'shl':
+            d, p, s = self._three(args)
+            sv = self.operand_value(s) & 0xF
+            r = (self.operand_value(p) << sv) & _MASK16
+            self.flags.from_logic(r)
+            self.wr(d, r); return
+        if op == 'shr':
+            d, p, s = self._three(args)
+            sv = self.operand_value(s) & 0xF
+            r = (self.operand_value(p) & _MASK16) >> sv
+            self.flags.from_logic(r)
+            self.wr(d, r); return
+        # ── memory ──
+        if op == 'ld':
+            d = args[0]
+            if len(args) == 2:
+                addr = self.operand_value(args[1])
+            else:
+                addr = (self.operand_value(args[1]) + self.operand_value(args[2])) & _MASK16
+            self.wr(d, self.mem_read(addr))
+            return
+        if op == 'st':
+            val = self.operand_value(args[0])
+            if len(args) == 2:
+                addr = self.operand_value(args[1])
+            else:
+                addr = (self.operand_value(args[1]) + self.operand_value(args[2])) & _MASK16
+            self.mem_write(addr, val)
+            return
+        # ── jumps ──
+        if op == 'jmp' or (op.startswith('j') and len(op) <= 4):
+            self._do_jump(op, args); return
+        if op == 'hlt':
+            self.halted = True; return
+        raise RuntimeError(f"unknown op at pc={self.pc-1}: {op} {args}")
 
     def _setup_raw_terminal(self) -> None:
         """Set up terminal for raw, non-echoing input."""
@@ -555,94 +856,6 @@ class Machine:
         if c == 'nc':  return not f.C
         raise RuntimeError(f"unknown condition: {name}")
 
-    # ── main step ──────────────────────────────────────────────────────────
-    def step(self) -> None:
-        if self.pc < 0 or self.pc >= len(self.prog.insns):
-            self.halted = True
-            return
-        ins = self.prog.insns[self.pc]
-        op, args = ins.op, ins.args
-        self.pc += 1
-        # ── data movement ──
-        if op == 'mov':
-            d = args[0]; s = args[1]
-            self.wr(d, self.operand_value(s))
-            return
-        # ── arithmetic ──
-        if op == 'add':
-            d, p, s = self._three(args)
-            r = self.flags.from_add(self.operand_value(p), self.operand_value(s))
-            self.wr(d, r); return
-        if op == 'adc':
-            d, p, s = self._three(args)
-            r = self.flags.from_add(self.operand_value(p), self.operand_value(s), self.flags.C)
-            self.wr(d, r); return
-        if op == 'sub':
-            # sub D, P, S → D = P - S. 2-op `sub D, S` → D = D - S (same).
-            # sub D, imm form expands to `add D, D, -imm` per manual; our test
-            # programs always use sub D, P_reg, S — so we treat all uniformly.
-            d, p, s = self._three(args)
-            pv = self.operand_value(p); sv = self.operand_value(s)
-            # If S is a literal, R316 actually expands to `add D, P, -S` with
-            # carry inverted. We approximate by computing borrow based on full
-            # subtraction (correctness, not bit-exact carry semantics).
-            r = self.flags.from_sub(pv, sv)
-            self.wr(d, r); return
-        if op == 'sbb':
-            d, p, s = self._three(args)
-            r = self.flags.from_sub(self.operand_value(p), self.operand_value(s), self.flags.C)
-            self.wr(d, r); return
-        if op == 'mul':
-            d, p, s = self._three(args)
-            r = (self.operand_value(p) * self.operand_value(s)) & _MASK16
-            self.wr(d, r); return
-        # ── logic ──
-        if op in ('and', 'or', 'xor'):
-            d, p, s = self._three(args)
-            pv = self.operand_value(p); sv = self.operand_value(s)
-            r = {'and': pv & sv, 'or': pv | sv, 'xor': pv ^ sv}[op]
-            r &= _MASK16
-            self.flags.from_logic(r)
-            self.wr(d, r); return
-        # ── shift ──
-        if op == 'shl':
-            d, p, s = self._three(args)
-            sv = self.operand_value(s) & 0xF
-            r = (self.operand_value(p) << sv) & _MASK16
-            self.flags.from_logic(r)
-            self.wr(d, r); return
-        if op == 'shr':
-            d, p, s = self._three(args)
-            sv = self.operand_value(s) & 0xF
-            r = (self.operand_value(p) & _MASK16) >> sv
-            self.flags.from_logic(r)
-            self.wr(d, r); return
-        # ── memory ──
-        if op == 'ld':
-            # `ld D, addr` (2-op) or `ld D, base, offset` (3-op)
-            d = args[0]
-            if len(args) == 2:
-                addr = self.operand_value(args[1])
-            else:
-                addr = (self.operand_value(args[1]) + self.operand_value(args[2])) & _MASK16
-            self.wr(d, self.mem_read(addr))
-            return
-        if op == 'st':
-            # `st value, addr` or `st value, base, offset`
-            val = self.operand_value(args[0])
-            if len(args) == 2:
-                addr = self.operand_value(args[1])
-            else:
-                addr = (self.operand_value(args[1]) + self.operand_value(args[2])) & _MASK16
-            self.mem_write(addr, val)
-            return
-        # ── jumps ──
-        if op == 'jmp' or (op.startswith('j') and len(op) <= 4):
-            self._do_jump(op, args); return
-        if op == 'hlt':
-            self.halted = True; return
-        raise RuntimeError(f"unknown op at pc={self.pc-1}: {op} {args}")
-
     def _three(self, args: list[str]) -> tuple[str, str, str]:
         """Normalize arg lists to (D, P, S). Two-arg forms expand D-side."""
         if len(args) == 3:
@@ -716,8 +929,7 @@ class Machine:
                     f"(likely infinite loop). pc={self.pc}, "
                     f"cur={self.prog.insns[self.pc] if self.pc < len(self.prog.insns) else None}"
                 )
-            self.step()
-            self.cycles += 1
+            self._step_internal()
             if freq is not None:
                 _batch += 1
                 if _batch >= _BATCH:
