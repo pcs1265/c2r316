@@ -22,6 +22,15 @@ class IRGenError(Exception):
     pass
 
 
+def _const_int_value(e) -> int | None:
+    """Return the integer value of a constant integer expression, or None."""
+    if isinstance(e, (IntLit, CharLit)):
+        return e.value
+    if isinstance(e, UnaryOp) and e.op == '-' and isinstance(e.operand, (IntLit, CharLit)):
+        return -e.operand.value
+    return None
+
+
 def _flatten_init(init: 'InitList') -> list:
     """Recursively flatten a (possibly nested) InitList into a list of scalar expressions."""
     result = []
@@ -127,16 +136,17 @@ class IRGen:
                 if isinstance(decl.init, InitList):
                     init_vals = []
                     for e in _flatten_init(decl.init):
-                        if isinstance(e, (IntLit, CharLit)):
-                            init_vals.append(e.value)
+                        cv = _const_int_value(e)
+                        if cv is not None:
+                            init_vals.append(cv)
                         elif isinstance(e, StringLit):
                             lbl = f'_cstr_{len(self._strings) + 1}'
                             self._strings.append((lbl, e.chars))
                             init_vals.append(lbl)
                         else:
                             init_vals.append(0)
-                elif isinstance(decl.init, IntLit):
-                    init_vals = [decl.init.value]
+                elif _const_int_value(decl.init) is not None:
+                    init_vals = [_const_int_value(decl.init)]
                 elif isinstance(decl.init, StringLit):
                     lbl = f'_cstr_{len(self._strings) + 1}'
                     self._strings.append((lbl, decl.init.chars))
@@ -245,15 +255,17 @@ class IRGen:
         """Extract constant initializer values for a global/static, or return None for zero-init."""
         if init is None:
             return None
-        if isinstance(init, IntLit):
-            return [init.value]
+        cv = _const_int_value(init)
+        if cv is not None:
+            return [cv]
         if isinstance(init, CharLit):
             return [init.value & 0xFF]
         if isinstance(init, InitList):
             vals = []
             for e in init.elems:
-                if isinstance(e, (IntLit, CharLit)):
-                    vals.append(e.value)
+                cv = _const_int_value(e)
+                if cv is not None:
+                    vals.append(cv)
                 elif isinstance(e, StringLit):
                     lbl = f'_cstr_{len(self._strings) + 1}'
                     self._strings.append((lbl, e.chars))
