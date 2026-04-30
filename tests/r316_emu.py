@@ -322,6 +322,7 @@ class Machine:
         self._breakpoint_counter: int = 0
         self._trace: list[dict] = []  # Execution trace history
         self._trace_enabled: bool = False
+        self._interrupted: bool = False  # Set by SIGINT handler
         if interactive:
             self._setup_raw_terminal()
 
@@ -642,7 +643,8 @@ class Machine:
                 import termios
                 import tty
                 self._term_settings = termios.tcgetattr(sys.stdin.fileno())
-                tty.setraw(sys.stdin.fileno())
+                # Use cbreak mode instead of raw mode to allow SIGINT (Ctrl+C) to work
+                tty.setcbreak(sys.stdin.fileno())
                 # Clear screen and move cursor to row 2 (skip top line for status bar)
                 sys.stdout.write('\x1b[2J\x1b[2;1H')
                 sys.stdout.flush()
@@ -730,11 +732,6 @@ class Machine:
                                 return 0
                             # Single ESC - return 0
                             return 0
-                    # Handle Ctrl+C (ASCII 3) to exit gracefully
-                    if ch == 3:
-                        self._restore_terminal()
-                        print("\n[Interrupted]")
-                        sys.exit(130)  # 128 + SIGINT(2)
                     return ch
                 except Exception:
                     return 0
@@ -912,33 +909,55 @@ class Machine:
             self.pc = target_pc
 
     def run(self) -> None:
+        import signal
         import time
-        freq = self.freq
-        if freq is not None:
-            # Throttle to target frequency using a simple sleep-based approach.
-            # We accumulate a "credit" of cycles owed and sleep when ahead.
-            _BATCH = max(1, int(freq / 100))  # check time every ~10 ms of sim
-            _batch_period = _BATCH / freq      # wall seconds per batch
-            _deadline = time.monotonic() + _batch_period
-            _batch = 0
 
-        while not self.halted:
-            if self.max_cycles is not None and self.cycles >= self.max_cycles:
-                raise RuntimeError(
-                    f"emulator timeout after {self.max_cycles} cycles "
-                    f"(likely infinite loop). pc={self.pc}, "
-                    f"cur={self.prog.insns[self.pc] if self.pc < len(self.prog.insns) else None}"
-                )
-            self._step_internal()
+        # Set up SIGINT handler to allow Ctrl+C to interrupt the emulator
+        self._interrupted = False
+        _orig_handler = signal.getsignal(signal.SIGINT)
+
+        def _sigint_handler(signum, frame):
+            self._interrupted = True
+
+        signal.signal(signal.SIGINT, _sigint_handler)
+
+        try:
+            freq = self.freq
             if freq is not None:
-                _batch += 1
-                if _batch >= _BATCH:
-                    _batch = 0
-                    _now = time.monotonic()
-                    _sleep = _deadline - _now
-                    if _sleep > 0:
-                        time.sleep(_sleep)
-                    _deadline += _batch_period
+                # Throttle to target frequency using a simple sleep-based approach.
+                # We accumulate a "credit" of cycles owed and sleep when ahead.
+                _BATCH = max(1, int(freq / 100))  # check time every ~10 ms of sim
+                _batch_period = _BATCH / freq      # wall seconds per batch
+                _deadline = time.monotonic() + _batch_period
+                _batch = 0
+
+            while not self.halted:
+                # Check for Ctrl+C interrupt
+                if self._interrupted:
+                    self._restore_terminal()
+                    print("\n[Interrupted]")
+                    import sys
+                    sys.exit(130)  # 128 + SIGINT(2)
+
+                if self.max_cycles is not None and self.cycles >= self.max_cycles:
+                    raise RuntimeError(
+                        f"emulator timeout after {self.max_cycles} cycles "
+                        f"(likely infinite loop). pc={self.pc}, "
+                        f"cur={self.prog.insns[self.pc] if self.pc < len(self.prog.insns) else None}"
+                    )
+                self._step_internal()
+                if freq is not None:
+                    _batch += 1
+                    if _batch >= _BATCH:
+                        _batch = 0
+                        _now = time.monotonic()
+                        _sleep = _deadline - _now
+                        if _sleep > 0:
+                            time.sleep(_sleep)
+                        _deadline += _batch_period
+        finally:
+            # Restore original signal handler
+            signal.signal(signal.SIGINT, _orig_handler)
 
     def stdout_str(self) -> str:
         return ''.join(chr(c) for c in self.stdout)
