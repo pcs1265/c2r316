@@ -272,6 +272,56 @@ class Parser:
             base = CPointer(base)
         return base
 
+    def _parse_const_expr(self) -> int:
+        """Parse a constant integer expression (for array sizes). Supports +,-,*,/,% and parentheses."""
+        def parse_primary():
+            if self._try_eat(TK.LPAREN):
+                v = parse_add()
+                self._eat(TK.RPAREN)
+                return v
+            if self._at(TK.INT_LIT):
+                return self._eat(TK.INT_LIT).value
+            if self._at(TK.IDENT):
+                name = self._eat(TK.IDENT).value
+                if name in self._enum_consts:
+                    return self._enum_consts[name]
+                raise self._err(f"Non-constant identifier '{name}' in array size")
+            raise self._err("Expected constant expression in array size")
+
+        def parse_unary():
+            if self._try_eat(TK.MINUS):
+                return -parse_primary()
+            if self._try_eat(TK.TILDE):
+                return ~parse_primary()
+            return parse_primary()
+
+        def parse_mul():
+            v = parse_unary()
+            while True:
+                if self._try_eat(TK.STAR):
+                    v *= parse_unary()
+                elif self._try_eat(TK.SLASH):
+                    r = parse_unary()
+                    v = int(v / r)
+                elif self._try_eat(TK.PERCENT):
+                    v %= parse_unary()
+                else:
+                    break
+            return v
+
+        def parse_add():
+            v = parse_mul()
+            while True:
+                if self._try_eat(TK.PLUS):
+                    v += parse_mul()
+                elif self._try_eat(TK.MINUS):
+                    v -= parse_mul()
+                else:
+                    break
+            return v
+
+        return parse_add()
+
     def _parse_type_and_name(self) -> tuple[CType, str]:
         """Type + optional identifier. Also handles array brackets and function pointer declarators."""
         base = self._parse_base_type()
@@ -307,10 +357,10 @@ class Parser:
         # array modifiers — support multi-dimensional: int a[M][N] → CArray(CArray(int,N),M)
         dims = []
         while self._try_eat(TK.LBRACKET):
-            if self._at(TK.INT_LIT):
-                dims.append(self._eat(TK.INT_LIT).value)
-            else:
+            if self._at(TK.RBRACKET):
                 dims.append(None)
+            else:
+                dims.append(self._parse_const_expr())
             self._eat(TK.RBRACKET)
         if dims:
             t = elem
@@ -417,10 +467,10 @@ class Parser:
             # handle array (including multi-dimensional: int a[M][N] → CArray(CArray(int,N),M))
             dims = []
             while self._try_eat(TK.LBRACKET):
-                if self._at(TK.INT_LIT):
-                    dims.append(self._eat(TK.INT_LIT).value)
-                else:
+                if self._at(TK.RBRACKET):
                     dims.append(None)
+                else:
+                    dims.append(self._parse_const_expr())
                 self._eat(TK.RBRACKET)
             if dims:
                 vtype = ret_type
