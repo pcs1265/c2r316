@@ -31,6 +31,8 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 ## Key Documents
 
 - **`docs/ABI.md`** — R316 C Compiler ABI specification. **MUST read before modifying codegen, runtime, or any calling-convention-related code.** Covers register classification, argument passing, return values, stack frame layout, long (32-bit) arithmetic, and edge cases.
+- **`docs/DEBUG_CLI.md`** — CLI debugging flags reference (`--dump-tokens`, `--dump-ast`, `--dump-ir`, `-g`, etc.) with usage examples.
+- **`docs/DEBUG_API.md`** — Programmatic API for the R316 emulator (`Machine` class). Lets you load, run, and debug programs from Python: step execution, set breakpoints, inspect registers/memory/flags, enable instruction tracing, and save/restore machine state (time-travel debugging). Also covers compiling C source via `compile_c()` and loading it straight into the emulator for end-to-end programmatic debugging.
 - **`TODO.md`** — current state of the compiler: implemented features, known issues, not-yet-implemented features. Check before adding a feature to confirm it isn't already done or already tracked.
 - **`IMPROVEMENTS.md`** — full prioritized survey of potential improvements (correctness, optimization, runtime, tooling, testing). Use this as the menu when picking the next non-trivial task.
 
