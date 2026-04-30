@@ -297,7 +297,7 @@ class Machine:
     SENTINEL_LR = 0xDEAD   # invalid PC: when jmp r31 lands here, we halt
 
     def __init__(self, prog: Program, sp_init: int = 0x8000, max_cycles: int | None = 1_000_000,
-                 stdin: str = '', freq: float | None = None):
+                 stdin: str = '', freq: float | None = None, interactive: bool = False):
         self.prog = prog
         self.regs = [0] * 32
         self.regs[30] = sp_init        # sp
@@ -312,6 +312,59 @@ class Machine:
         self.max_cycles = max_cycles  # None = unlimited
         self.freq = freq              # Hz throttle, or None for full speed
         self.halted = False
+        self.interactive = interactive
+        self._term_settings = None
+        # Terminal state for cursor tracking
+        self._cursor_col = 0
+        self._cursor_row = 0
+        if interactive:
+            self._setup_raw_terminal()
+
+    def _setup_raw_terminal(self) -> None:
+        """Set up terminal for raw, non-echoing input."""
+        import sys
+        import os
+        self._is_windows = os.name == 'nt'
+        if self._is_windows:
+            # Windows: use msvcrt for raw input
+            try:
+                import msvcrt
+                self._msvcrt = msvcrt
+                # Clear screen and move cursor to row 2
+                sys.stdout.write('\x1b[2J\x1b[2;1H')
+                sys.stdout.flush()
+            except ImportError:
+                self._term_settings = None
+        else:
+            # Unix/Linux: use termios
+            try:
+                import termios
+                import tty
+                self._term_settings = termios.tcgetattr(sys.stdin.fileno())
+                tty.setraw(sys.stdin.fileno())
+                # Clear screen and move cursor to row 2 (skip top line for status bar)
+                sys.stdout.write('\x1b[2J\x1b[2;1H')
+                sys.stdout.flush()
+            except (ImportError, termios.error):
+                # Non-terminal input: fall back to normal input
+                self._term_settings = None
+
+    def _restore_terminal(self) -> None:
+        """Restore terminal to original settings."""
+        import sys
+        if hasattr(self, '_is_windows') and self._is_windows:
+            # Windows: nothing to restore
+            sys.stdout.write('\x1b[0m')
+            sys.stdout.flush()
+        elif self._term_settings is not None:
+            import termios
+            try:
+                # Reset colors and show cursor
+                sys.stdout.write('\x1b[0m')
+                sys.stdout.flush()
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._term_settings)
+            except Exception:
+                pass
 
     # ── register R/W ────────────────────────────────────────────────────────
     def rd(self, name: str) -> int:
@@ -340,17 +393,144 @@ class Machine:
                 ch = self.stdin[self.stdin_pos]
                 self.stdin_pos += 1
                 return ch
+            if self.interactive:
+                # Read from real terminal (raw mode, no echo)
+                import sys
+                try:
+                    if hasattr(self, '_is_windows') and self._is_windows:
+                        # Windows: use msvcrt.getch() for raw input
+                        ch = self._msvcrt.getch()
+                        if not ch:
+                            return 0
+                        ch = ord(ch)
+                        # Filter out arrow keys and function keys on Windows
+                        # Arrow keys: 0xE0 followed by A/B/C/D
+                        if ch == 0xE0:
+                            # Read the next byte and discard
+                            self._msvcrt.getch()
+                            return 0  # Ignore arrow keys
+                    else:
+                        # Unix/Linux: use sys.stdin.read(1)
+                        ch = sys.stdin.read(1)
+                        if not ch:  # EOF
+                            return 0
+                        ch = ord(ch)
+                        # Filter out escape sequences (arrow keys, function keys, etc.)
+                        # Arrow keys send: ESC [ A/B/C/D
+                        if ch == 27:  # ESC
+                            # Read the next two characters to check for arrow keys
+                            next1 = sys.stdin.read(1)
+                            if next1 == '[':
+                                next2 = sys.stdin.read(1)
+                                # Arrow keys: A=up, B=down, C=right, D=left
+                                if next2 in 'ABCD':
+                                    return 0  # Ignore arrow keys
+                                # Other escape sequences - just return 0
+                                return 0
+                            # Single ESC - return 0
+                            return 0
+                    # Handle Ctrl+C (ASCII 3) to exit gracefully
+                    if ch == 3:
+                        self._restore_terminal()
+                        print("\n[Interrupted]")
+                        sys.exit(130)  # 128 + SIGINT(2)
+                    return ch
+                except Exception:
+                    return 0
             return 0  # no more input (keeps polling loop spinning → timeout)
         return self.mem.get(addr, 0) & _MASK16
 
     def mem_write(self, addr: int, value: int) -> None:
         addr &= _MASK16
         if addr == 0x9FB5:   # terminal output (term_term)
-            self.stdout.append(value & 0xFF)
+            ch = value & 0xFF
+            self.stdout.append(ch)
+            # In interactive mode, print immediately for real-time output
+            if self.interactive:
+                import sys
+                # In raw mode, newline only moves down; need \r\n for proper newline
+                if ch == 10:  # newline
+                    sys.stdout.write('\r\n')
+                    self._cursor_col = 0
+                    self._cursor_row += 1
+                else:
+                    sys.stdout.write(chr(ch))
+                    self._cursor_col += 1
+                sys.stdout.flush()
+            return
+        if addr == 0x9FB7:   # TERM_TERM_COL: terminal output with colour
+            # data = (bg<<12)|(fg<<8)|char
+            ch = value & 0xFF
+            self.stdout.append(ch)
+            if self.interactive:
+                import sys
+                # Extract colours and set them
+                fg = (value >> 8) & 0xF
+                bg = (value >> 12) & 0xF
+                fg_ansi = self._r316_to_ansi(fg)
+                bg_ansi = self._r316_to_ansi(bg)
+                sys.stdout.write(f'\x1b[38;5;{fg_ansi}m\x1b[48;5;{bg_ansi}m')
+                # Output character
+                if ch == 10:  # newline
+                    sys.stdout.write('\r\n')
+                    self._cursor_col = 0
+                    self._cursor_row += 1
+                else:
+                    sys.stdout.write(chr(ch))
+                    self._cursor_col += 1
+                sys.stdout.flush()
+            return
+        if addr == 0x9FC4:   # TERM_CURSOR: cursor position
+            # bits[9:5]=row, bits[4:0]=col
+            col = value & 0x1F
+            row = (value >> 5) & 0x1F
+            self._cursor_col = col
+            self._cursor_row = row
+            if self.interactive:
+                import sys
+                # Use ANSI escape code to move cursor
+                # Add +1 to row to skip top line (for status bar)
+                sys.stdout.write(f'\x1b[{row + 2};{col + 1}H')
+                sys.stdout.flush()
+            return
+        if addr == 0x9FC6:   # TERM_COLOUR: fg/bg colour
+            # bits[7:4]=bg, bits[3:0]=fg
+            if self.interactive:
+                import sys
+                fg = value & 0xF
+                bg = (value >> 4) & 0xF
+                # Map R316 colors to ANSI 256-color palette
+                fg_ansi = self._r316_to_ansi(fg)
+                bg_ansi = self._r316_to_ansi(bg)
+                sys.stdout.write(f'\x1b[38;5;{fg_ansi}m\x1b[48;5;{bg_ansi}m')
+                sys.stdout.flush()
             return
         if 0x9F80 <= addr <= 0x9FC6:
             return   # other terminal MMIO: ignore in emulator
         self.mem[addr] = value & _MASK16
+
+    def _r316_to_ansi(self, color: int) -> int:
+        """Map R316 color index to ANSI 256-color palette."""
+        # R316 colors map to standard 16-color ANSI palette
+        ansi_colors = [
+            0,   # TERM_BLACK   -> 0 (black)
+            4,   # TERM_DBLUE   -> 4 (blue)
+            2,   # TERM_DGREEN  -> 2 (green)
+            6,   # TERM_DCYAN   -> 6 (cyan)
+            1,   # TERM_DRED    -> 1 (red)
+            5,   # TERM_DMAGENTA -> 5 (magenta)
+            3,   # TERM_DYELLOW -> 3 (yellow)
+            7,   # TERM_LGREY   -> 7 (white/light gray)
+            8,   # TERM_DGREY   -> 8 (bright black / dark gray)
+            12,  # TERM_LBLUE   -> 12 (bright blue)
+            10,  # TERM_LGREEN  -> 10 (bright green)
+            14,  # TERM_LCYAN   -> 14 (bright cyan)
+            9,   # TERM_LRED    -> 9 (bright red)
+            13,  # TERM_LMAGENTA -> 13 (bright magenta)
+            11,  # TERM_LYELLOW -> 11 (bright yellow)
+            15,  # TERM_WHITE   -> 15 (bright white)
+        ]
+        return ansi_colors[color & 0xF]
 
     # ── jump conditions ────────────────────────────────────────────────────
     def cond(self, name: str) -> bool:
@@ -584,9 +764,30 @@ if __name__ == '__main__':
                     metavar='HZ', help='throttle emulation to HZ cycles/s (e.g. 1000000 for 1 MHz)')
     ap.add_argument('--show-retval', '-r', action='store_true',
                     help='print main() return value after program output')
+    ap.add_argument('--stdin', '-s', type=str, default=None,
+                    metavar='STR', help='provide stdin input as a string')
+    ap.add_argument('--stdin-file', type=str, default=None,
+                    metavar='FILE', help='read stdin input from a file')
+    ap.add_argument('--interactive', '-i', action='store_true',
+                    help='enable interactive terminal input (no echo, char-by-char)')
     args = ap.parse_args()
     if args.unlimited_cycles:
         args.cycles = None
+
+    # Determine stdin input
+    stdin_input = ''
+    if args.stdin is not None:
+        stdin_input = args.stdin
+    elif args.stdin_file is not None:
+        with open(args.stdin_file, 'r', encoding='utf-8') as f:
+            stdin_input = f.read()
+
+    # Determine if interactive mode should be enabled
+    # Interactive if: --interactive flag set, or no stdin provided and running from a terminal
+    interactive = args.interactive
+    if not interactive and args.stdin is None and args.stdin_file is None:
+        # Check if stdin is a tty (terminal)
+        interactive = sys.stdin.isatty()
 
     path = args.file
     if path.endswith('.c'):
@@ -610,8 +811,30 @@ if __name__ == '__main__':
         with open(path, encoding='utf-8') as fh:
             asm = fh.read()
 
-    retval, out, cycles = run_main(asm, max_cycles=args.cycles, freq=args.freq)
-    sys.stdout.write(out)
+    # Create machine with interactive mode if needed
+    prog = parse_asm(asm)
+    if '_C_main' not in prog.labels:
+        print("error: no _C_main in asm", file=sys.stderr)
+        sys.exit(1)
+    m = Machine(prog, max_cycles=args.cycles, stdin=stdin_input, freq=args.freq, interactive=interactive)
+    m.pc = prog.labels['_C_main']
+
+    try:
+        m.run()
+    except RuntimeError as e:
+        m._restore_terminal()
+        print(f"\nerror: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        m._restore_terminal()
+
+    out = m.stdout_str()
+    retval = m.regs[1] & _MASK16
+    cycles = m.cycles
+
+    # In interactive mode, output was already printed in real-time
+    if not interactive:
+        sys.stdout.write(out)
     print(f'[{cycles} cycles]')
     if args.show_retval:
         print(f'[exit {retval}]')
