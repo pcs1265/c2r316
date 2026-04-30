@@ -1,6 +1,8 @@
 # R316 Emulator Debugging API
 
-This document describes the debugging API for the R316 emulator (`tests/r316_emu.py`). The API is designed to be used by AI agents and developers for debugging, testing, and analyzing R316 programs.
+This document describes the programmatic debugging API for the R316 emulator (`tests/r316_emu.py`). The API is designed to be used by AI agents and developers for debugging, testing, and analyzing R316 programs.
+
+For CLI usage, see [DEBUG_CLI.md](DEBUG_CLI.md).
 
 ## Table of Contents
 
@@ -12,6 +14,7 @@ This document describes the debugging API for the R316 emulator (`tests/r316_emu
 6. [State Save/Restore](#state-saverestore)
 7. [Complete API Reference](#complete-api-reference)
 8. [Examples](#examples)
+9. [Debugging C Source Files](#debugging-c-source-files)
 
 ---
 
@@ -504,33 +507,7 @@ print(f"After restore: r1={m.get_registers()['r1']}, r2={m.get_registers()['r2']
 print(f"  r3={m.get_registers()['r3']} (should be 0)")
 ```
 
-### Example 5: Multi-Session Debugging (File-Based State)
-
-```python
-# Session 1: Initial run
-from tests.r316_emu import parse_asm, Machine
-
-prog = parse_asm(asm)
-m = Machine(prog, stdin="5\n3\n")
-m.pc = prog.labels['_C_main']
-
-m.set_breakpoint("_C_power")
-m.run_until_breakpoint()
-
-# Save state to file for later
-m.save_state_file("debug_state.json")
-print(f"State saved at PC={m.get_pc()}")
-
-# Session 2: Continue debugging (can be in a different script/process)
-m2 = Machine.load_state_file("debug_state.json", prog)
-print(f"State loaded at PC={m2.get_pc()}")
-
-# Continue execution
-m2.step(5)
-m2.save_state_file("debug_state.json")
-```
-
-### Example 6: Memory Inspection
+### Example 5: Memory Inspection
 
 ```python
 from tests.r316_emu import parse_asm, Machine
@@ -557,6 +534,111 @@ print(f"Memory at 0x8000: {mem}")
 
 ---
 
+## Debugging C Source Files
+
+To debug C source programmatically, compile it with `compile_c()` and load into the emulator.
+
+### Loading the Compiler
+
+```python
+import importlib.util
+from tests.r316_emu import parse_asm, Machine
+
+# Load compile_c from compiler.py
+spec = importlib.util.spec_from_file_location('compiler_main', 'compiler.py')
+compiler_main = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(compiler_main)
+compile_c = compiler_main.compile_c
+```
+
+### Example: Compile and Debug C Code
+
+```python
+# Compile C source
+c_source = '''
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    int result = add(5, 7);
+    return result;
+}
+'''
+
+asm = compile_c(c_source)
+prog = parse_asm(asm)
+m = Machine(prog)
+m.pc = prog.labels['_C_main']
+
+# Debug using the full API
+m.enable_trace()
+m.run()
+trace = m.get_trace()
+print(f"Executed {len(trace)} instructions")
+print(f"Return value: {m.get_registers()['r1']}")
+```
+
+### Example: Breakpoint Debugging a C Function
+
+```python
+c_source = '''
+int power(int base, int exp) {
+    if (exp == 0)
+        return 1;
+    return base * power(base, exp - 1);
+}
+
+int main() {
+    int result = power(2, 3);
+    return result;
+}
+'''
+
+asm = compile_c(c_source)
+prog = parse_asm(asm)
+m = Machine(prog)
+m.pc = prog.labels['_C_main']
+
+# Set breakpoint at _C_power
+bp_id = m.set_breakpoint('_C_power')
+
+# Run and hit breakpoint multiple times (recursive calls)
+for i in range(3):
+    hit = m.run_until_breakpoint()
+    if not hit:
+        break
+    regs = m.get_registers()
+    print(f"Call {i+1}: r7={regs['r7']}, r8={regs['r8']}")
+    m.step()
+
+m.clear_breakpoint(bp_id)
+m.run()
+print(f"Result: {m.get_registers()['r1']}")  # 8 (2^3)
+```
+
+### Symbol Naming Convention
+
+All C functions and global variables are prefixed with `_C_` in assembly:
+
+| C Symbol | Assembly Label |
+|----------|----------------|
+| `main` | `_C_main` |
+| `power` | `_C_power` |
+| `my_function` | `_C_my_function` |
+
+### Understanding the ABI
+
+For detailed information, see `docs/ABI.md`. Key points:
+
+- **Arguments**: First 6 integer arguments passed in `r1`–`r6`, remaining on stack
+- **Return value**: Integer return in `r1`
+- **Stack pointer**: `r30` (sp)
+- **Link register**: `r31` (lr)
+- **Preserved registers**: `r16`–`r23` (callee-saved)
+
+---
+
 ## Notes
 
 ### Register r0
@@ -566,14 +648,11 @@ print(f"Memory at 0x8000: {mem}")
 ```python
 # This has no effect
 m.wr('r0', 42)  # r0 still 0
-
-# In assembly, mov r0, X is a no-op
-# add r0, r1, r2 also discards the result
 ```
 
 ### Cycle Limit
 
-By default, the machine has a cycle limit of 1,000,000 to prevent infinite loops. You can change this:
+By default, the machine has a cycle limit of 1,000,000 to prevent infinite loops:
 
 ```python
 m = Machine(prog, max_cycles=10_000_000)  # 10 million cycles
@@ -582,7 +661,7 @@ m = Machine(prog, max_cycles=None)        # Unlimited cycles
 
 ### Interactive Mode
 
-For interactive terminal input, use the `--interactive` CLI flag or set `interactive=True`:
+For interactive terminal input:
 
 ```python
 m = Machine(prog, interactive=True)
