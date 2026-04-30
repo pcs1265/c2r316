@@ -45,6 +45,7 @@ class TK(Enum):
     SIGNED     = auto()
     VOLATILE   = auto()
     REGISTER   = auto()
+    INLINE     = auto()
 
     # operators
     PLUS       = auto()   # +
@@ -131,6 +132,9 @@ KEYWORDS = {
     'signed':   TK.SIGNED,
     'volatile': TK.VOLATILE,
     'register': TK.REGISTER,
+    'inline':   TK.INLINE,
+    '__inline__': TK.INLINE,
+    '__inline':   TK.INLINE,
 }
 
 

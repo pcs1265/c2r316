@@ -369,12 +369,17 @@ class Parser:
 
         # __attribute__((always_inline)) may appear before or after storage class
         attr1 = self._parse_attribute()
-        # register is a storage class hint — consume and ignore
+        # register/inline are storage class hints — consume and ignore
         self._try_eat(TK.REGISTER)
+        is_inline = bool(self._try_eat(TK.INLINE))
         is_static = bool(self._try_eat(TK.STATIC))
+        if not is_inline:
+            is_inline = bool(self._try_eat(TK.INLINE))
         is_extern = bool(self._try_eat(TK.EXTERN))
+        if not is_inline:
+            self._try_eat(TK.INLINE)
         attr2 = self._parse_attribute()
-        is_always_inline = (attr1 == 'always_inline' or attr2 == 'always_inline')
+        is_always_inline = is_inline or (attr1 == 'always_inline' or attr2 == 'always_inline')
 
         is_const = self._at(TK.CONST)
         start_kind = self._cur().kind
@@ -535,8 +540,9 @@ class Parser:
         if self._at(TK.ASM):
             return self._stamp(self._parse_asm(), tok)
 
-        # local variable declaration (optionally prefixed with 'register' or 'static')
+        # local variable declaration (optionally prefixed with 'register', 'inline', or 'static')
         is_register = bool(self._try_eat(TK.REGISTER))
+        self._try_eat(TK.INLINE)
         is_local_static = self._at(TK.STATIC)
         if is_local_static or is_register or self._at_type_start():
             if is_local_static:
