@@ -111,14 +111,12 @@ def _clone_instrs(
         elif isinstance(instr, ICopy):
             new_dst = Temp(instr.dst.id + temp_offset)
             new_src = _ro(instr.src)
-            # Always record the resolved value so subsequent _ro() calls in
-            # this clone see the final source directly (no multi-level chains).
-            # For non-Temp sources, skip emitting the copy (it would be dead).
-            # For Temp sources, still emit the copy so there is a concrete
-            # definition in the IR — fold/DCE will remove it if unused.
-            resolved[new_dst.id] = new_src
-            if not isinstance(new_src, (ImmInt, StrLabel, Global)):
-                out.append(ICopy(new_dst, new_src, instr.loc))
+            # Always emit the copy. Do NOT propagate into resolved: the same
+            # temp may be assigned on multiple CFG paths (e.g. both branches of
+            # a ternary), and overwriting resolved would cause _ro to return the
+            # last-seen branch's value for all paths, silently corrupting results.
+            # Fold/DCE handles constant propagation correctly after inlining.
+            out.append(ICopy(new_dst, new_src, instr.loc))
 
         elif isinstance(instr, IConst):
             out.append(IConst(Temp(instr.dst.id + temp_offset), instr.value, instr.loc))
