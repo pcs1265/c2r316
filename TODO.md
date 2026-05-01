@@ -112,4 +112,13 @@
 
 ---
 
+## Refactoring
+
+- **`compiler/utils/` package** — extract shared helpers into `compiler/utils/`:
+  - `callgraph.py`: `_build_call_graph` + `_reachable_functions` + `_recursive_set` are duplicated between `dce.py` and `inline.py`
+  - `errors.py`: `_err()` with source-location context is reimplemented in lexer, parser, semantic, and irgen
+  - `types.py`: move `is_integer`, `is_pointer`, `is_scalar`, `is_32bit` out of `ast_nodes.py` into a dedicated module
+
+---
+
 ## Potential Optimizations (Future)
