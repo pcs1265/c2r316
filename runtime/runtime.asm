@@ -98,7 +98,14 @@ __stack_init:
     sub r5, r2, 0x7F
     shr r5, 7
     sub r4, r5, 1
+    cmp r4, r1
+    jl  .__stack_prev_writable  ; r4 < r1: highest writable was r1-1 (= last confirmed mid)
     jmp .__stack_bsearch
+.__stack_prev_writable:
+    sub r2, r1, 1               ; r2 = last confirmed writable block index
+    shl r2, 7
+    add r2, 0x7F                ; r2 = top address of that block
+    jmp .__stack_found
 .__stack_found_fallback:
     mov r2, 63
     shl r2, 7

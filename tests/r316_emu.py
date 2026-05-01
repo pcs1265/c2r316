@@ -351,7 +351,8 @@ class Machine:
     SENTINEL_LR = 0xDEAD   # invalid PC: when jmp r31 lands here, we halt
 
     def __init__(self, prog: Program, sp_init: int = 0x8000, max_cycles: int | None = 1_000_000,
-                 stdin: str = '', freq: float | None = None, interactive: bool = False):
+                 stdin: str = '', freq: float | None = None, interactive: bool = False,
+                 ram_words: int | None = None):
         self.prog = prog
         self.regs = [0] * 32
         self.regs[30] = sp_init        # sp
@@ -370,6 +371,8 @@ class Machine:
         self.cycles = 0
         self.max_cycles = max_cycles  # None = unlimited
         self.freq = freq              # Hz throttle, or None for full speed
+        # None = full 64K; set to e.g. 2048 to simulate a smaller RAM machine
+        self.ram_words = ram_words
         self.halted = False
         self.interactive = interactive
         self._term_settings = None
@@ -952,6 +955,8 @@ class Machine:
             return
         if 0x9F80 <= addr <= 0x9FC6:
             return   # other terminal MMIO: ignore in emulator
+        if self.ram_words is not None and addr >= self.ram_words:
+            return   # address beyond configured RAM — write silently fails
         self.mem[addr] = value & _MASK16
 
     def _r316_to_ansi(self, color: int) -> int:
@@ -1150,6 +1155,8 @@ if __name__ == '__main__':
                     metavar='FILE', help='read stdin input from a file')
     ap.add_argument('--interactive', '-i', action='store_true',
                     help='enable interactive terminal input (no echo, char-by-char)')
+    ap.add_argument('--ram-words', type=int, default=None,
+                    help='simulate a machine with this many words of RAM (e.g. 2048)')
     args = ap.parse_args()
     if args.unlimited_cycles:
         args.cycles = None
@@ -1197,7 +1204,7 @@ if __name__ == '__main__':
         print("error: no _C_main in asm", file=sys.stderr)
         sys.exit(1)
     entry = prog.labels.get('start', prog.labels['_C_main'])
-    m = Machine(prog, sp_init=0, max_cycles=args.cycles, stdin=stdin_input, freq=args.freq, interactive=interactive)
+    m = Machine(prog, sp_init=0, max_cycles=args.cycles, stdin=stdin_input, freq=args.freq, interactive=interactive, ram_words=args.ram_words)
     m.pc = entry
 
     try:
