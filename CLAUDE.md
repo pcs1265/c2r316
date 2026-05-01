@@ -1,4 +1,68 @@
-# CLAUDE.md — Project Guide for c2r316
+# CLAUDE.md
+
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
 ## Project Overview
 
@@ -32,7 +96,7 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 
 - **`docs/ABI.md`** — R316 C Compiler ABI specification. **MUST read before modifying codegen, runtime, or any calling-convention-related code.** Covers register classification, argument passing, return values, stack frame layout, long (32-bit) arithmetic, and edge cases.
 - **`docs/DEBUG_CLI.md`** — CLI debugging flags reference (`--dump-tokens`, `--dump-ast`, `--dump-ir`, `-g`, etc.) with usage examples.
-- **`docs/DEBUG_API.md`** — Programmatic API for the R316 emulator (`Machine` class). Lets you load, run, and debug programs from Python: step execution, set breakpoints, inspect registers/memory/flags, enable instruction tracing, and save/restore machine state (time-travel debugging). Also covers compiling C source via `compile_c()` and loading it straight into the emulator for end-to-end programmatic debugging.
+- **`docs/DEBUG_API.md`** — **Read this before debugging any runtime/codegen issue.** Programmatic API for the R316 emulator (`Machine` class) — step execution, breakpoints, inspect registers/memory/flags, instruction tracing, save/restore machine state (time-travel debugging), and `compile_c()` for end-to-end C-source-to-emulator workflows. The doc has a full method reference and copy-pasteable examples for the common patterns; consult it instead of re-deriving call signatures from the source.
 - **`TODO.md`** — current state of the compiler: implemented features, known issues, not-yet-implemented features. Check before adding a feature to confirm it isn't already done or already tracked.
 - **`IMPROVEMENTS.md`** — full prioritized survey of potential improvements (correctness, optimization, runtime, tooling, testing). Use this as the menu when picking the next non-trivial task.
 
@@ -50,12 +114,27 @@ C Source → Lexer → Parser → Semantic → IRGen → Codegen → R316 ASM
 - **Run the test suite after compiler changes**: `python tests/test_compiler.py` from the repo root. It smoke-compiles every `tests/programs/test_*.c` plus targeted feature checks. Add a new check there when adding a language feature or fixing a bug.
 - **Check `TODO.md` before claiming a feature is missing**: the TODO file occasionally lags reality (e.g. `typedef` was implemented well before its TODO entry was removed). Grep the source first.
 - **Don't bypass the `_C_` symbol prefix**: see Symbol Naming Convention. Runtime helpers are the only unprefixed user-callable names.
+- **Debug runtime issues with the emulator API, not by re-running with prints**: when a compiled program does the wrong thing, drive `Machine` from a small Python script (step, breakpoint, trace, `get_memory`, `save_state`/`restore_state`). **`docs/DEBUG_API.md` is the reference — read it first**, it has the full method list and ready-to-paste examples. See also the *Debugging* section below. This is almost always faster than edit-recompile-rerun loops, and lets you pinpoint the exact instruction that produced a bad value. A trace agent recently saved >5 cycles of guess-and-check by walking `get_trace()` backwards to find the `st` that clobbered code.
 
 ## Symbol Naming Convention
 
 All user-defined C symbols (functions and global variables) are emitted with a `_C_` prefix in the output assembly (e.g. C `main` → `_C_main`, C `add` → `_C_add`). This avoids collisions with TPTASM reserved mnemonics. `runtime/runtime.asm` calls `_C_main` as the entry point. Runtime helper names (e.g. `__stack_init`, `__term_init`) are defined in `runtime.asm` and are **not** prefixed by the compiler.
 
 ## Debugging
+
+### Reach for the emulator API first, not print-and-rerun
+
+When a generated program misbehaves (wrong output, hang, "non-instruction" crash, suspicious value), **drive the emulator programmatically via `Machine`** instead of running the binary repeatedly with `print` statements added to the C. The API lives in `tests/r316_emu.py` and is fully documented in **`docs/DEBUG_API.md`** — open that doc first; it has the method reference and copy-pasteable examples for every pattern below. Concretely:
+
+- **Step + inspect** when you need to see what a specific stretch of asm actually does. Set a breakpoint at a label, run to it, then `step()` one instruction at a time, reading `get_registers()` / `get_flags()` / `get_memory()` between steps. Catches wrong register, wrong flag, off-by-one in pointer arithmetic.
+- **Trace + replay** for "where did this value come from?". `enable_trace()`, run, then walk `get_trace()` backwards from the bad register/memory state to the instruction that produced it. Much faster than re-deriving by reading asm.
+- **`save_state()` checkpoints** before a suspect block, then `restore_state()` to re-run it with different breakpoints / probes — no recompiling, no replaying earlier setup.
+- **Catch stray writes** by stepping past every `st` and checking the destination address against the layout you expect. The "non-instruction at pc=…" error tells you *when* code got clobbered; the trace tells you *who* did it.
+- **Skip the C round-trip** for codegen-only investigations: build a tiny `Program` from inline asm via `parse_asm()`, no compiler involved.
+
+Reach for `--dump-ir` / re-running the binary only when the API genuinely can't tell you what you need. A single Python script that loads the program and pokes at it is almost always faster than five `print`-edit-recompile cycles.
+
+### CLI flags (for compile-time inspection)
 
 - `--dump-tokens` — dump lexer tokens to stderr
 - `--dump-ast` — dump AST to stderr
@@ -90,7 +169,9 @@ All user-defined C symbols (functions and global variables) are emitted with a `
 
 ### Emulator scope and limitations
 
-`tests/r316_emu.py` implements the instructions the c2r316 compiler actually emits (`mov add adc sub sbb mul and or xor shl shr ld st jmp <jcc> hlt`) plus the `cmp/test/nop` macros from `common.asm`. Flag handling follows `manual.md`. Execution starts at `_C_main:` with `sp=0x8000` and `lr=sentinel`; the runtime's `__stack_init` and `__term_init` are skipped. Terminal MMIO writes to `0x9FB5` are captured into stdout. **Not** a full TPT-VM emulator; if a future test needs hardware features beyond this, extend `tests/r316_emu.py`.
+`tests/r316_emu.py` implements the instructions the c2r316 compiler actually emits (`mov add adc sub sbb mul and or xor shl shr ld st jmp <jcc> hlt`) plus the `cmp/test/nop` macros from `common.asm`. Flag handling follows `manual.md`. Execution starts at the runtime `start:` label with `sp=0` and `lr=sentinel` — the runtime's `__stack_init` / `__term_init` run normally, set up sp, and call `_C_main`. Terminal MMIO writes to `0x9FB5` are captured into stdout. **Not** a full TPT-VM emulator; if a future test needs hardware features beyond this, extend `tests/r316_emu.py`.
+
+**Memory model:** flat 64K-word RAM in source order. `parse_asm` lays each instruction and each `dw` word at the next address starting from 0, so code and data share one address space (the same model real R316 sees — code IS RAM). Each cell is either an `Insn` object (instruction) or an `int` (data, zero for unwritten cells). A store into a code address replaces the `Insn` with the int, and the next fetch there raises *executing non-instruction at pc=…* — roughly what real R316 would do when decoding the garbage. Reads of un-clobbered code cells return 0 (we have no real opcode encoding to hand back). Labels live in one map (`prog.labels`) regardless of whether they point at code or data.
 
 ### Running the emulator standalone
 

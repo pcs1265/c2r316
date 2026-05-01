@@ -78,16 +78,16 @@ flags = m.get_flags()
 
 ### `get_pc() -> int`
 
-Returns the current program counter (instruction index).
+Returns the current program counter (a memory address in the unified 64K word RAM — code and data share one address space).
 
 ```python
 pc = m.get_pc()
-print(f"At instruction {pc}")
+print(f"At address 0x{pc:04X}")
 ```
 
 ### `get_memory(addr: int, count: int = 1) -> list[int]`
 
-Reads `count` 16-bit words from memory starting at `addr`.
+Reads `count` 16-bit words from memory starting at `addr`. Reads of un-clobbered code cells return 0 since we don't store real R316 opcode encodings.
 
 ```python
 # Read 4 words starting at address 0x8000
@@ -97,7 +97,7 @@ mem = m.get_memory(0x8000, 4)
 
 ### `get_current_instruction() -> dict | None`
 
-Returns information about the current instruction, or `None` if halted.
+Returns information about the current instruction, or `None` if halted *or* if `pc` points at a non-instruction cell (a `dw` word, poison, or a code cell that was overwritten by a store).
 
 ```python
 insn = m.get_current_instruction()
@@ -273,7 +273,7 @@ for entry in trace:
 ```
 
 Each trace entry has:
-- `pc`: Instruction index
+- `pc`: Memory address of the executed instruction
 - `op`: Operation (e.g., 'mov', 'add')
 - `args`: List of arguments
 - `regs_before`: Register state before execution
@@ -308,7 +308,7 @@ state = m.save_state()
 #   'halted': False,
 #   'regs': [0, 10, 20, ...],
 #   'flags': {'Z': 0, 'S': 0, 'C': 0, 'O': 0},
-#   'mem': {0x8000: 42, ...},
+#   'mem': [Insn(...) | int, ...],   # full 64K-cell list (Insns + ints)
 #   'stdout': [72, 101, 108, 108, 111],
 #   'stdin': [49, 50, 51],
 #   'stdin_pos': 3,
@@ -332,7 +332,7 @@ print(f"Restored PC={m.get_pc()}")
 
 #### `save_state_file(filepath: str) -> None`
 
-Saves the complete machine state to a JSON file.
+Saves the complete machine state to a JSON file. Memory is stored as a sparse diff against the original `prog.mem` — only cells that have changed since load are written, as a `{hex_addr: int}` map. `Insn` objects in unchanged code cells aren't serialized; they're reconstructed from `prog.mem` on load. A clobbered code cell (now an int) shows up in the diff naturally.
 
 ```python
 m.save_state_file("debug_state.json")
@@ -340,7 +340,7 @@ m.save_state_file("debug_state.json")
 
 #### `Machine.load_state_file(filepath: str, prog: Program) -> Machine`
 
-Class method. Loads state from a JSON file and returns a new Machine instance.
+Class method. Loads state from a JSON file and returns a new Machine instance. Memory is rebuilt by starting from `prog.mem` and applying the saved diff, so you must pass the same `Program` that was used when the state was saved.
 
 ```python
 m2 = Machine.load_state_file("debug_state.json", prog)
