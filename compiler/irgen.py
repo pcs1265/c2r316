@@ -637,6 +637,11 @@ class IRGen:
 
         if isinstance(expr, Member):
             addr = self._gen_member_addr(expr)
+            # Array / struct / union members don't get loaded — their storage
+            # lives inline at this address, so the rvalue is the address itself
+            # (mirrors the local-ident decay rule in _gen_load_ident).
+            if isinstance(expr.ctype, (CArray, CStruct, CUnion)):
+                return addr
             t = self._tmp()
             self._emit(ILoad(t, addr, loc))
             return t
