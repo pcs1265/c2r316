@@ -33,6 +33,63 @@ typedef int FILE;
 #define stderr ((FILE *)2)
 #define EOF    (-1)
 
+/* ── Line discipline (cooked input) ─────────────────────────────────────── */
+/* Owns the line buffer and ungetc slot. Builds line-buffered input with
+   echo and backspace editing on top of raw term_getch / term_putch /
+   term_erase_prev. */
+
+#define _IBUF_SIZE 64
+static char _ibuf[_IBUF_SIZE];
+static int  _ibuf_len;
+static int  _ibuf_pos;
+static int  _ungetc_buf;
+static int  _ungetc_valid;
+
+static int _cooked_getch(void) {
+    int c;
+
+    if (_ungetc_valid) {
+        c = _ungetc_buf;
+        _ungetc_valid = 0;
+        return c;
+    }
+
+    if (_ibuf_pos < _ibuf_len) {
+        c = _ibuf[_ibuf_pos];
+        _ibuf_pos++;
+        return c;
+    }
+
+    _ibuf_len = 0;
+    _ibuf_pos = 0;
+    while (1) {
+        c = term_getch();
+        if (c == 8 || c == 127) {
+            if (_ibuf_len > 0) {
+                _ibuf_len--;
+                term_erase_prev();
+            }
+        } else if (c == '\r' || c == '\n') {
+            term_putch('\n');
+            if (_ibuf_len < _IBUF_SIZE - 1) {
+                _ibuf[_ibuf_len] = '\n';
+                _ibuf_len++;
+            }
+            break;
+        } else {
+            if (_ibuf_len < _IBUF_SIZE - 1) {
+                term_putch(c);
+                _ibuf[_ibuf_len] = c;
+                _ibuf_len++;
+            }
+        }
+    }
+
+    c = _ibuf[_ibuf_pos];
+    _ibuf_pos++;
+    return c;
+}
+
 /* ── putchar / getchar ──────────────────────────────────────────────────── */
 
 __attribute__((always_inline)) static void putchar(int c) {
@@ -52,17 +109,28 @@ __attribute__((always_inline)) static int fputc(int c, FILE *stream) {
 }
 
 __attribute__((always_inline)) static int getchar(void) {
+    return _cooked_getch();
+}
+
+/* Raw single-keypress read: no echo, no line buffering, no Enter required. */
+__attribute__((always_inline)) static int getch(void) {
     return term_getch();
+}
+
+/* Raw single-character write — same as putchar, conio-style alias. */
+__attribute__((always_inline)) static int putch(int c) {
+    term_putch(c);
+    return c;
 }
 
 __attribute__((always_inline)) static int getc(FILE *stream) {
     (void)stream;
-    return term_getch();
+    return _cooked_getch();
 }
 
 __attribute__((always_inline)) static int fgetc(FILE *stream) {
     (void)stream;
-    return term_getch();
+    return _cooked_getch();
 }
 
 static int ungetc(int c, FILE *stream) {
@@ -116,7 +184,7 @@ static char *fgets(char *s, int n, FILE *stream) {
     if (n <= 0) return 0;
     i = 0;
     while (i < n - 1) {
-        c = term_getch();
+        c = _cooked_getch();
         if (c == 0) break;
         s[i] = c;
         i++;
@@ -639,15 +707,15 @@ static int scanf(const char *fmt, ...) {
             fmt++;
             if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x') {
                 /* skip leading whitespace */
-                if (c == 0) c = term_getch();
-                while (_is_space(c)) c = term_getch();
+                if (c == 0) c = _cooked_getch();
+                while (_is_space(c)) c = _cooked_getch();
 
                 if (*fmt == 'x') {
                     uval = 0;
                     if (!_is_xdigit(c)) { fmt++; continue; }
                     while (_is_xdigit(c)) {
                         uval = uval * 16 + _xdigit_val(c);
-                        c = term_getch();
+                        c = _cooked_getch();
                     }
                     uptr = va_arg(ap, unsigned int *);
                     *uptr = uval;
@@ -657,19 +725,19 @@ static int scanf(const char *fmt, ...) {
                     if (!_is_digit(c)) { fmt++; continue; }
                     while (_is_digit(c)) {
                         uval = uval * 10 + (c - '0');
-                        c = term_getch();
+                        c = _cooked_getch();
                     }
                     uptr = va_arg(ap, unsigned int *);
                     *uptr = uval;
                     assigned++;
                 } else {
                     neg = 0;
-                    if (c == '-') { neg = 1; c = term_getch(); }
+                    if (c == '-') { neg = 1; c = _cooked_getch(); }
                     uval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
                     while (_is_digit(c)) {
                         uval = uval * 10 + (c - '0');
-                        c = term_getch();
+                        c = _cooked_getch();
                     }
                     iptr = va_arg(ap, int *);
                     if (neg) {
@@ -681,20 +749,20 @@ static int scanf(const char *fmt, ...) {
                 }
                 fmt++;
             } else if (*fmt == 'c') {
-                if (c == 0) c = term_getch();
+                if (c == 0) c = _cooked_getch();
                 iptr = va_arg(ap, int *);
                 *iptr = c;
                 c = 0;
                 assigned++;
                 fmt++;
             } else if (*fmt == 's') {
-                if (c == 0) c = term_getch();
-                while (_is_space(c)) c = term_getch();
+                if (c == 0) c = _cooked_getch();
+                while (_is_space(c)) c = _cooked_getch();
                 sptr = va_arg(ap, char *);
                 while (c != 0 && !_is_space(c)) {
                     *sptr = c;
                     sptr++;
-                    c = term_getch();
+                    c = _cooked_getch();
                 }
                 *sptr = 0;
                 assigned++;
@@ -703,11 +771,11 @@ static int scanf(const char *fmt, ...) {
                 fmt++;
             }
         } else if (_is_space(*fmt)) {
-            if (c == 0) c = term_getch();
-            while (_is_space(c)) c = term_getch();
+            if (c == 0) c = _cooked_getch();
+            while (_is_space(c)) c = _cooked_getch();
             fmt++;
         } else {
-            if (c == 0) c = term_getch();
+            if (c == 0) c = _cooked_getch();
             if (c != *fmt) break;
             c = 0;
             fmt++;
@@ -739,47 +807,47 @@ static int fscanf(FILE *stream, const char *fmt, ...) {
         if (*fmt == '%') {
             fmt++;
             if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x') {
-                if (c == 0) c = term_getch();
-                while (_is_space(c)) c = term_getch();
+                if (c == 0) c = _cooked_getch();
+                while (_is_space(c)) c = _cooked_getch();
                 if (*fmt == 'x') {
                     uval = 0;
                     if (!_is_xdigit(c)) { fmt++; continue; }
-                    while (_is_xdigit(c)) { uval = uval * 16 + _xdigit_val(c); c = term_getch(); }
+                    while (_is_xdigit(c)) { uval = uval * 16 + _xdigit_val(c); c = _cooked_getch(); }
                     uptr = va_arg(ap, unsigned int *); *uptr = uval; assigned++;
                 } else if (*fmt == 'u') {
                     uval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
-                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = term_getch(); }
+                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = _cooked_getch(); }
                     uptr = va_arg(ap, unsigned int *); *uptr = uval; assigned++;
                 } else {
                     neg = 0;
-                    if (c == '-') { neg = 1; c = term_getch(); }
+                    if (c == '-') { neg = 1; c = _cooked_getch(); }
                     uval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
-                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = term_getch(); }
+                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = _cooked_getch(); }
                     iptr = va_arg(ap, int *);
                     *iptr = neg ? (int)(0 - uval) : (int)uval;
                     assigned++;
                 }
                 fmt++;
             } else if (*fmt == 'c') {
-                if (c == 0) c = term_getch();
+                if (c == 0) c = _cooked_getch();
                 iptr = va_arg(ap, int *); *iptr = c; c = 0; assigned++; fmt++;
             } else if (*fmt == 's') {
-                if (c == 0) c = term_getch();
-                while (_is_space(c)) c = term_getch();
+                if (c == 0) c = _cooked_getch();
+                while (_is_space(c)) c = _cooked_getch();
                 sptr = va_arg(ap, char *);
-                while (c != 0 && !_is_space(c)) { *sptr = c; sptr++; c = term_getch(); }
+                while (c != 0 && !_is_space(c)) { *sptr = c; sptr++; c = _cooked_getch(); }
                 *sptr = 0; assigned++; fmt++;
             } else {
                 fmt++;
             }
         } else if (_is_space(*fmt)) {
-            if (c == 0) c = term_getch();
-            while (_is_space(c)) c = term_getch();
+            if (c == 0) c = _cooked_getch();
+            while (_is_space(c)) c = _cooked_getch();
             fmt++;
         } else {
-            if (c == 0) c = term_getch();
+            if (c == 0) c = _cooked_getch();
             if (c != *fmt) break;
             c = 0; fmt++;
         }

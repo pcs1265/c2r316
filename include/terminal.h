@@ -85,6 +85,17 @@
 #define TERM_PLOTPIX_ADDR(colour)  (TERM_PLOTPIX_BASE | ((colour) & 0xF))
 #define TERM_PLOTPIX_VAL(col, row) (((row) << 8) | (col))
 
+/* Maximum rows in the terminal scroll range (matches 5-bit row field in
+   TERM_CURSOR_VAL). If TERM_VRANGE is configured to fewer rows, define
+   TERM_ROWS before including this header to match. */
+#ifndef TERM_ROWS
+#define TERM_ROWS 16
+#endif
+
+#ifndef TERM_COLS
+#define TERM_COLS 24
+#endif
+
 /* --Colour indices ------------------------------------------------------- */
 
 #define TERM_BLACK    0   /* #000000 */
@@ -109,52 +120,59 @@
 static int _cursor_col;
 static int _cursor_row;
 
-/* line-input buffer -- filled one line at a time, drained char by char */
-#define _IBUF_SIZE 64
-static char _ibuf[_IBUF_SIZE];
-static int  _ibuf_len;
-static int  _ibuf_pos;
-static int  _ungetc_buf;    /* pushed-back char (valid when _ungetc_valid != 0) */
-static int  _ungetc_valid;
-
 /* --Output --------------------------------------------------------------- */
 
 static void term_putch(int c) {
+    int *port;
+    int *cur;
     if (c == '\r') {
-        int *cur = TERM_CURSOR;
+        cur = TERM_CURSOR;
         _cursor_col = 0;
         *cur = TERM_CURSOR_VAL(0, _cursor_row);
         return;
     }
-    asm("st %0, %1\n"
-        "cmp %0, 10\n"
-        "jne .term_putch_else\n"
-        "st r0, _C__cursor_col\n"
-        "ld r9, _C__cursor_row\n"
-        "add r9, 1\n"
-        "st r9, _C__cursor_row\n"
-        "jmp .term_putch_end\n"
-        ".term_putch_else:\n"
-        "ld r9, _C__cursor_col\n"
-        "add r9, 1\n"
-        "st r9, _C__cursor_col\n"
-        ".term_putch_end:"
-        : "r"(c), "r"(TERM_TERM));
+    port = TERM_TERM;
+    *port = c;
+    if (c == '\n') {
+        _cursor_col = 0;
+        if (_cursor_row < TERM_ROWS - 1)
+            _cursor_row++;
+    } else {
+        _cursor_col++;
+        if (_cursor_col >= TERM_COLS) {
+            _cursor_col = 0;
+            if (_cursor_row < TERM_ROWS - 1)
+                _cursor_row++;
+        }
+    }
 }
 
 /* Colour and character packed into one atomic scrollprint write.           */
 /* Avoids frame-timing issues when changing colour per character.           */
 static void term_putch_col(int c, int fg, int bg) {
     int *addr;
+    int *cur;
     int data;
+    if (c == '\r') {
+        cur = TERM_CURSOR;
+        _cursor_col = 0;
+        *cur = TERM_CURSOR_VAL(0, _cursor_row);
+        return;
+    }
     addr = TERM_TERM_COL;
     data = (bg << 12) | (fg << 8) | (c & 0xFF);
     *addr = data;
     if (c == '\n') {
         _cursor_col = 0;
-        _cursor_row++;
+        if (_cursor_row < TERM_ROWS - 1)
+            _cursor_row++;
     } else {
         _cursor_col++;
+        if (_cursor_col >= TERM_COLS) {
+            _cursor_col = 0;
+            if (_cursor_row < TERM_ROWS - 1)
+                _cursor_row++;
+        }
     }
 }
 
@@ -180,59 +198,34 @@ static void term_set_color(int fg, int bg) {
 
 /* --Input ---------------------------------------------------------------- */
 
+/* Raw single-char read: blocks until a key is pressed, returns it.
+   No echo, no buffering, no editing — those belong in the line-discipline
+   layer (stdio.h). */
 static int term_getch(void) {
     int *port;
     int c;
-
-    if (_ungetc_valid) {
-        c = _ungetc_buf;
-        _ungetc_valid = 0;
-        return c;
-    }
-
-    if (_ibuf_pos < _ibuf_len) {
-        c = _ibuf[_ibuf_pos];
-        _ibuf_pos++;
-        return c;
-    }
-
-    /* buffer empty -- read a new line with echo and backspace support */
-    _ibuf_len = 0;
-    _ibuf_pos = 0;
     port = TERM_INPUT;
-    while (1) {
-        /* input register self-clears on read; 0 means no key pressed */
-        c = *port;
-        while (c == 0) c = *port;
-
-        if (c == 8 || c == 127) {           /* backspace / DEL */
-            if (_ibuf_len > 0) {
-                _ibuf_len--;
-                if (_cursor_col > 0) {
-                    term_move(_cursor_col - 1, _cursor_row);
-                    term_putch(' ');
-                    term_move(_cursor_col - 1, _cursor_row);
-                }
-            }
-        } else if (c == '\r' || c == '\n') {
-            term_putch('\n');
-            if (_ibuf_len < _IBUF_SIZE - 1) {
-                _ibuf[_ibuf_len] = '\n';
-                _ibuf_len++;
-            }
-            break;
-        } else {
-            if (_ibuf_len < _IBUF_SIZE - 1) {
-                term_putch(c);
-                _ibuf[_ibuf_len] = c;
-                _ibuf_len++;
-            }
-        }
-    }
-
-    c = _ibuf[_ibuf_pos];
-    _ibuf_pos++;
+    c = *port;
+    while (c == 0) c = *port;
     return c;
+}
+
+/* Erase the cell before the cursor and leave the cursor on it.
+   Handles wrap-up: at column 0 on row > 0, moves to (TERM_COLS-1, row-1). */
+static void term_erase_prev(void) {
+    int bcol;
+    int brow;
+    if (_cursor_col > 0) {
+        bcol = _cursor_col - 1;
+        brow = _cursor_row;
+    } else {
+        bcol = TERM_COLS - 1;
+        brow = _cursor_row - 1;
+    }
+    if (brow < 0) return;
+    term_move(bcol, brow);
+    term_putch(' ');
+    term_move(bcol, brow);
 }
 
 #endif /* TERMINAL_H */
