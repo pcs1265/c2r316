@@ -376,6 +376,8 @@ class Machine:
         # Terminal state for cursor tracking
         self._cursor_col = 0
         self._cursor_row = 0
+        self._term_cols = 24   # updated from hrange writes
+        self._term_rows = 16   # updated from vrange writes
         # Debugging support
         self._breakpoints: dict[int, dict] = {}  # pc -> breakpoint info
         self._breakpoint_counter: int = 0
@@ -467,6 +469,8 @@ class Machine:
             'stdin_pos': self.stdin_pos,
             'cursor_col': self._cursor_col,
             'cursor_row': self._cursor_row,
+            'term_cols': self._term_cols,
+            'term_rows': self._term_rows,
             'trace': list(self._trace),
             'breakpoints': {pc: bp.copy() for pc, bp in self._breakpoints.items()},
         }
@@ -489,6 +493,8 @@ class Machine:
         self.stdin_pos = state['stdin_pos']
         self._cursor_col = state.get('cursor_col', 0)
         self._cursor_row = state.get('cursor_row', 0)
+        self._term_cols = state.get('term_cols', 24)
+        self._term_rows = state.get('term_rows', 16)
         self._trace = list(state.get('trace', []))
         self._breakpoints = {int(pc): bp.copy() for pc, bp in state.get('breakpoints', {}).items()}
 
@@ -851,40 +857,62 @@ class Machine:
         if addr == 0x9FB5:   # terminal output (term_term)
             ch = value & 0xFF
             self.stdout.append(ch)
-            # In interactive mode, print immediately for real-time output
-            if self.interactive:
-                import sys
-                # In raw mode, newline only moves down; need \r\n for proper newline
-                if ch == 10:  # newline
+            if ch == 10:  # newline
+                self._cursor_col = 0
+                self._cursor_row += 1
+                if self._cursor_row >= self._term_rows:
+                    self._cursor_row = self._term_rows - 1
+                if self.interactive:
+                    import sys
                     sys.stdout.write('\r\n')
+                    sys.stdout.flush()
+            else:
+                self._cursor_col += 1
+                wrap = self._cursor_col >= self._term_cols
+                if wrap:
                     self._cursor_col = 0
                     self._cursor_row += 1
-                else:
+                    if self._cursor_row >= self._term_rows:
+                        self._cursor_row = self._term_rows - 1
+                if self.interactive:
+                    import sys
                     sys.stdout.write(chr(ch))
-                    self._cursor_col += 1
-                sys.stdout.flush()
+                    if wrap:
+                        sys.stdout.write('\r\n')
+                    sys.stdout.flush()
             return
         if addr == 0x9FB7:   # TERM_TERM_COL: terminal output with colour
             # data = (bg<<12)|(fg<<8)|char
             ch = value & 0xFF
             self.stdout.append(ch)
-            if self.interactive:
-                import sys
-                # Extract colours and set them
-                fg = (value >> 8) & 0xF
-                bg = (value >> 12) & 0xF
-                fg_ansi = self._r316_to_ansi(fg)
-                bg_ansi = self._r316_to_ansi(bg)
-                sys.stdout.write(f'\x1b[38;5;{fg_ansi}m\x1b[48;5;{bg_ansi}m')
-                # Output character
-                if ch == 10:  # newline
+            if ch == 10:  # newline
+                self._cursor_col = 0
+                self._cursor_row += 1
+                if self._cursor_row >= self._term_rows:
+                    self._cursor_row = self._term_rows - 1
+                if self.interactive:
+                    import sys
                     sys.stdout.write('\r\n')
+                    sys.stdout.flush()
+            else:
+                self._cursor_col += 1
+                wrap = self._cursor_col >= self._term_cols
+                if wrap:
                     self._cursor_col = 0
                     self._cursor_row += 1
-                else:
+                    if self._cursor_row >= self._term_rows:
+                        self._cursor_row = self._term_rows - 1
+                if self.interactive:
+                    import sys
+                    fg = (value >> 8) & 0xF
+                    bg = (value >> 12) & 0xF
+                    fg_ansi = self._r316_to_ansi(fg)
+                    bg_ansi = self._r316_to_ansi(bg)
+                    sys.stdout.write(f'\x1b[38;5;{fg_ansi}m\x1b[48;5;{bg_ansi}m')
                     sys.stdout.write(chr(ch))
-                    self._cursor_col += 1
-                sys.stdout.flush()
+                    if wrap:
+                        sys.stdout.write('\r\n')
+                    sys.stdout.flush()
             return
         if addr == 0x9FC4:   # TERM_CURSOR: cursor position
             # bits[9:5]=row, bits[4:0]=col
@@ -909,6 +937,17 @@ class Machine:
                 fg_ansi = self._r316_to_ansi(fg)
                 bg_ansi = self._r316_to_ansi(bg)
                 sys.stdout.write(f'\x1b[38;5;{fg_ansi}m\x1b[48;5;{bg_ansi}m')
+                sys.stdout.flush()
+            return
+        if addr == 0x9FC2:   # TERM_HRANGE: bits[9:5]=high_col, bits[4:0]=low_col
+            self._term_cols = ((value >> 5) & 0x1F) + 1
+            return
+        if addr == 0x9FC3:   # TERM_VRANGE: bits[9:5]=high_row, bits[4:0]=low_row
+            self._term_rows = ((value >> 5) & 0x1F) + 1
+            if self.interactive:
+                import sys
+                # Confine ANSI scrolling to the R316 terminal rows (row 1 is status bar)
+                sys.stdout.write(f'\x1b[2;{self._term_rows + 1}r')
                 sys.stdout.flush()
             return
         if 0x9F80 <= addr <= 0x9FC6:
