@@ -120,4 +120,3 @@ __heap_base:  dw 0
 __heap_limit: dw 0
 __earlystack: dw 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 __earlystack_top:
-__prog_end:

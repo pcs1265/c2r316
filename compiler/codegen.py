@@ -417,6 +417,9 @@ class Codegen:
             for lbl, chars in prog.strings:
                 data = (', '.join(str(c & 0xFFFF) for c in chars) + ', 0') if chars else '0'
                 self._emit(f'{lbl}: dw {data}')
+        
+        self._emit('')
+        self._emit('__prog_end:')
 
         return '\n'.join(self._out)
 
