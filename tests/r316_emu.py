@@ -206,6 +206,35 @@ def parse_asm(text: str) -> Program:
         if if_stack and not if_stack[-1]:
             continue
 
+        # %eval name rpn... — evaluate RPN expression and store as label
+        if line.startswith('%eval '):
+            parts = line.split()
+            if len(parts) >= 3:
+                sym = parts[1]
+                stack: list[int] = []
+                for tok in parts[2:]:
+                    if tok == '+':   stack.append(stack.pop(-2) + stack.pop())
+                    elif tok == '-': v = stack.pop(); stack.append(stack.pop() - v)
+                    elif tok == '*': stack.append(stack.pop(-2) * stack.pop())
+                    elif tok == '/': v = stack.pop(); stack.append(stack.pop() // v)
+                    elif tok in labels: stack.append(labels[tok])
+                    else:
+                        try: stack.append(int(tok, 0))
+                        except ValueError: stack.append(0)
+                if stack:
+                    labels[sym] = stack[-1] & _MASK16
+            continue
+
+        # %define name value — only handle simple numeric defines
+        if line.startswith('%define '):
+            parts = line.split()
+            if len(parts) == 3:
+                try:
+                    labels[parts[1]] = int(parts[2], 0) & _MASK16
+                except ValueError:
+                    pass
+            continue
+
         # Directives we ignore but don't fail on
         if line.startswith('%'):
             continue
@@ -690,6 +719,17 @@ class Machine:
     def operand_value(self, tok: str) -> int:
         if _is_reg(tok):
             return self.rd(tok)
+        # inline RPN: { token token ... }
+        if tok.startswith('{') and tok.endswith('}'):
+            inner = tok[1:-1].split()
+            stk: list[int] = []
+            for t in inner:
+                if t == '+':   stk.append(stk.pop(-2) + stk.pop())
+                elif t == '-': v = stk.pop(); stk.append(stk.pop() - v)
+                elif t == '*': stk.append(stk.pop(-2) * stk.pop())
+                elif t == '/': v = stk.pop(); stk.append(stk.pop() // v)
+                else: stk.append(_resolve_symbol(t, self.prog.labels))
+            return (stk[-1] if stk else 0) & _MASK16
         return _resolve_symbol(tok, self.prog.labels)
 
     # ── memory ─────────────────────────────────────────────────────────────
@@ -981,12 +1021,13 @@ class Machine:
 
 def run_main(asm: str, max_cycles: int | None = 1_000_000, stdin: str = '',
              freq: float | None = None) -> tuple[int, str, int]:
-    """Compile output → (return_value_of_main, stdout, cycles). Starts at `_C_main:`."""
+    """Compile output → (return_value_of_main, stdout, cycles). Starts at `start:`."""
     prog = parse_asm(asm)
     if '_C_main' not in prog.labels:
         raise RuntimeError("no _C_main in asm")
-    m = Machine(prog, max_cycles=max_cycles, stdin=stdin, freq=freq)
-    m.pc = prog.labels['_C_main']
+    entry = prog.labels.get('start', prog.labels['_C_main'])
+    m = Machine(prog, sp_init=0, max_cycles=max_cycles, stdin=stdin, freq=freq)
+    m.pc = entry
     m.run()
     return m.regs[1] & _MASK16, m.stdout_str(), m.cycles
 
@@ -1061,8 +1102,9 @@ if __name__ == '__main__':
     if '_C_main' not in prog.labels:
         print("error: no _C_main in asm", file=sys.stderr)
         sys.exit(1)
-    m = Machine(prog, max_cycles=args.cycles, stdin=stdin_input, freq=args.freq, interactive=interactive)
-    m.pc = prog.labels['_C_main']
+    entry = prog.labels.get('start', prog.labels['_C_main'])
+    m = Machine(prog, sp_init=0, max_cycles=args.cycles, stdin=stdin_input, freq=args.freq, interactive=interactive)
+    m.pc = entry
 
     try:
         m.run()
