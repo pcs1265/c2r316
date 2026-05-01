@@ -131,10 +131,17 @@ class Insn:
 
 @dataclass
 class Program:
-    insns: list[Insn]
-    labels: dict[str, int]   # label name → instruction index
-    data: dict[int, int]     # word address → value (for `dw` data)
-    data_origin: int = 0
+    """Assembled program with a unified address space.
+
+    `mem` is a list of length _MASK16+1 where each cell is either an `Insn`
+    object (instruction word — we don't have real R316 opcode encodings, so we
+    keep the parsed Insn at its address) or an `int` (data word, from `dw`).
+    Cells outside the program's image are zero. `labels` maps each label to
+    its address in this space; both code and data labels live in one map.
+    """
+    mem: list
+    labels: dict[str, int]
+    code_end: int = 0   # one past the last assembled cell — used for diagnostics
 
 
 # Macros we hardcode: TPTASM common.asm defines these.
@@ -156,27 +163,32 @@ _JMP_ALIASES = {
 
 
 def parse_asm(text: str) -> Program:
-    """Parse compiler output. Skips %include, %define, etc.
+    """Parse compiler output into a unified address-space image.
 
-    The parser splits on commas/whitespace and keeps the asm structure flat:
-    one Insn per source line. Labels (anything ending with ':') are recorded.
-    `dw` directives are placed right after all instructions (matching tptasm's
-    layout where data follows code), using a two-pass approach: data labels are
-    stored as ('data', relative_index) tuples during parsing, then remapped to
-    absolute addresses (len(insns) + relative_index) after parsing completes.
+    All instructions and `dw` words are placed at sequential addresses starting
+    at 0, in source order — the same model real R316 sees (code IS RAM). Labels
+    point at the cursor at the line they appear on; `__prog_end:` after a `dw`
+    therefore correctly points one past the data, and `_C_main:` followed by
+    code points at the first instruction of main, regardless of how many bare
+    labels intervene.
+
+    Symbol references inside `dw` cells are resolved in a second pass once all
+    labels are known.
     """
-    insns: list[Insn] = []
+    mem: list = [0] * (_MASK16 + 1)
     labels: dict[str, int] = {}
-    # data_raw: relative_index → raw token string (resolved after parsing)
-    data_raw: dict[int, str] = {}
-    # data_labels: label name → relative data index (remapped after parsing)
-    data_label_indices: dict[str, int] = {}
-    pending_label_for_data: list[str] = []
+    pending_labels: list[str] = []      # labels waiting for the next placed cell
+    deferred_dw: list[tuple[int, str]] = []  # (addr, raw_token) — resolve later
     cur_global = ''
     in_macro_def = False
-    if_stack: list[bool] = []   # %ifndef block — emit only if top-of-stack True
+    if_stack: list[bool] = []
+    cursor = 0
 
-    next_data_idx = 0   # relative index within data section
+    def flush_labels_to(addr: int) -> None:
+        nonlocal pending_labels
+        for lbl in pending_labels:
+            labels[lbl] = addr & _MASK16
+        pending_labels = []
 
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = _strip_comment(raw).strip()
@@ -194,10 +206,10 @@ def parse_asm(text: str) -> Program:
 
         # Conditional blocks (very limited %ifndef / %endif / %else)
         if line.startswith('%ifndef'):
-            if_stack.append(True)   # always assume "not defined" — emit content
+            if_stack.append(True)
             continue
         if line.startswith('%ifdef'):
-            if_stack.append(False)  # never emit (we don't track defs)
+            if_stack.append(False)
             continue
         if line.startswith('%endif'):
             if if_stack: if_stack.pop()
@@ -242,7 +254,6 @@ def parse_asm(text: str) -> Program:
             continue
 
         # Label?  `name:` or `name: instr ...`
-        # Handle this FIRST so a label on the same line as `dw ...` is parsed.
         m = re.match(r'^(\.?[A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$', line)
         if m:
             lbl = m.group(1)
@@ -250,37 +261,31 @@ def parse_asm(text: str) -> Program:
             if not lbl.startswith('.'):
                 cur_global = lbl
             full = lbl if not lbl.startswith('.') else cur_global + lbl
-            pending_label_for_data.append(full)
+            pending_labels.append(full)
             if not rest:
                 continue
             line = rest
 
-        # `dw value, value, value` → emit data words at next_data_idx (relative)
+        # `dw value, value, value` → place each at the cursor
         m = re.match(r'^dw\s+(.*)$', line)
         if m:
             values = [v.strip() for v in m.group(1).split(',')]
-            for lbl in pending_label_for_data:
-                data_label_indices[lbl] = next_data_idx
-            pending_label_for_data = []
+            flush_labels_to(cursor)
             for v in values:
-                data_raw[next_data_idx] = v
-                next_data_idx += 1
+                deferred_dw.append((cursor, v))
+                mem[cursor] = 0   # placeholder, overwritten in resolve pass
+                cursor = (cursor + 1) & _MASK16
             continue
 
-        # Now parse as instruction. Args separated by commas, mnemonic by ws.
-        # Allow leading dot for instructions that have a leading-dot label
-        # already stripped (we already handle labels above, so this regex only
-        # matches actual instruction mnemonics — which never start with '.').
+        # Instruction
         m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)(?:\s+(.*))?$', line)
         if not m:
-            continue   # skip unrecognized lines
+            continue
         op = m.group(1)
         args_str = m.group(2) or ''
         args = [a.strip() for a in args_str.split(',')] if args_str else []
-        # filter empty
         args = [a for a in args if a]
 
-        # Apply macros and aliases
         if op in _MACROS:
             new_op, prefix = _MACROS[op]
             op = new_op
@@ -288,27 +293,21 @@ def parse_asm(text: str) -> Program:
         if op in _JMP_ALIASES:
             op = _JMP_ALIASES[op]
 
-        # Resolve any labels we registered as pointing here
-        for lbl in pending_label_for_data:
-            labels[lbl] = len(insns)
-        pending_label_for_data = []
+        flush_labels_to(cursor)
+        mem[cursor] = Insn(op=op, args=args, src_line=lineno, scope=cur_global)
+        cursor = (cursor + 1) & _MASK16
 
-        insns.append(Insn(op=op, args=args, src_line=lineno, scope=cur_global))
+    # Any labels still pending at EOF point one past the last placed cell
+    flush_labels_to(cursor)
 
-    # Phase 2: remap data labels to absolute addresses (data starts at len(insns))
-    data_start = len(insns)
-    for lbl, rel_idx in data_label_indices.items():
-        labels[lbl] = (data_start + rel_idx) & _MASK16
+    # Resolve dw references to symbols
+    for addr, tok in deferred_dw:
+        try:
+            mem[addr] = _resolve_symbol(tok, labels) & _MASK16
+        except ValueError:
+            mem[addr] = 0
 
-    # Resolve data values that referenced symbols (e.g. `dw _cstr_0`)
-    resolved_data: dict[int, int] = {}
-    for rel_idx, v in data_raw.items():
-        addr = data_start + rel_idx
-        if isinstance(v, int):
-            resolved_data[addr] = v
-        else:
-            resolved_data[addr] = _resolve_symbol(v, labels)
-    return Program(insns=insns, labels=labels, data=resolved_data, data_origin=data_start)
+    return Program(mem=mem, labels=labels, code_end=cursor)
 
 
 def _resolve_symbol(tok: str, labels: dict) -> int:
@@ -340,15 +339,12 @@ class Machine:
         self.regs[30] = sp_init        # sp
         self.regs[31] = self.SENTINEL_LR
         self.flags = Flags()
-        # Flat 65536-word RAM, initialized to a poison pattern so reads from
-        # unwritten addresses return garbage (matching real R316 behaviour).
-        # Global data (dw) is overlaid at its assigned addresses; code addresses
-        # (0..len(insns)-1) are left as poison since they hold opcode words on
-        # a real machine and should never be read as data by a correct program.
-        _POISON = 0xBAAD
-        self.mem: list[int] = [_POISON] * 0x10000
-        for addr, val in prog.data.items():
-            self.mem[addr & _MASK16] = val & _MASK16
+        # Copy the parsed program image into our own RAM. Cells are either
+        # Insn objects (instruction words) or ints (data / poison). A stray
+        # `st` into a code address replaces the Insn with an int, and the next
+        # fetch there will fail as "non-instruction" — roughly what real R316
+        # would do when decoding the garbage left behind.
+        self.mem: list = list(prog.mem)
         self.pc: int = 0
         self.stdout: list[int] = []
         self.stdin: list[int] = [ord(c) for c in stdin]
@@ -390,10 +386,12 @@ class Machine:
         return [self.mem[(addr + i) & _MASK16] & _MASK16 for i in range(count)]
 
     def get_current_instruction(self) -> dict | None:
-        """Return current instruction info, or None if halted/end."""
-        if self.pc < 0 or self.pc >= len(self.prog.insns):
+        """Return current instruction info, or None if halted/end/non-instruction."""
+        if self.pc < 0 or self.pc > _MASK16:
             return None
-        ins = self.prog.insns[self.pc]
+        ins = self.mem[self.pc]
+        if not isinstance(ins, Insn):
+            return None
         return {'op': ins.op, 'args': list(ins.args), 'src_line': ins.src_line, 'scope': ins.scope}
 
     def get_stdout(self) -> str:
@@ -477,25 +475,48 @@ class Machine:
         self._breakpoints = {int(pc): bp.copy() for pc, bp in state.get('breakpoints', {}).items()}
 
     def save_state_file(self, filepath: str) -> None:
-        """Save complete state to a JSON file."""
+        """Save complete state to a JSON file.
+
+        Memory is stored as a sparse diff against the original program image
+        (`prog.mem`): only cells that have changed since load are written, as
+        a `{hex_addr: int}` map. Insn objects in code cells aren't serialized
+        — they're reconstructed from `prog.mem` on load. This means a clobbered
+        code cell (now an int) shows up in the diff naturally.
+        """
         import json
         state = self.save_state()
-        # Convert non-JSON-serializable types
-        state['mem'] = {f'0x{addr:04X}': val for addr, val in state['mem'].items()}
+        diff: dict[str, int] = {}
+        for addr in range(_MASK16 + 1):
+            cur = self.mem[addr]
+            orig = self.prog.mem[addr]
+            if cur is orig:
+                continue
+            if isinstance(cur, int) and isinstance(orig, int) and cur == orig:
+                continue
+            if isinstance(cur, Insn):
+                continue   # unchanged Insn (covered by `is` check above otherwise)
+            diff[f'0x{addr:04X}'] = int(cur) & _MASK16
+        state['mem'] = diff
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
 
     @classmethod
     def load_state_file(cls, filepath: str, prog: Program) -> 'Machine':
-        """Load state from a JSON file and return a new Machine instance."""
+        """Load state from a JSON file and return a new Machine instance.
+
+        Reconstructs memory by starting from `prog.mem` and applying the saved
+        diff — Insn objects come back from the program image; modified cells
+        come from the JSON.
+        """
         import json
         with open(filepath, 'r', encoding='utf-8') as f:
             state = json.load(f)
-        # Convert string keys back to int for mem
-        state['mem'] = {int(addr, 16): val for addr, val in state['mem'].items()}
-        # Convert string keys back to int for breakpoints
+        diff = {int(addr, 16): val for addr, val in state['mem'].items()}
+        mem = list(prog.mem)
+        for addr, val in diff.items():
+            mem[addr] = val & _MASK16
+        state['mem'] = mem
         state['breakpoints'] = {int(pc): bp for pc, bp in state.get('breakpoints', {}).items()}
-        # Create machine instance
         m = cls(prog)
         m.restore_state(state)
         return m
@@ -573,8 +594,8 @@ class Machine:
         # Record state after for trace
         if self._trace_enabled:
             insn_info = None
-            if state_before['pc'] < len(self.prog.insns):
-                ins = self.prog.insns[state_before['pc']]
+            ins = self.mem[state_before['pc']] if 0 <= state_before['pc'] <= _MASK16 else None
+            if isinstance(ins, Insn):
                 insn_info = {'op': ins.op, 'args': list(ins.args)}
             self._trace.append({
                 'pc': state_before['pc'],
@@ -589,12 +610,17 @@ class Machine:
 
     def _execute_step(self) -> None:
         """Execute one instruction (internal implementation)."""
-        if self.pc < 0 or self.pc >= len(self.prog.insns):
+        if self.pc < 0 or self.pc > _MASK16:
             self.halted = True
             return
-        ins = self.prog.insns[self.pc]
+        ins = self.mem[self.pc]
+        if not isinstance(ins, Insn):
+            raise RuntimeError(
+                f"executing non-instruction at pc={self.pc:#06x}: {ins!r} "
+                f"(code memory was overwritten or PC ran into data)"
+            )
         op, args = ins.op, ins.args
-        self.pc += 1
+        self.pc = (self.pc + 1) & _MASK16
         # ── data movement ──
         if op == 'mov':
             d = args[0]; s = args[1]
@@ -751,6 +777,9 @@ class Machine:
     # ── memory ─────────────────────────────────────────────────────────────
     def mem_read(self, addr: int) -> int:
         addr &= _MASK16
+        cell = self.mem[addr]
+        if isinstance(cell, Insn):
+            return 0   # code memory has no real opcode encoding
         if addr == 0x9F80:  # terminal input
             if self.stdin_pos < len(self.stdin):
                 ch = self.stdin[self.stdin_pos]
@@ -946,7 +975,8 @@ class Machine:
     def _do_jump(self, op: str, args: list[str]) -> None:
         """`jmp target` (unconditional), `jmp r31, target` (call: lr = next pc).
         `j<cc> target` is conditional on flags."""
-        scope = self.prog.insns[self.pc - 1].scope   # we already incremented pc
+        prev = self.mem[(self.pc - 1) & _MASK16]   # we already incremented pc
+        scope = prev.scope if isinstance(prev, Insn) else ''
         # Check call form: `jmp r31, target` (also `jmp DSTREG, target`)
         if len(args) == 2 and _is_reg(args[0]):
             link = args[0]
@@ -1010,10 +1040,10 @@ class Machine:
                     sys.exit(130)  # 128 + SIGINT(2)
 
                 if self.max_cycles is not None and self.cycles >= self.max_cycles:
+                    cur = self.mem[self.pc] if 0 <= self.pc <= _MASK16 else None
                     raise RuntimeError(
                         f"emulator timeout after {self.max_cycles} cycles "
-                        f"(likely infinite loop). pc={self.pc}, "
-                        f"cur={self.prog.insns[self.pc] if self.pc < len(self.prog.insns) else None}"
+                        f"(likely infinite loop). pc={self.pc}, cur={cur}"
                     )
                 self._step_internal()
                 if freq is not None:
