@@ -628,7 +628,7 @@ class Machine:
         import os
         self._is_windows = os.name == 'nt'
         if self._is_windows:
-            # Windows: use msvcrt for raw input
+            # Windows: use msvcrt for raw input (non-blocking)
             try:
                 import msvcrt
                 self._msvcrt = msvcrt
@@ -645,10 +645,14 @@ class Machine:
                 self._term_settings = termios.tcgetattr(sys.stdin.fileno())
                 # Use cbreak mode instead of raw mode to allow SIGINT (Ctrl+C) to work
                 tty.setcbreak(sys.stdin.fileno())
+                # Make stdin non-blocking so we can check for Ctrl+C frequently
+                import fcntl
+                flags = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
                 # Clear screen and move cursor to row 2 (skip top line for status bar)
                 sys.stdout.write('\x1b[2J\x1b[2;1H')
                 sys.stdout.flush()
-            except (ImportError, termios.error):
+            except (ImportError, termios.error, OSError):
                 # Non-terminal input: fall back to normal input
                 self._term_settings = None
 
@@ -697,42 +701,52 @@ class Machine:
                 self.stdin_pos += 1
                 return ch
             if self.interactive:
-                # Read from real terminal (raw mode, no echo)
+                # Read from real terminal (raw mode, no echo, non-blocking)
                 import sys
                 try:
                     if hasattr(self, '_is_windows') and self._is_windows:
-                        # Windows: use msvcrt.getch() for raw input
-                        ch = self._msvcrt.getch()
-                        if not ch:
-                            return 0
-                        ch = ord(ch)
-                        # Filter out arrow keys and function keys on Windows
-                        # Arrow keys: 0xE0 followed by A/B/C/D
-                        if ch == 0xE0:
-                            # Read the next byte and discard
-                            self._msvcrt.getch()
-                            return 0  # Ignore arrow keys
-                    else:
-                        # Unix/Linux: use sys.stdin.read(1)
-                        ch = sys.stdin.read(1)
-                        if not ch:  # EOF
-                            return 0
-                        ch = ord(ch)
-                        # Filter out escape sequences (arrow keys, function keys, etc.)
-                        # Arrow keys send: ESC [ A/B/C/D
-                        if ch == 27:  # ESC
-                            # Read the next two characters to check for arrow keys
-                            next1 = sys.stdin.read(1)
-                            if next1 == '[':
-                                next2 = sys.stdin.read(1)
-                                # Arrow keys: A=up, B=down, C=right, D=left
-                                if next2 in 'ABCD':
-                                    return 0  # Ignore arrow keys
-                                # Other escape sequences - just return 0
+                        # Windows: use msvcrt.kbhit() to check for input (non-blocking)
+                        if self._msvcrt.kbhit():
+                            ch = self._msvcrt.getch()
+                            if not ch:
                                 return 0
-                            # Single ESC - return 0
+                            ch = ord(ch) if isinstance(ch, bytes) else ch
+                            # Filter out arrow keys and function keys on Windows
+                            # Arrow keys: 0xE0 followed by A/B/C/D
+                            if ch == 0xE0:
+                                # Read the next byte and discard
+                                if self._msvcrt.kbhit():
+                                    self._msvcrt.getch()
+                                return 0  # Ignore arrow keys
+                            return ch
+                    else:
+                        # Unix/Linux: use sys.stdin.read(1) in non-blocking mode
+                        try:
+                            ch = sys.stdin.read(1)
+                            if not ch:  # EOF
+                                return 0
+                            ch = ord(ch)
+                            # Filter out escape sequences (arrow keys, function keys, etc.)
+                            # Arrow keys send: ESC [ A/B/C/D
+                            if ch == 27:  # ESC
+                                # Try to read the next two characters
+                                try:
+                                    next1 = sys.stdin.read(1)
+                                    if next1 == '[':
+                                        next2 = sys.stdin.read(1)
+                                        # Arrow keys: A=up, B=down, C=right, D=left
+                                        if next2 in 'ABCD':
+                                            return 0  # Ignore arrow keys
+                                        # Other escape sequences - just return 0
+                                        return 0
+                                except:
+                                    pass
+                                # Single ESC - return 0
+                                return 0
+                            return ch
+                        except (IOError, OSError):
+                            # Non-blocking read with no data available
                             return 0
-                    return ch
                 except Exception:
                     return 0
             return 0  # no more input (keeps polling loop spinning → timeout)
