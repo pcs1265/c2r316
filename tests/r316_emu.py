@@ -26,6 +26,8 @@ from typing import Optional
 
 _MASK16 = 0xFFFF
 _BIT15  = 0x8000
+R316_RAM_WORDS = 0x2000   # 8192 words — the writable-RAM ceiling on real R316
+                          # hardware (binary-search probe in __stack_init caps here)
 
 def _u16(x: int) -> int: return x & _MASK16
 def _s16(x: int) -> int:
@@ -127,6 +129,22 @@ class Insn:
     scope: str = ''   # name of containing global label (for local-label resolution)
 
     def __repr__(self): return f'{self.op} {", ".join(self.args)}'
+
+
+def _encode_cell(cell) -> object:
+    """JSON-encode one RAM cell. Ints stay ints; Insns become a tagged dict."""
+    if isinstance(cell, Insn):
+        return {'op': cell.op, 'args': list(cell.args),
+                'src_line': cell.src_line, 'scope': cell.scope}
+    return int(cell) & _MASK16
+
+
+def _decode_cell(cell) -> object:
+    """Inverse of `_encode_cell`."""
+    if isinstance(cell, dict):
+        return Insn(op=cell['op'], args=list(cell['args']),
+                    src_line=cell.get('src_line', 0), scope=cell.get('scope', ''))
+    return int(cell) & _MASK16
 
 
 @dataclass
@@ -477,26 +495,17 @@ class Machine:
     def save_state_file(self, filepath: str) -> None:
         """Save complete state to a JSON file.
 
-        Memory is stored as a sparse diff against the original program image
-        (`prog.mem`): only cells that have changed since load are written, as
-        a `{hex_addr: int}` map. Insn objects in code cells aren't serialized
-        — they're reconstructed from `prog.mem` on load. This means a clobbered
-        code cell (now an int) shows up in the diff naturally.
+        Memory is dumped as a flat list covering the writable RAM region
+        (`0..R316_RAM_WORDS`, i.e. the 8192-word ceiling real R316 hardware
+        exposes). Each cell is either an `int` (data) or a small dict
+        `{"op": ..., "args": [...], "scope": ..., "src_line": ...}` for `Insn`
+        cells. The dump is self-contained: restoring does not require the
+        original `Program`, so source-code changes between save and load can't
+        silently corrupt restored memory.
         """
         import json
         state = self.save_state()
-        diff: dict[str, int] = {}
-        for addr in range(_MASK16 + 1):
-            cur = self.mem[addr]
-            orig = self.prog.mem[addr]
-            if cur is orig:
-                continue
-            if isinstance(cur, int) and isinstance(orig, int) and cur == orig:
-                continue
-            if isinstance(cur, Insn):
-                continue   # unchanged Insn (covered by `is` check above otherwise)
-            diff[f'0x{addr:04X}'] = int(cur) & _MASK16
-        state['mem'] = diff
+        state['mem'] = [_encode_cell(c) for c in self.mem[:R316_RAM_WORDS]]
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
 
@@ -504,17 +513,17 @@ class Machine:
     def load_state_file(cls, filepath: str, prog: Program) -> 'Machine':
         """Load state from a JSON file and return a new Machine instance.
 
-        Reconstructs memory by starting from `prog.mem` and applying the saved
-        diff — Insn objects come back from the program image; modified cells
-        come from the JSON.
+        Memory comes entirely from the dump — `prog` is still required for the
+        `Machine` constructor (label resolution at runtime), but mismatches
+        between the saved program and `prog` no longer silently corrupt the
+        restored memory image, since cells are decoded directly from the file.
         """
         import json
         with open(filepath, 'r', encoding='utf-8') as f:
             state = json.load(f)
-        diff = {int(addr, 16): val for addr, val in state['mem'].items()}
-        mem = list(prog.mem)
-        for addr, val in diff.items():
-            mem[addr] = val & _MASK16
+        mem = [0] * (_MASK16 + 1)
+        for i, cell in enumerate(state['mem']):
+            mem[i] = _decode_cell(cell)
         state['mem'] = mem
         state['breakpoints'] = {int(pc): bp for pc, bp in state.get('breakpoints', {}).items()}
         m = cls(prog)

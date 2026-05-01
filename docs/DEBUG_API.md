@@ -332,7 +332,7 @@ print(f"Restored PC={m.get_pc()}")
 
 #### `save_state_file(filepath: str) -> None`
 
-Saves the complete machine state to a JSON file. Memory is stored as a sparse diff against the original `prog.mem` — only cells that have changed since load are written, as a `{hex_addr: int}` map. `Insn` objects in unchanged code cells aren't serialized; they're reconstructed from `prog.mem` on load. A clobbered code cell (now an int) shows up in the diff naturally.
+Saves the complete machine state to a JSON file. Memory is dumped as a flat list covering the writable RAM region (`0..R316_RAM_WORDS` = 8192 words, the ceiling on real R316 hardware). Each cell is either an `int` (data) or a small dict `{"op": ..., "args": [...], "scope": ..., "src_line": ...}` for `Insn` cells. The dump is **self-contained** — restoring no longer relies on the original `Program` for memory contents, so source-code changes between save and load can't silently corrupt restored state. Files run ~75 KB for a typical program.
 
 ```python
 m.save_state_file("debug_state.json")
@@ -340,7 +340,7 @@ m.save_state_file("debug_state.json")
 
 #### `Machine.load_state_file(filepath: str, prog: Program) -> Machine`
 
-Class method. Loads state from a JSON file and returns a new Machine instance. Memory is rebuilt by starting from `prog.mem` and applying the saved diff, so you must pass the same `Program` that was used when the state was saved.
+Class method. Loads state from a JSON file and returns a new Machine instance. Memory is decoded directly from the file, not reconstructed from `prog.mem` — `prog` is still required for the constructor (label resolution at runtime), but mismatches between the saved program and `prog` only affect label-dependent behaviour, not the memory image itself.
 
 ```python
 m2 = Machine.load_state_file("debug_state.json", prog)
