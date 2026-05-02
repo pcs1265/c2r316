@@ -406,7 +406,7 @@ class Codegen:
             self._emit('; -- global variables --')
             for name, words, init_vals in prog.globals:
                 if init_vals:
-                    vals = [str(v) for v in init_vals] + ['0'] * (words - len(init_vals))
+                    vals = [str(v & 0xFFFF) for v in init_vals] + ['0'] * (words - len(init_vals))
                 else:
                     vals = ['0'] * words
                 self._emit(f'{self._mangle_global(name)}: dw {", ".join(vals)}')
@@ -415,7 +415,7 @@ class Codegen:
             self._emit('')
             self._emit('; -- string literals --')
             for lbl, chars in prog.strings:
-                data = (', '.join(str(c) for c in chars) + ', 0') if chars else '0'
+                data = (', '.join(str(c & 0xFFFF) for c in chars) + ', 0') if chars else '0'
                 self._emit(f'{lbl}: dw {data}')
 
         return '\n'.join(self._out)
