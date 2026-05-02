@@ -51,11 +51,17 @@ def _max_temp_id(instrs: List[Instr]) -> int:
     return hi
 
 
-def _rename_operand(op: Operand, temp_offset: int, param_map: Dict[str, Operand]) -> Operand:
+def _rename_operand(op: Operand, temp_offset: int, param_map: Dict[str, Operand],
+                    label_suffix: str = '') -> Operand:
     if isinstance(op, Temp):
         return Temp(op.id + temp_offset)
-    if isinstance(op, Var) and op.name in param_map:
-        return param_map[op.name]
+    if isinstance(op, Var):
+        if op.name in param_map:
+            return param_map[op.name]
+        # Non-param local variable — rename with suffix so it matches the renamed
+        # local_sizes entry and stays consistent with IAddrOf renaming.
+        if label_suffix:
+            return Var(op.name + label_suffix)
     return op
 
 
@@ -81,7 +87,7 @@ def _clone_instrs(
     resolved: Dict[int, Operand] = {}
 
     def _ro(op: Operand) -> Operand:
-        op = _rename_operand(op, temp_offset, param_map)
+        op = _rename_operand(op, temp_offset, param_map, label_suffix)
         if isinstance(op, Temp) and op.id in resolved:
             return resolved[op.id]
         return op
@@ -122,11 +128,7 @@ def _clone_instrs(
             out.append(IConst(Temp(instr.dst.id + temp_offset), instr.value, instr.loc))
 
         elif isinstance(instr, IAddrOf):
-            new_var = instr.var
-            if isinstance(new_var, Var) and new_var.name in param_map:
-                # address of a param — can't really happen safely; skip rename
-                new_var = new_var
-            out.append(IAddrOf(Temp(instr.dst.id + temp_offset), new_var, instr.loc))
+            out.append(IAddrOf(Temp(instr.dst.id + temp_offset), _ro(instr.var), instr.loc))
 
         elif isinstance(instr, IBinOp):
             out.append(IBinOp(

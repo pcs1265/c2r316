@@ -160,21 +160,23 @@ def parse_asm(text: str) -> Program:
 
     The parser splits on commas/whitespace and keeps the asm structure flat:
     one Insn per source line. Labels (anything ending with ':') are recorded.
-    `dw` directives are placed at the END as data words, with addresses
-    assigned starting from a fixed origin so global symbols can be loaded.
+    `dw` directives are placed right after all instructions (matching tptasm's
+    layout where data follows code), using a two-pass approach: data labels are
+    stored as ('data', relative_index) tuples during parsing, then remapped to
+    absolute addresses (len(insns) + relative_index) after parsing completes.
     """
     insns: list[Insn] = []
     labels: dict[str, int] = {}
-    data: dict[int, int] = {}
+    # data_raw: relative_index → raw token string (resolved after parsing)
+    data_raw: dict[int, str] = {}
+    # data_labels: label name → relative data index (remapped after parsing)
+    data_label_indices: dict[str, int] = {}
     pending_label_for_data: list[str] = []
     cur_global = ''
     in_macro_def = False
     if_stack: list[bool] = []   # %ifndef block — emit only if top-of-stack True
 
-    # We assign data labels addresses starting from 0xC000 (arbitrary, safe
-    # high address that doesn't collide with code or MMIO at 0x9F80).
-    # Code labels resolve to instruction indices; data labels to addresses.
-    next_data_addr = 0xC000
+    next_data_idx = 0   # relative index within data section
 
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = _strip_comment(raw).strip()
@@ -253,16 +255,16 @@ def parse_asm(text: str) -> Program:
                 continue
             line = rest
 
-        # `dw value, value, value` → emit data words at next_data_addr
+        # `dw value, value, value` → emit data words at next_data_idx (relative)
         m = re.match(r'^dw\s+(.*)$', line)
         if m:
             values = [v.strip() for v in m.group(1).split(',')]
             for lbl in pending_label_for_data:
-                labels[lbl] = next_data_addr   # data address (>= 0xC000)
+                data_label_indices[lbl] = next_data_idx
             pending_label_for_data = []
             for v in values:
-                data[next_data_addr] = v   # store raw token; resolved later
-                next_data_addr += 1
+                data_raw[next_data_idx] = v
+                next_data_idx += 1
             continue
 
         # Now parse as instruction. Args separated by commas, mnemonic by ws.
@@ -293,14 +295,20 @@ def parse_asm(text: str) -> Program:
 
         insns.append(Insn(op=op, args=args, src_line=lineno, scope=cur_global))
 
+    # Phase 2: remap data labels to absolute addresses (data starts at len(insns))
+    data_start = len(insns)
+    for lbl, rel_idx in data_label_indices.items():
+        labels[lbl] = (data_start + rel_idx) & _MASK16
+
     # Resolve data values that referenced symbols (e.g. `dw _cstr_0`)
     resolved_data: dict[int, int] = {}
-    for addr, v in data.items():
+    for rel_idx, v in data_raw.items():
+        addr = data_start + rel_idx
         if isinstance(v, int):
             resolved_data[addr] = v
         else:
             resolved_data[addr] = _resolve_symbol(v, labels)
-    return Program(insns=insns, labels=labels, data=resolved_data, data_origin=0xC000)
+    return Program(insns=insns, labels=labels, data=resolved_data, data_origin=data_start)
 
 
 def _resolve_symbol(tok: str, labels: dict) -> int:
@@ -332,7 +340,15 @@ class Machine:
         self.regs[30] = sp_init        # sp
         self.regs[31] = self.SENTINEL_LR
         self.flags = Flags()
-        self.mem: dict[int, int] = dict(prog.data)
+        # Flat 65536-word RAM, initialized to a poison pattern so reads from
+        # unwritten addresses return garbage (matching real R316 behaviour).
+        # Global data (dw) is overlaid at its assigned addresses; code addresses
+        # (0..len(insns)-1) are left as poison since they hold opcode words on
+        # a real machine and should never be read as data by a correct program.
+        _POISON = 0xBAAD
+        self.mem: list[int] = [_POISON] * 0x10000
+        for addr, val in prog.data.items():
+            self.mem[addr & _MASK16] = val & _MASK16
         self.pc: int = 0
         self.stdout: list[int] = []
         self.stdin: list[int] = [ord(c) for c in stdin]
@@ -371,7 +387,7 @@ class Machine:
     def get_memory(self, addr: int, count: int = 1) -> list[int]:
         """Read 'count' words starting at addr."""
         addr &= _MASK16
-        return [self.mem.get(addr + i, 0) & _MASK16 for i in range(count)]
+        return [self.mem[(addr + i) & _MASK16] & _MASK16 for i in range(count)]
 
     def get_current_instruction(self) -> dict | None:
         """Return current instruction info, or None if halted/end."""
@@ -429,7 +445,7 @@ class Machine:
             'halted': self.halted,
             'regs': list(self.regs),
             'flags': {'Z': self.flags.Z, 'S': self.flags.S, 'C': self.flags.C, 'O': self.flags.O},
-            'mem': dict(self.mem),
+            'mem': list(self.mem),
             'stdout': list(self.stdout),
             'stdin': list(self.stdin),
             'stdin_pos': self.stdin_pos,
@@ -451,7 +467,7 @@ class Machine:
         self.flags.S = state['flags']['S']
         self.flags.C = state['flags']['C']
         self.flags.O = state['flags']['O']
-        self.mem = dict(state['mem'])
+        self.mem = list(state['mem'])
         self.stdout = list(state['stdout'])
         self.stdin = list(state['stdin'])
         self.stdin_pos = state['stdin_pos']
@@ -790,7 +806,7 @@ class Machine:
                 except Exception:
                     return 0
             return 0  # no more input (keeps polling loop spinning → timeout)
-        return self.mem.get(addr, 0) & _MASK16
+        return self.mem[addr] & _MASK16
 
     def mem_write(self, addr: int, value: int) -> None:
         addr &= _MASK16

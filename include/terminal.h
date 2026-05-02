@@ -120,6 +120,12 @@ static int  _ungetc_valid;
 /* --Output --------------------------------------------------------------- */
 
 static void term_putch(int c) {
+    if (c == '\r') {
+        int *cur = TERM_CURSOR;
+        _cursor_col = 0;
+        *cur = TERM_CURSOR_VAL(0, _cursor_row);
+        return;
+    }
     asm("st %0, %1\n"
         "cmp %0, 10\n"
         "jne .term_putch_else\n"
