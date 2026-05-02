@@ -26,7 +26,10 @@ sys.path.insert(0, THIS_DIR)
 import importlib.util
 spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
 mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-from r316_emu import run_main
+try:
+    from emu import run_main
+except ModuleNotFoundError:
+    from tests.emu import run_main
 
 GOLDEN_DIR = os.path.join(THIS_DIR, 'golden')
 os.makedirs(GOLDEN_DIR, exist_ok=True)

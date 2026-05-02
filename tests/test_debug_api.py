@@ -19,7 +19,10 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(THIS_DIR)
 sys.path.insert(0, ROOT)
 
-from r316_emu import parse_asm, Machine, run_main
+try:
+    from emu import parse_asm, Machine, run_main
+except ModuleNotFoundError:
+    from tests.emu import parse_asm, Machine, run_main
 
 PASS = 0
 FAIL = 0

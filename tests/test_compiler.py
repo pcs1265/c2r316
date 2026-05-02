@@ -28,7 +28,10 @@ import compiler as _pkg
 from compiler.preprocessor import preprocess
 
 # In-process R316 emulator — runs compiled asm to verify behaviour.
-from r316_emu import run_main as _emu_run_main
+try:
+    from emu import run_main as _emu_run_main
+except ModuleNotFoundError:
+    from tests.emu import run_main as _emu_run_main
 
 
 def _compile_via_main(src: str, **kwargs) -> str:
