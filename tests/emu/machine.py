@@ -50,6 +50,7 @@ class Machine:
         self._trace: list[dict] = []  # Execution trace history
         self._trace_enabled: bool = False
         self._interrupted: bool = False  # Set by SIGINT handler
+        self._terminal_restored: bool = False
         if interactive:
             self._setup_raw_terminal()
 
@@ -445,11 +446,14 @@ class Machine:
 
     def _restore_terminal(self) -> None:
         """Restore terminal to original settings."""
+        if self._terminal_restored:
+            return
+        self._terminal_restored = True
         import sys
         # Move cursor below the emulated screen area so post-exit output
         # (cycle count etc.) doesn't overwrite the last screen content.
         # Row layout: row 1 = status bar, rows 2.._term_rows+1 = screen area.
-        below = self._term_rows + 2
+        below = self._term_rows + 1
         escape_prefix = f'\x1b[0m\x1b[r\x1b[{below};1H\n'
         if hasattr(self, '_is_windows') and self._is_windows:
             sys.stdout.write(escape_prefix)
@@ -852,9 +856,10 @@ class Machine:
             while not self.halted:
                 # Check for Ctrl+C interrupt
                 if self._interrupted:
-                    self._restore_terminal()
-                    print("\n[Interrupted]")
                     import sys
+                    self._restore_terminal()
+                    sys.stdout.write('[Interrupted]\n')
+                    sys.stdout.flush()
                     sys.exit(130)  # 128 + SIGINT(2)
 
                 if self.max_cycles is not None and self.cycles >= self.max_cycles:
