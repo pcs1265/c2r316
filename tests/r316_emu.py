@@ -7,13 +7,15 @@ that pure pattern-matching tests miss.
 Scope:
   - Instructions actually emitted by the c2r316 compiler:
       mov add adc sub sbb mul and or xor shl shr ld st jmp <jcc> hlt
+    Plus manual spellings useful for inline asm/debug tests:
+      movf adds/adcs/subs/sbbs ands/ors/xors shls/shrs exh/exhs mulh/muls/mulx
   - Macros: cmp / test / nop (hardcoded; we skip %include "common")
   - Skipped: %include, %define, %eval, %ifndef, %endif, %macro definitions,
     {RPN expressions}, and most of runtime/runtime.asm. Execution starts at
     `_C_main:` directly, with SP and LR initialized by the harness.
   - Terminal: writes to 0x9FB5 are captured into stdout. Nothing else MMIO.
 
-This is a small-cycle reference, not the full TPT R316 ISA.
+This is a small-cycle reference, not a frame-accurate TPT R316 simulation.
 """
 
 from __future__ import annotations
@@ -127,6 +129,7 @@ class Insn:
     args: list[str]
     src_line: int = 0
     scope: str = ''   # name of containing global label (for local-label resolution)
+    update_flags: Optional[bool] = None
 
     def __repr__(self): return f'{self.op} {", ".join(self.args)}'
 
@@ -135,7 +138,8 @@ def _encode_cell(cell) -> object:
     """JSON-encode one RAM cell. Ints stay ints; Insns become a tagged dict."""
     if isinstance(cell, Insn):
         return {'op': cell.op, 'args': list(cell.args),
-                'src_line': cell.src_line, 'scope': cell.scope}
+                'src_line': cell.src_line, 'scope': cell.scope,
+                'update_flags': cell.update_flags}
     return int(cell) & _MASK16
 
 
@@ -143,7 +147,8 @@ def _decode_cell(cell) -> object:
     """Inverse of `_encode_cell`."""
     if isinstance(cell, dict):
         return Insn(op=cell['op'], args=list(cell['args']),
-                    src_line=cell.get('src_line', 0), scope=cell.get('scope', ''))
+                    src_line=cell.get('src_line', 0), scope=cell.get('scope', ''),
+                    update_flags=cell.get('update_flags'))
     return int(cell) & _MASK16
 
 
@@ -178,6 +183,27 @@ _JMP_ALIASES = {
     'jge': 'jnl', 'jnge': 'jl',
     'jb': 'jc', 'jnb': 'jnc',
 }
+
+_NOFLAG_ALIASES = {
+    'adds': 'add', 'adcs': 'adc', 'subs': 'sub', 'sbbs': 'sbb',
+    'ands': 'and', 'ors': 'or', 'xors': 'xor',
+    'shls': 'shl', 'shrs': 'shr', 'exhs': 'exh',
+}
+
+_FLAG_ALIASES = {
+    'movf': 'mov',
+}
+
+
+def _canonical_jump_op(op: str) -> str:
+    if op in _JMP_ALIASES:
+        return _JMP_ALIASES[op]
+    # Synchronizing aliases insert `y` after the leading `j`: `jya` -> `jynbe`.
+    if op.startswith('jy') and len(op) > 2:
+        plain = 'j' + op[2:]
+        if plain in _JMP_ALIASES:
+            return 'jy' + _JMP_ALIASES[plain][1:]
+    return op
 
 
 def parse_asm(text: str) -> Program:
@@ -303,16 +329,23 @@ def parse_asm(text: str) -> Program:
         args_str = m.group(2) or ''
         args = [a.strip() for a in args_str.split(',')] if args_str else []
         args = [a for a in args if a]
+        update_flags: Optional[bool] = None
 
         if op in _MACROS:
             new_op, prefix = _MACROS[op]
             op = new_op
             args = list(prefix) + args
-        if op in _JMP_ALIASES:
-            op = _JMP_ALIASES[op]
+        op = _canonical_jump_op(op)
+        if op in _NOFLAG_ALIASES:
+            op = _NOFLAG_ALIASES[op]
+            update_flags = False
+        if op in _FLAG_ALIASES:
+            op = _FLAG_ALIASES[op]
+            update_flags = True
 
         flush_labels_to(cursor)
-        mem[cursor] = Insn(op=op, args=args, src_line=lineno, scope=cur_global)
+        mem[cursor] = Insn(op=op, args=args, src_line=lineno, scope=cur_global,
+                           update_flags=update_flags)
         cursor = (cursor + 1) & _MASK16
 
     # Any labels still pending at EOF point one past the last placed cell
@@ -406,13 +439,13 @@ class Machine:
     def get_memory(self, addr: int, count: int = 1) -> list[int]:
         """Read 'count' words starting at addr."""
         addr &= _MASK16
-        return [self.mem[(addr + i) & _MASK16] & _MASK16 for i in range(count)]
+        return [self.mem_read((addr + i) & _MASK16) for i in range(count)]
 
     def get_current_instruction(self) -> dict | None:
         """Return current instruction info, or None if halted/end/non-instruction."""
         if self.pc < 0 or self.pc > _MASK16:
             return None
-        ins = self.mem[self.pc]
+        ins = self._fetch_cell(self.pc)
         if not isinstance(ins, Insn):
             return None
         return {'op': ins.op, 'args': list(ins.args), 'src_line': ins.src_line, 'scope': ins.scope}
@@ -612,7 +645,7 @@ class Machine:
         # Record state after for trace
         if self._trace_enabled:
             insn_info = None
-            ins = self.mem[state_before['pc']] if 0 <= state_before['pc'] <= _MASK16 else None
+            ins = self._fetch_cell(state_before['pc']) if 0 <= state_before['pc'] <= _MASK16 else None
             if isinstance(ins, Insn):
                 insn_info = {'op': ins.op, 'args': list(ins.args)}
             self._trace.append({
@@ -631,7 +664,7 @@ class Machine:
         if self.pc < 0 or self.pc > _MASK16:
             self.halted = True
             return
-        ins = self.mem[self.pc]
+        ins = self._fetch_cell(self.pc)
         if not isinstance(ins, Insn):
             raise RuntimeError(
                 f"executing non-instruction at pc={self.pc:#06x}: {ins!r} "
@@ -641,30 +674,53 @@ class Machine:
         self.pc = (self.pc + 1) & _MASK16
         # ── data movement ──
         if op == 'mov':
-            d = args[0]; s = args[1]
-            self.wr(d, self.operand_value(s))
+            if len(args) == 3:
+                d, p, s = args
+            elif len(args) == 2:
+                d, s = args
+                p = s if _is_reg(s) else 'r0'
+            else:
+                raise RuntimeError(f"unexpected mov arity: {args}")
+            value = self._source_high(p) | (self.operand_value(s) & _MASK16)
+            self._maybe_logic_flags(value, ins.update_flags, default=False)
+            self.wr(d, value)
             return
         # ── arithmetic ──
         if op == 'add':
             d, p, s = self._three(args)
-            r = self.flags.from_add(self.operand_value(p), self.operand_value(s))
-            self.wr(d, r); return
+            r = self._add_result(self.operand_value(p), self.operand_value(s), 0,
+                                 ins.update_flags, default=True)
+            self.wr(d, self._source_high(p) | r); return
         if op == 'adc':
             d, p, s = self._three(args)
-            r = self.flags.from_add(self.operand_value(p), self.operand_value(s), self.flags.C)
-            self.wr(d, r); return
+            r = self._add_result(self.operand_value(p), self.operand_value(s), self.flags.C,
+                                 ins.update_flags, default=True)
+            self.wr(d, self._source_high(p) | r); return
         if op == 'sub':
             d, p, s = self._three(args)
             pv = self.operand_value(p); sv = self.operand_value(s)
-            r = self.flags.from_sub(pv, sv)
-            self.wr(d, r); return
+            r = self._sub_result(pv, sv, 0, ins.update_flags, default=True)
+            self.wr(d, self._source_high(p) | r); return
         if op == 'sbb':
             d, p, s = self._three(args)
-            r = self.flags.from_sub(self.operand_value(p), self.operand_value(s), self.flags.C)
-            self.wr(d, r); return
+            r = self._sub_result(self.operand_value(p), self.operand_value(s), self.flags.C,
+                                 ins.update_flags, default=True)
+            self.wr(d, self._source_high(p) | r); return
         if op == 'mul':
             d, p, s = self._three(args)
             r = (self.operand_value(p) * self.operand_value(s)) & _MASK16
+            self.wr(d, r); return
+        if op == 'mulh':
+            d, p, s = self._three(args)
+            r = ((self.operand_value(p) * self.operand_value(s)) >> 16) & _MASK16
+            self.wr(d, r); return
+        if op == 'muls':
+            d, p, s = self._three(args)
+            r = ((_s16(self.operand_value(p)) * _s16(self.operand_value(s))) >> 16) & _MASK16
+            self.wr(d, r); return
+        if op == 'mulx':
+            d, p, s = self._three(args)
+            r = (((self.operand_value(p) & _MASK16) * _s16(self.operand_value(s))) >> 16) & _MASK16
             self.wr(d, r); return
         # ── logic ──
         if op in ('and', 'or', 'xor'):
@@ -672,20 +728,25 @@ class Machine:
             pv = self.operand_value(p); sv = self.operand_value(s)
             r = {'and': pv & sv, 'or': pv | sv, 'xor': pv ^ sv}[op]
             r &= _MASK16
-            self.flags.from_logic(r)
-            self.wr(d, r); return
+            self._maybe_logic_flags(r, ins.update_flags, default=True)
+            self.wr(d, self._source_high(p) | r); return
         # ── shift ──
         if op == 'shl':
             d, p, s = self._three(args)
             sv = self.operand_value(s) & 0xF
             r = (self.operand_value(p) << sv) & _MASK16
-            self.flags.from_logic(r)
-            self.wr(d, r); return
+            self._maybe_logic_flags(r, ins.update_flags, default=True)
+            self.wr(d, self._source_high(p) | r); return
         if op == 'shr':
             d, p, s = self._three(args)
             sv = self.operand_value(s) & 0xF
             r = (self.operand_value(p) & _MASK16) >> sv
-            self.flags.from_logic(r)
+            self._maybe_logic_flags(r, ins.update_flags, default=True)
+            self.wr(d, self._source_high(p) | r); return
+        if op == 'exh':
+            d, p, s = self._three(args)
+            r = ((self.operand_value(s) & _MASK16) << 16) | ((self.rd32(p) >> 16) & _MASK16)
+            self._maybe_logic_flags(r, ins.update_flags, default=True)
             self.wr(d, r); return
         # ── memory ──
         if op == 'ld':
@@ -705,7 +766,7 @@ class Machine:
             self.mem_write(addr, val)
             return
         # ── jumps ──
-        if op == 'jmp' or (op.startswith('j') and len(op) <= 4):
+        if op == 'jmp' or op.startswith('j'):
             self._do_jump(op, args); return
         if op == 'hlt':
             self.halted = True; return
@@ -769,11 +830,39 @@ class Machine:
         idx = _reg_idx(name)
         return self.regs[idx] & _MASK16
 
+    def rd32(self, name: str) -> int:
+        if name == 'r0':
+            return 0x20000000
+        idx = _reg_idx(name)
+        return self.regs[idx] & 0xFFFFFFFF
+
     def wr(self, name: str, value: int) -> None:
         if name == 'r0':
             return   # writes to r0 are discarded
         idx = _reg_idx(name)
-        self.regs[idx] = value & _MASK16
+        self.regs[idx] = value & 0xFFFFFFFF
+
+    def _source_high(self, tok: str) -> int:
+        return self.rd32(tok) & 0xFFFF0000 if _is_reg(tok) else 0
+
+    def _flags_enabled(self, override: Optional[bool], default: bool) -> bool:
+        return default if override is None else override
+
+    def _maybe_logic_flags(self, result: int, override: Optional[bool], default: bool) -> None:
+        if self._flags_enabled(override, default):
+            self.flags.from_logic(result)
+
+    def _add_result(self, a: int, b: int, cin: int,
+                    override: Optional[bool], default: bool) -> int:
+        if self._flags_enabled(override, default):
+            return self.flags.from_add(a, b, cin)
+        return (a + b + cin) & _MASK16
+
+    def _sub_result(self, p: int, s: int, bin_: int,
+                    override: Optional[bool], default: bool) -> int:
+        if self._flags_enabled(override, default):
+            return self.flags.from_sub(p, s, bin_)
+        return (p - s - bin_) & _MASK16
 
     # ── operand resolution ─────────────────────────────────────────────────
     def operand_value(self, tok: str) -> int:
@@ -793,11 +882,37 @@ class Machine:
         return _resolve_symbol(tok, self.prog.labels)
 
     # ── memory ─────────────────────────────────────────────────────────────
+    def _map_internal_addr(self, addr: int) -> int:
+        """Map a 16-bit address through the manual's 128-cell block mirror model.
+
+        `ram_words=None` preserves the historical harness mode: a flat 64K
+        writable address space.  When `ram_words` is configured, reads mirror
+        the power-of-two row window and writes are accepted only by the true
+        read/write rows.
+        """
+        addr &= _MASK16
+        if self.ram_words is None:
+            return addr
+        rows = max(1, (self.ram_words + 0x7F) // 0x80)
+        p2rows = 1 << (rows - 1).bit_length()
+        block = addr >> 7
+        offset = addr & 0x7F
+        mapped_block = block % p2rows
+        row = mapped_block if mapped_block < rows else rows - 1
+        mapped = (row << 7) + offset
+        return min(mapped, self.ram_words - 1)
+
+    def _is_writable_internal_addr(self, addr: int) -> bool:
+        addr &= _MASK16
+        if self.ram_words is None:
+            return True
+        return addr < self.ram_words
+
+    def _fetch_cell(self, addr: int):
+        return self.mem[self._map_internal_addr(addr)]
+
     def mem_read(self, addr: int) -> int:
         addr &= _MASK16
-        cell = self.mem[addr]
-        if isinstance(cell, Insn):
-            return 0   # code memory has no real opcode encoding
         if addr == 0x9F80:  # terminal input
             if self.stdin_pos < len(self.stdin):
                 ch = self.stdin[self.stdin_pos]
@@ -853,7 +968,10 @@ class Machine:
                 except Exception:
                     return 0
             return 0  # no more input (keeps polling loop spinning → timeout)
-        return self.mem[addr] & _MASK16
+        cell = self._fetch_cell(addr)
+        if isinstance(cell, Insn):
+            return 0   # code memory has no real opcode encoding
+        return cell & _MASK16
 
     def mem_write(self, addr: int, value: int) -> None:
         addr &= _MASK16
@@ -955,9 +1073,9 @@ class Machine:
             return
         if 0x9F80 <= addr <= 0x9FC6:
             return   # other terminal MMIO: ignore in emulator
-        if self.ram_words is not None and addr >= self.ram_words:
-            return   # address beyond configured RAM — write silently fails
-        self.mem[addr] = value & _MASK16
+        if not self._is_writable_internal_addr(addr):
+            return   # read-only mirror / external mirror — write ignored
+        self.mem[self._map_internal_addr(addr)] = value & _MASK16
 
     def _r316_to_ansi(self, color: int) -> int:
         """Map R316 color index to ANSI 256-color palette."""
@@ -987,6 +1105,12 @@ class Machine:
         f = self.flags
         if name == 'jmp': return True
         c = name[1:]   # strip leading 'j'
+        if c.startswith('y'):
+            c = c[1:]
+        elif len(c) > 1 and c[1] == 'y':
+            c = c[0] + c[2:]
+        if c == '':
+            return True
         # Map per manual.md condition table
         if c == 'be':  return bool(f.C or f.Z)
         if c == 'l':   return bool(f.S ^ f.O)
@@ -1028,37 +1152,36 @@ class Machine:
     def _do_jump(self, op: str, args: list[str]) -> None:
         """`jmp target` (unconditional), `jmp r31, target` (call: lr = next pc).
         `j<cc> target` is conditional on flags."""
-        prev = self.mem[(self.pc - 1) & _MASK16]   # we already incremented pc
+        prev = self._fetch_cell((self.pc - 1) & _MASK16)   # we already incremented pc
         scope = prev.scope if isinstance(prev, Insn) else ''
-        # Check call form: `jmp r31, target` (also `jmp DSTREG, target`)
         if len(args) == 2 and _is_reg(args[0]):
-            link = args[0]
-            tgt = args[1]
-            if _is_reg(tgt):
-                target_pc = self.rd(tgt)
-            else:
-                target_pc = self._resolve_label(tgt, scope)
-            if target_pc < 0:
-                raise RuntimeError(f"jump to undefined label {tgt!r}")
-            self.wr(link, self.pc)
-            self.pc = target_pc
-            return
-        if len(args) != 1:
+            link, tgt = args
+        elif len(args) == 1:
+            link, tgt = 'r0', args[0]
+        else:
             raise RuntimeError(f"unexpected jump form: {op} {args}")
-        tgt = args[0]
+
         if _is_reg(tgt):
             target_pc = self.rd(tgt)
-            if target_pc == self.SENTINEL_LR:
-                self.halted = True
-                return
         else:
             target_pc = self._resolve_label(tgt, scope)
             if target_pc < 0:
                 raise RuntimeError(f"jump to undefined label {tgt!r}")
+
+        # All jump forms write the post-fetch PC to D. Conditional variants only
+        # gate the PC replacement; `jn D, S` is therefore useful for reading PC.
+        self.wr(link, self.pc)
+        sync = op.startswith('jy') or (len(op) > 2 and op[0] == 'j' and op[2] == 'y')
+        if sync:
+            return   # single execution unit: synchronizing jumps are bottommost
+        should_jump = op == 'jmp' or self.cond(op)
+        if should_jump and target_pc == self.SENTINEL_LR:
+            self.halted = True
+            return
         if op == 'jmp':
             self.pc = target_pc
             return
-        if self.cond(op):
+        if should_jump:
             self.pc = target_pc
 
     def run(self) -> None:

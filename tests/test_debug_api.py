@@ -92,6 +92,81 @@ _C_main:
     check('machine is halted', m.is_halted())
 
 
+def test_manual_instruction_spellings():
+    """Test manual spellings beyond the compiler's usual subset."""
+    print('\n[manual instruction spellings]')
+    asm = '''
+_C_main:
+    mov r1, 0
+    add r2, r1, 0
+    adds r3, r1, 1
+    movf r4, 0x8000
+    mulh r5, 0xFFFF, 0xFFFF
+    muls r6, 0xFFFF, 2
+    mulx r7, 0xFFFF, 0xFFFF
+    hlt
+'''
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_C_main']
+    m.step(2)
+    m.step()
+    check('adds leaves previous Z flag set', m.get_registers()['r3'] == 1 and m.get_flags()['Z'] == 1)
+    m.step()
+    check('movf updates sign flag', m.get_flags()['S'] == 1)
+    m.step(4)
+
+    regs = m.get_registers()
+    check('mulh unsigned high half', regs['r5'] == 0xFFFE)
+    check('muls signed high half', regs['r6'] == 0xFFFF)
+    check('mulx mixed high half', regs['r7'] == 0xFFFF)
+
+
+def test_conditional_jump_link_semantics():
+    """Conditional jumps write D with next PC even when the branch is not taken."""
+    print('\n[conditional jump link semantics]')
+    asm = '''
+_C_main:
+    mov r1, 1
+    cmp r1, 1
+    jn r5, _C_skip
+    jz r6, _C_taken
+_C_skip:
+    mov r7, 0xBAD
+_C_taken:
+    hlt
+'''
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_C_main']
+    m.step(5)
+
+    regs = m.get_registers()
+    check('jn did not jump', regs['r7'] == 0)
+    check('jn wrote link register', regs['r5'] == prog.labels['_C_main'] + 3)
+    check('jz wrote link register', regs['r6'] == prog.labels['_C_main'] + 4)
+    check('jz jumped to target', m.is_halted())
+
+
+def test_configured_ram_mirroring():
+    """Configured RAM follows the manual's 128-cell block read mirror model."""
+    print('\n[configured RAM mirroring]')
+    prog = parse_asm('_C_main:\n    hlt\n')
+    m = Machine(prog, ram_words=13 * 128)
+
+    m.mem_write(0x0001, 0x1111)
+    m.mem_write(0x0601, 0x2222)
+    m.mem_write(0x0681, 0x3333)
+    m.mem_write(0x0801, 0x4444)
+
+    check('direct read/write row works', m.mem_read(0x0001) == 0x1111)
+    check('highest real row write works', m.mem_read(0x0601) == 0x2222)
+    check('readonly p2 mirror reads highest row', m.mem_read(0x0681) == 0x2222)
+    check('readonly p2 mirror ignores writes', m.mem_read(0x0601) == 0x2222)
+    check('external mirror reads row zero', m.mem_read(0x0801) == 0x1111)
+    check('external mirror ignores writes', m.mem_read(0x0001) == 0x1111)
+
+
 def test_step_execution():
     """Test step-by-step execution."""
     print('\n[step execution]')
@@ -329,6 +404,9 @@ def test_get_stdout():
 if __name__ == '__main__':
     test_state_inspection()
     test_r0_always_zero()
+    test_manual_instruction_spellings()
+    test_conditional_jump_link_semantics()
+    test_configured_ram_mirroring()
     test_step_execution()
     test_step_with_count()
     test_save_restore_memory()
