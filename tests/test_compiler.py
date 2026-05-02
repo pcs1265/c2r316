@@ -89,6 +89,49 @@ def test_examples_compile():
             check(f'compile {rel}', False, f'{type(e).__name__}: {e}')
 
 
+def test_verbose_logging():
+    print('\n[cli: verbose logging]')
+    buf = io.StringIO()
+    src = 'int main() { return 3 + 4; }'
+    with contextlib.redirect_stderr(buf):
+        asm = _compile_via_main(src, verbose=True)
+    log = buf.getvalue()
+    expected = [
+        'Input:',
+        'Include dirs:',
+        'Preprocessing complete',
+        'Lexing complete',
+        'Parsing complete',
+        'Semantic analysis complete',
+        'IR generation complete',
+        'Optimization complete',
+        'Code generation complete',
+        'Total compile time:',
+    ]
+    missing = [item for item in expected if item not in log]
+    check('verbose log has real stage details', not missing, f'missing {missing}; log={log[:600]}')
+    check('verbose compile still returns asm', isinstance(asm, str) and len(asm) > 0)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        asm = _compile_via_main(src, verbose=2)
+    debug_log = buf.getvalue()
+    expected_debug = [
+        'Source lines:',
+        'Preprocessed lines:',
+        'Token kinds:',
+        'Top-level declarations:',
+        'IR functions:',
+        'IR data:',
+        'Optimized IR functions:',
+        'ASM detail:',
+    ]
+    missing_debug = [item for item in expected_debug if item not in debug_log]
+    check('double verbose log has debugging details', not missing_debug,
+          f'missing {missing_debug}; log={debug_log[:800]}')
+    check('double verbose compile still returns asm', isinstance(asm, str) and len(asm) > 0)
+
+
 def test_hex_escape():
     print('\n[lexer: \\x escapes]')
     toks = _lex_only("char c = '\\x41';")
@@ -777,6 +820,7 @@ if __name__ == '__main__':
     test_type_specifiers()
     test_scanf()
     test_examples_compile()
+    test_verbose_logging()
     print(f'\n=== {PASS} passed, {FAIL} failed ===')
     if FAIL:
         for name, detail in FAILURES:

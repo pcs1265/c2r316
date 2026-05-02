@@ -181,7 +181,7 @@ python compiler.py examples/hello.c -o output.asm -v -g
 | Option | Effect |
 |---|---|
 | `-o <file>` | Output assembly path |
-| `-v`, `--verbose` | Print pipeline stages to stderr |
+| `-v`, `--verbose` | Print detailed pipeline logs to stderr: stage timings, source/token/IR/ASM counts, include dirs, and optimization deltas. Use `-vv` for debugging detail such as token-kind counts, top-level declarations, per-function IR sizes, globals/strings, and ASM composition |
 | `-g`, `--annotate` | Embed C source lines as comments in output |
 | `--dump-tokens` | Dump lexer token stream to stderr |
 | `--dump-ast` | Dump parsed AST to stderr |

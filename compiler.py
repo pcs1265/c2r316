@@ -10,6 +10,8 @@ Output file is R316 assembly assemblable with TPTASM.
 import sys
 import os
 import argparse
+import time
+from collections import Counter
 
 from compiler.lexer          import Lexer,  LexError, LexWarning
 from compiler.parser         import Parser, ParseError
@@ -90,6 +92,128 @@ def _print_opt_stats(stats: list):
             print(f'    funcs  : {bf:4d} -> {af:4d}  ({sign_f}{df})', file=sys.stderr)
 
 
+def _fmt_ms(seconds: float) -> str:
+    return f'{seconds * 1000:.1f} ms'
+
+
+def _verbose_level(verbose) -> int:
+    if isinstance(verbose, bool):
+        return 1 if verbose else 0
+    return int(verbose or 0)
+
+
+def _ast_summary(ast) -> str:
+    decls = getattr(ast, 'decls', [])
+    func_defs = 0
+    func_decls = 0
+    globals_ = 0
+    for decl in decls:
+        cls = decl.__class__.__name__
+        if cls == 'FuncDecl':
+            if getattr(decl, 'body', None) is None:
+                func_decls += 1
+            else:
+                func_defs += 1
+        elif cls == 'VarDecl' and getattr(decl, 'is_global', False):
+            globals_ += 1
+    return (
+        f'{len(decls)} top-level decls, '
+        f'{func_defs} function defs, '
+        f'{func_decls} prototypes, '
+        f'{globals_} globals'
+    )
+
+
+def _ast_decl_details(ast) -> list[str]:
+    decls = getattr(ast, 'decls', [])
+    names = []
+    for decl in decls:
+        name = getattr(decl, 'name', '<anon>')
+        cls = decl.__class__.__name__
+        if cls == 'FuncDecl':
+            kind = 'def' if getattr(decl, 'body', None) is not None else 'proto'
+            names.append(f'{kind}:{name}')
+        elif cls == 'VarDecl':
+            names.append(f'global:{name}')
+        else:
+            names.append(f'{cls}:{name}')
+    return names or ['<none>']
+
+
+def _ir_counts(ir) -> tuple[int, int, int, int]:
+    funcs = len(ir.functions)
+    instrs = sum(len(fn.instrs) for fn in ir.functions)
+    globals_ = len(ir.globals)
+    strings = len(ir.strings)
+    return funcs, instrs, globals_, strings
+
+
+def _ir_summary(ir) -> str:
+    funcs, instrs, globals_, strings = _ir_counts(ir)
+    return f'{funcs} functions, {instrs} instrs, {globals_} globals, {strings} strings'
+
+
+def _ir_function_details(ir) -> list[str]:
+    rows = []
+    for fn in sorted(ir.functions, key=lambda f: (-len(f.instrs), f.name)):
+        locals_words = sum(fn.local_sizes.values())
+        flags = []
+        if fn.is_static:
+            flags.append('static')
+        if fn.is_variadic:
+            flags.append('variadic')
+        if fn.is_always_inline:
+            flags.append('inline')
+        suffix = f' [{" ".join(flags)}]' if flags else ''
+        rows.append(
+            f'{fn.name}: {len(fn.instrs)} instrs, '
+            f'{len(fn.params)} params, {len(fn.local_sizes)} locals/{locals_words} words{suffix}'
+        )
+    return rows or ['<none>']
+
+
+def _ir_data_details(ir) -> list[str]:
+    globals_ = [f'{name}[{words}]' for name, words, _ in ir.globals]
+    strings = [f'{label}[{len(chars)}]' for label, chars in ir.strings]
+    rows = []
+    if globals_:
+        rows.append('globals:')
+        rows.extend(f'  {item}' for item in globals_)
+    if strings:
+        rows.append('strings:')
+        rows.extend(f'  {item}' for item in strings)
+    return rows or ['<none>']
+
+
+def _token_kind_details(tokens) -> list[str]:
+    counts = Counter(tok.kind.name for tok in tokens)
+    return [f'{name}: {count}' for name, count in sorted(counts.items())]
+
+
+def _asm_details(asm: str) -> str:
+    lines = asm.splitlines()
+    labels = sum(1 for line in lines if line.strip().endswith(':'))
+    comments = sum(1 for line in lines if line.lstrip().startswith(';'))
+    directives = sum(1 for line in lines if line.lstrip().startswith('.'))
+    instructions = sum(
+        1 for line in lines
+        if line.strip()
+        and not line.strip().endswith(':')
+        and not line.lstrip().startswith(';')
+        and not line.lstrip().startswith('.')
+    )
+    return (
+        f'{instructions} instructions, {labels} labels, '
+        f'{directives} directives, {comments} comment lines'
+    )
+
+
+def _v_block(log, title: str, rows: list[str], level: int = 2):
+    log(f'{title}:', level=level)
+    for row in rows:
+        log(f'  {row}', level=level)
+
+
 def compile_c(src: str, src_name: str = '<stdin>',
               src_path: str = '',
               include_dirs: list = None,
@@ -105,14 +229,30 @@ def compile_c(src: str, src_name: str = '<stdin>',
               no_opt: bool = False) -> str:
     """C source string → R316 assembly string"""
 
-    def _v(msg):
-        if verbose:
+    verbosity = _verbose_level(verbose)
+
+    def _v(msg, level: int = 1):
+        if verbosity >= level:
             print(f'[c2r316] {msg}', file=sys.stderr)
 
+    t_compile = time.perf_counter()
+    t_stage = t_compile
+    original_src_len = len(src)
+
+    def _stage_done(name: str, detail: str = ''):
+        nonlocal t_stage
+        now = time.perf_counter()
+        suffix = f': {detail}' if detail else ''
+        _v(f'{name} complete in {_fmt_ms(now - t_stage)}{suffix}')
+        t_stage = now
+
     # 1. preprocessing
+    _v(f'Input: {src_name} ({original_src_len} chars)')
+    _v(f'Source lines: {src.count(chr(10)) + 1}', level=2)
     _v('Preprocessing ...')
     _root = os.path.dirname(os.path.abspath(__file__))
     _inc_dirs = [os.path.join(_root, 'include'), _root] + (include_dirs or [])
+    _v('Include dirs: ' + ', '.join(_inc_dirs))
     # Auto-prepend compiler built-ins (division helpers, etc.).
     # Preprocess builtins and user source separately so that #line markers
     # in the output reflect the user's original file line numbers correctly.
@@ -126,8 +266,20 @@ def compile_c(src: str, src_name: str = '<stdin>',
     # Reset filename/line for the lexer before the user's code begins.
     _escaped = src_path.replace('\\', '\\\\') if src_path else src_name
     src = _builtins_pp + f'\n#line 1 "{_escaped}"\n' + _user_pp
+    _stage_done(
+        'Preprocessing',
+        f'builtins {len(_builtins_pp)} chars, user {len(_user_pp)} chars, combined {len(src)} chars'
+    )
+    _v(
+        'Preprocessed lines: '
+        f'builtins {_builtins_pp.count(chr(10)) + 1}, '
+        f'user {_user_pp.count(chr(10)) + 1}, '
+        f'combined {src.count(chr(10)) + 1}',
+        level=2
+    )
 
     # 2. lexing
+    _v('Lexing ...')
     try:
         lexer = Lexer(src, filename=src_name)
     except LexError as e:
@@ -135,6 +287,8 @@ def compile_c(src: str, src_name: str = '<stdin>',
 
     for w in lexer.warnings:
         _print_warning(w, src)
+    _stage_done('Lexing', f'{len(lexer.tokens)} tokens, {len(lexer.warnings)} warnings')
+    _v_block(_v, 'Token kinds', _token_kind_details(lexer.tokens))
 
     if dump_tokens:
         for tok in lexer.tokens:
@@ -146,11 +300,14 @@ def compile_c(src: str, src_name: str = '<stdin>',
         return ''
 
     # 2. parsing
+    _v('Parsing ...')
     try:
         parser = Parser(lexer.tokens)
         ast    = parser.parse()
     except ParseError as e:
         _raise_with_context("Parse error", e, src)
+    _stage_done('Parsing', _ast_summary(ast))
+    _v_block(_v, 'Top-level declarations', _ast_decl_details(ast))
 
     if dump_ast:
         from compiler.ast_nodes import dump_ast as ast_dump
@@ -168,6 +325,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
         analyzer.analyze(ast)
     except SemanticError as e:
         _raise_with_context("Semantic error", e, src)
+    _stage_done('Semantic analysis')
 
     if stop_after == 'semantic':
         return ''
@@ -179,6 +337,9 @@ def compile_c(src: str, src_name: str = '<stdin>',
         ir     = irgen.generate(ast)
     except IRGenError as e:
         raise SystemExit(f"IR error: {e}")
+    _stage_done('IR generation', _ir_summary(ir))
+    _v_block(_v, 'IR functions', _ir_function_details(ir))
+    _v_block(_v, 'IR data', _ir_data_details(ir))
 
     if dump_ir_pre or dump_ir:
         print(_ir_header('IR (pre-optimization)'), file=sys.stderr)
@@ -197,14 +358,24 @@ def compile_c(src: str, src_name: str = '<stdin>',
     stats = []
 
     if not no_opt:
+        _v('Optimization ...')
         def _run_pass(name, fn):
             before_i = _instr_count(ir)
             before_f = _func_count(ir)
+            before_funcs = {f.name for f in ir.functions}
             fn(ir)
             after_i  = _instr_count(ir)
             after_f  = _func_count(ir)
             stats.append((name, before_f, after_f, before_i, after_i))
             _v(f'{name}: {before_i} -> {after_i} instrs, {before_f} -> {after_f} fns')
+            after_funcs = {f.name for f in ir.functions}
+            removed = sorted(before_funcs - after_funcs)
+            added = sorted(after_funcs - before_funcs)
+            if removed:
+                _v(f'{name} removed functions: ' + ', '.join(removed), level=2)
+            if added:
+                _v(f'{name} added functions: ' + ', '.join(added), level=2)
+            _v_block(_v, f'{name} functions', _ir_function_details(ir))
 
         _run_pass('Inlining', inline)
 
@@ -212,9 +383,16 @@ def compile_c(src: str, src_name: str = '<stdin>',
         initial_instrs = _instr_count(ir)
         prev_instrs = initial_instrs
         for iteration in range(1, 6):
+            before_iter = _instr_count(ir)
+            before_funcs = {f.name for f in ir.functions}
             fold(ir)
             dce(ir)
             curr_instrs = _instr_count(ir)
+            _v(f'Fold/DCE iteration {iteration}: {before_iter} -> {curr_instrs} instrs')
+            removed = sorted(before_funcs - {f.name for f in ir.functions})
+            if removed:
+                _v(f'Fold/DCE iteration {iteration} removed functions: ' + ', '.join(removed), level=2)
+            _v_block(_v, f'Fold/DCE iteration {iteration} functions', _ir_function_details(ir))
             if curr_instrs == prev_instrs:
                 _v(f'Fold/DCE converged after {iteration} iteration(s)')
                 break
@@ -222,6 +400,11 @@ def compile_c(src: str, src_name: str = '<stdin>',
         else:
             _v('Fold/DCE hit iteration limit (5)')
         stats.append(('Fold/DCE iterations', 0, 0, initial_instrs, curr_instrs))
+        _stage_done('Optimization', _ir_summary(ir))
+        _v_block(_v, 'Optimized IR functions', _ir_function_details(ir))
+        _v_block(_v, 'Optimized IR data', _ir_data_details(ir))
+    else:
+        _v('Optimization skipped (--no-opt)')
 
     if dump_ir_post or dump_ir:
         print(_ir_header('IR (post-optimization)'), file=sys.stderr)
@@ -242,10 +425,14 @@ def compile_c(src: str, src_name: str = '<stdin>',
     except CodegenError as e:
         raise SystemExit(f"Codegen error: {e}")
 
+    asm_lines = asm.count('\n') + 1 if asm else 0
     if not no_opt:
-        asm_lines = asm.count('\n') + 1
         elim = gen._peephole_eliminated
         stats.append(('ASM peephole', 0, 0, asm_lines + elim, asm_lines))
+    else:
+        elim = 0
+    _stage_done('Code generation', f'{asm_lines} asm lines, {elim} peephole eliminations')
+    _v('ASM detail: ' + _asm_details(asm), level=2)
 
     if dump_opt_stats or (verbose and stats):
         _print_opt_stats(stats)
@@ -254,6 +441,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
         return asm
 
     _v('Done.')
+    _v(f'Total compile time: {_fmt_ms(time.perf_counter() - t_compile)}')
     return asm
 
 
@@ -264,8 +452,8 @@ def main():
     ap.add_argument('-o', '--output', help='Output assembly file (default: stdout)')
 
     # verbosity / debugging
-    ap.add_argument('-v', '--verbose', action='store_true',
-                    help='Print compilation stages')
+    ap.add_argument('-v', '--verbose', action='count', default=0,
+                    help='Print detailed compilation logs to stderr; repeat as -vv for debugging detail')
     ap.add_argument('--dump-tokens', action='store_true',
                     help='Dump lexer tokens to stderr')
     ap.add_argument('--dump-ast', action='store_true',
