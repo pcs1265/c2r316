@@ -231,6 +231,7 @@ def parse_asm(text: str) -> Program:
     pending_labels: list[str] = []      # labels waiting for the next placed cell
     deferred_dw: list[tuple[int, str]] = []  # (addr, raw_token) — resolve later
     asm_macros: dict[str, AsmMacro] = {}
+    defines: dict[str, str] = {}
     cur_global = ''
     macro_def: tuple[str, list[str], list[str]] | None = None
     if_stack: list[bool] = []
@@ -256,6 +257,12 @@ def parse_asm(text: str) -> Program:
                               r'.__\1_\2', expanded)
             out.append(expanded)
         return out
+
+    def apply_defines(tok: str) -> str:
+        return defines.get(tok, tok)
+
+    def scope_local(tok: str) -> str:
+        return cur_global + tok if tok.startswith('.') else tok
 
     def process_line(line: str, lineno: int, expansion_depth: int = 0) -> None:
         nonlocal cur_global, cursor
@@ -291,6 +298,8 @@ def parse_asm(text: str) -> Program:
                     elif tok == '-': v = stack.pop(); stack.append(stack.pop() - v)
                     elif tok == '*': stack.append(stack.pop(-2) * stack.pop())
                     elif tok == '/': v = stack.pop(); stack.append(stack.pop() // v)
+                    elif tok == '<<': v = stack.pop(); stack.append(stack.pop() << v)
+                    elif tok == '>>': v = stack.pop(); stack.append(stack.pop() >> v)
                     elif tok in labels: stack.append(labels[tok])
                     else:
                         try: stack.append(int(tok, 0))
@@ -299,10 +308,12 @@ def parse_asm(text: str) -> Program:
                     labels[sym] = stack[-1] & _MASK16
             return
 
-        # %define name value — only handle simple numeric defines
+        # %define name value — handle numeric constants and simple textual aliases
+        # such as `sp -> r30`.
         if line.startswith('%define '):
             parts = line.split()
             if len(parts) == 3:
+                defines[parts[1]] = parts[2]
                 try:
                     labels[parts[1]] = int(parts[2], 0) & _MASK16
                 except ValueError:
@@ -314,7 +325,7 @@ def parse_asm(text: str) -> Program:
             return
 
         # Label?  `name:` or `name: instr ...`
-        m = re.match(r'^(\.?[A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$', line)
+        m = re.match(r'^(\.*[A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$', line)
         if m:
             lbl = m.group(1)
             rest = m.group(2).strip()
@@ -329,7 +340,7 @@ def parse_asm(text: str) -> Program:
         # `dw value, value, value` → place each at the cursor
         m = re.match(r'^dw\s+(.*)$', line)
         if m:
-            values = [v.strip() for v in m.group(1).split(',')]
+            values = [scope_local(v.strip()) for v in m.group(1).split(',')]
             flush_labels_to(cursor)
             for v in values:
                 deferred_dw.append((cursor, v))
@@ -344,7 +355,7 @@ def parse_asm(text: str) -> Program:
         op = m.group(1)
         args_str = m.group(2) or ''
         args = [a.strip() for a in args_str.split(',')] if args_str else []
-        args = [a for a in args if a]
+        args = [scope_local(apply_defines(a)) for a in args if a]
         update_flags: Optional[bool] = None
 
         if op in asm_macros:
@@ -386,7 +397,8 @@ def parse_asm(text: str) -> Program:
         if line.startswith('%macro'):
             parts = line.split()
             if len(parts) >= 2:
-                macro_def = (parts[1], parts[2:], [])
+                params = [p.strip().rstrip(',') for p in parts[2:] if p.strip().rstrip(',')]
+                macro_def = (parts[1], params, [])
             continue
 
         process_line(line, lineno)
@@ -920,6 +932,8 @@ class Machine:
                 elif t == '-': v = stk.pop(); stk.append(stk.pop() - v)
                 elif t == '*': stk.append(stk.pop(-2) * stk.pop())
                 elif t == '/': v = stk.pop(); stk.append(stk.pop() // v)
+                elif t == '<<': v = stk.pop(); stk.append(stk.pop() << v)
+                elif t == '>>': v = stk.pop(); stk.append(stk.pop() >> v)
                 else: stk.append(_resolve_symbol(t, self.prog.labels))
             return (stk[-1] if stk else 0) & _MASK16
         return _resolve_symbol(tok, self.prog.labels)
