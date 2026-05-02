@@ -602,7 +602,7 @@ class Codegen:
         # Patterns that write a destination register (all ALU/memory ops with a dst)
         dst_pat = re.compile(r'^\s*(?:ld|mov|add|sub|mul|mulh|and|or|xor|adc|sbb|shl|shr|not)\s+(\w+)')
         label   = re.compile(r'^\s*\.\w+:')
-        branch  = re.compile(r'^\s*j')
+        branch  = re.compile(r'^\s*(?:j|call\b|ret\b)')
 
         # Pure scratch registers: caller-saved, not arg/return, not special.
         # Safe to use as collapsible intermediates in mov chains.
@@ -1196,7 +1196,7 @@ class Codegen:
             self._ins(f'add {SP}, {frame_size}')
 
         # Return
-        self._ins(f'jmp {LR}')
+        self._ins('ret')
 
     # ── BinOp instruction selection ───────────────────────────────────────────
 
@@ -1349,11 +1349,11 @@ class Codegen:
             self._gen_tail_call_epilogue(instr)
         else:
             if isinstance(instr.func, Global):
-                self._ins(f'jmp {LR}, {self._mangle_global(instr.func.name)}')
+                self._ins(f'call {self._mangle_global(instr.func.name)}')
             else:
                 # function pointer in a temp
                 self._load_op(instr.func, SCRATCH_A)
-                self._ins(f'jmp {LR}, {SCRATCH_A}')
+                self._ins(f'call {SCRATCH_A}')
 
             if instr.dst is not None:
                 preg = self._regmap.reg(instr.dst.id) if self._regmap else None

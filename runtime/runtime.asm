@@ -17,6 +17,82 @@
 ;   0x9FC5 : term_nlchar
 ;   0x9FC6 : term_colour
 
+%macro call thing
+    jmp r31, thing
+%endmacro
+
+%macro ret
+    jmp r31
+%endmacro
+
+%macro shift2l a, b, reg
+    test reg, reg
+    jz . _Peerlabel Zero _Macrounique
+    subs r17, 16, reg
+    shrs r18, a, r17
+    shls a, reg
+    shls b, reg
+    ors b, r18
+. _Peerlabel Zero _Macrounique:
+%endmacro
+
+%macro shift2lc a, b, imm
+    shrs r18, a, { 16 imm - }
+    shls a, imm
+    shls b, imm
+    ors b, r18
+%endmacro
+
+%macro shift3lc a, b, c, imm
+    shrs r18, a, { 16 imm - }
+    shrs r19, b, { 16 imm - }
+    shls a, imm
+    shls b, imm
+    ors b, r18
+    shls c, imm
+    ors c, r19
+%endmacro
+
+%macro shift2r a, b, reg
+    test reg, reg
+    jz . _Peerlabel Zero _Macrounique
+    subs r17, 16, reg
+    shls r18, a, r17
+    shrs a, reg
+    shrs b, reg
+    ors b, r18
+. _Peerlabel Zero _Macrounique:
+%endmacro
+
+%macro shift2rc a, b, imm
+    shls r18, a, { 16 imm - }
+    shrs a, imm
+    shrs b, imm
+    ors b, r18
+%endmacro
+
+%macro shift3rc a, b, c, imm
+    shls r18, a, { 16 imm - }
+    shls r19, b, { 16 imm - }
+    shrs a, imm
+    shrs b, imm
+    ors b, r18
+    shrs c, imm
+    ors c, r19
+%endmacro
+
+%macro rol a, imm
+    shrs r18, a, { 16 imm - }
+    shls a, imm
+    ors a, r18
+%endmacro
+
+%macro cmb a, b
+    sbb r0, a, b
+%endmacro
+
+%define sp r30
+
 %eval _term_base   0x9F80
 %eval _term_input  _term_base 0x00 +
 %eval _term_raw    _term_base 0x04 +

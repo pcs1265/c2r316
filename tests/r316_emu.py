@@ -9,7 +9,7 @@ Scope:
       mov add adc sub sbb mul and or xor shl shr ld st jmp <jcc> hlt
     Plus manual spellings useful for inline asm/debug tests:
       movf adds/adcs/subs/sbbs ands/ors/xors shls/shrs exh/exhs mulh/muls/mulx
-  - Macros: cmp / test / nop (hardcoded; we skip %include "common")
+  - Macros: cmp / test / nop / call / ret (hardcoded; we skip %include "common")
   - Skipped: %include, %define, %eval, %ifndef, %endif, %macro definitions,
     {RPN expressions}, and most of runtime/runtime.asm. Execution starts at
     `_C_main:` directly, with SP and LR initialized by the harness.
@@ -172,6 +172,8 @@ _MACROS = {
     'cmp':  ('sub', ['r0']),
     'test': ('and', ['r0']),
     'nop':  ('mov', ['r0', 'r0']),
+    'call': ('jmp', ['r31']),
+    'ret':  ('jmp', ['r31']),
 }
 
 # Jump aliases from common.asm
