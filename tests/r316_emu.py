@@ -1243,13 +1243,9 @@ class Machine:
 
 def run_main(asm: str, max_cycles: int | None = 1_000_000, stdin: str = '',
              freq: float | None = None) -> tuple[int, str, int]:
-    """Compile output → (return_value_of_main, stdout, cycles). Starts at `start:`."""
+    """Compile output → (return_value_of_main, stdout, cycles). Starts at address 0."""
     prog = parse_asm(asm)
-    if '_C_main' not in prog.labels:
-        raise RuntimeError("no _C_main in asm")
-    entry = prog.labels.get('start', prog.labels['_C_main'])
     m = Machine(prog, sp_init=0, max_cycles=max_cycles, stdin=stdin, freq=freq)
-    m.pc = entry
     m.run()
     return m.regs[1] & _MASK16, m.stdout_str(), m.cycles
 
@@ -1323,12 +1319,7 @@ if __name__ == '__main__':
 
     # Create machine with interactive mode if needed
     prog = parse_asm(asm)
-    if '_C_main' not in prog.labels:
-        print("error: no _C_main in asm", file=sys.stderr)
-        sys.exit(1)
-    entry = prog.labels.get('start', prog.labels['_C_main'])
     m = Machine(prog, sp_init=0, max_cycles=args.cycles, stdin=stdin_input, freq=args.freq, interactive=interactive, ram_words=args.ram_words)
-    m.pc = entry
 
     try:
         m.run()

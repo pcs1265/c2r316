@@ -19,7 +19,7 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(THIS_DIR)
 sys.path.insert(0, ROOT)
 
-from r316_emu import parse_asm, Machine
+from r316_emu import parse_asm, Machine, run_main
 
 PASS = 0
 FAIL = 0
@@ -165,6 +165,15 @@ def test_configured_ram_mirroring():
     check('readonly p2 mirror ignores writes', m.mem_read(0x0601) == 0x2222)
     check('external mirror reads row zero', m.mem_read(0x0801) == 0x1111)
     check('external mirror ignores writes', m.mem_read(0x0001) == 0x1111)
+
+
+def test_run_main_starts_at_zero_without_labels():
+    """Raw assembly does not need compiler labels; execution starts at address 0."""
+    print('\n[run_main raw address zero]')
+    ret, out, cycles = run_main('mov r1, 7\nhlt\n')
+    check('raw asm return value from r1', ret == 7)
+    check('raw asm stdout empty', out == '')
+    check('raw asm cycles', cycles == 2)
 
 
 def test_step_execution():
@@ -407,6 +416,7 @@ if __name__ == '__main__':
     test_manual_instruction_spellings()
     test_conditional_jump_link_semantics()
     test_configured_ram_mirroring()
+    test_run_main_starts_at_zero_without_labels()
     test_step_execution()
     test_step_with_count()
     test_save_restore_memory()
