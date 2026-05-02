@@ -439,15 +439,18 @@ class Machine:
     def _restore_terminal(self) -> None:
         """Restore terminal to original settings."""
         import sys
+        # Move cursor below the emulated screen area so post-exit output
+        # (cycle count etc.) doesn't overwrite the last screen content.
+        # Row layout: row 1 = status bar, rows 2.._term_rows+1 = screen area.
+        below = self._term_rows + 2
+        escape_prefix = f'\x1b[0m\x1b[r\x1b[{below};1H\n'
         if hasattr(self, '_is_windows') and self._is_windows:
-            # Reset colors and any scroll region configured for interactive terminal mode.
-            sys.stdout.write('\x1b[0m\x1b[r')
+            sys.stdout.write(escape_prefix)
             sys.stdout.flush()
         elif self._term_settings is not None:
             import termios
             try:
-                # Reset colors and any scroll region configured for interactive terminal mode.
-                sys.stdout.write('\x1b[0m\x1b[r')
+                sys.stdout.write(escape_prefix)
                 sys.stdout.flush()
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._term_settings)
             except Exception:
