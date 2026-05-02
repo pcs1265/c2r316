@@ -407,13 +407,21 @@ class Machine:
         import sys
         import os
         self._is_windows = os.name == 'nt'
+        # Scroll by the full terminal height so all previous content (including
+        # the shell command line) is pushed above the viewport.
+        import shutil
+        term_h = shutil.get_terminal_size().lines
+        scroll = '\n' * term_h
+        fill = scroll + '\x1b[40m' + ''.join(
+            f'\x1b[{r};1H\x1b[2K'
+            for r in range(2, self._term_rows + 2)
+        ) + '\x1b[2;1H'
         if self._is_windows:
             # Windows: use msvcrt for raw input (non-blocking)
             try:
                 import msvcrt
                 self._msvcrt = msvcrt
-                # Clear screen and move cursor to row 2
-                sys.stdout.write('\x1b[2J\x1b[2;1H')
+                sys.stdout.write(fill)
                 sys.stdout.flush()
             except ImportError:
                 self._term_settings = None
@@ -429,8 +437,7 @@ class Machine:
                 import fcntl
                 flags = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
                 fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
-                # Clear screen and move cursor to row 2 (skip top line for status bar)
-                sys.stdout.write('\x1b[2J\x1b[2;1H')
+                sys.stdout.write(fill)
                 sys.stdout.flush()
             except (ImportError, termios.error, OSError):
                 # Non-terminal input: fall back to normal input
