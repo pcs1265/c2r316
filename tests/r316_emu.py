@@ -1193,7 +1193,7 @@ if __name__ == '__main__':
         with open(path, encoding='utf-8') as fh:
             src = fh.read()
         asm = compile_c(src, src_name=os.path.basename(path),
-                        src_path=os.path.dirname(os.path.abspath(path)))
+                        src_path=os.path.abspath(path))
     else:
         with open(path, encoding='utf-8') as fh:
             asm = fh.read()
