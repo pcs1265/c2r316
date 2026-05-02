@@ -812,14 +812,14 @@ class Machine:
         """Restore terminal to original settings."""
         import sys
         if hasattr(self, '_is_windows') and self._is_windows:
-            # Windows: nothing to restore
-            sys.stdout.write('\x1b[0m')
+            # Reset colors and any scroll region configured for interactive terminal mode.
+            sys.stdout.write('\x1b[0m\x1b[r')
             sys.stdout.flush()
         elif self._term_settings is not None:
             import termios
             try:
-                # Reset colors and show cursor
-                sys.stdout.write('\x1b[0m')
+                # Reset colors and any scroll region configured for interactive terminal mode.
+                sys.stdout.write('\x1b[0m\x1b[r')
                 sys.stdout.flush()
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._term_settings)
             except Exception:
@@ -1290,12 +1290,10 @@ if __name__ == '__main__':
         with open(args.stdin_file, 'r', encoding='utf-8') as f:
             stdin_input = f.read()
 
-    # Determine if interactive mode should be enabled
-    # Interactive if: --interactive flag set, or no stdin provided and running from a terminal
+    # Interactive mode is opt-in. Auto-enabling it for any TTY makes scripted
+    # runs and compiler tests unexpectedly switch the user's terminal to raw
+    # mode when a program polls terminal input.
     interactive = args.interactive
-    if not interactive and args.stdin is None and args.stdin_file is None:
-        # Check if stdin is a tty (terminal)
-        interactive = sys.stdin.isatty()
 
     path = args.file
     if path.endswith('.c'):
