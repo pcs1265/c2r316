@@ -208,6 +208,30 @@ def _asm_details(asm: str) -> str:
     )
 
 
+def _codegen_func_details(func_stats: list) -> list[str]:
+    rows = []
+    for name, ir_instrs, asm_lines, frame, is_leaf in sorted(func_stats, key=lambda r: -r[2]):
+        leaf_tag = ' leaf' if is_leaf else ''
+        rows.append(f'{name}: {ir_instrs} ir instrs → {asm_lines} asm lines, frame {frame}{leaf_tag}')
+    return rows or ['<none>']
+
+
+def _dump_semantic(analyzer) -> str:
+    syms = analyzer.global_scope.symbols
+    lines = []
+    funcs = {n: s for n, s in syms.items() if s.is_func}
+    globs = {n: s for n, s in syms.items() if not s.is_func}
+    if funcs:
+        lines.append(f'; functions ({len(funcs)}):')
+        for name, sym in sorted(funcs.items()):
+            lines.append(f';   {name}: {sym.ctype}')
+    if globs:
+        lines.append(f'; globals ({len(globs)}):')
+        for name, sym in sorted(globs.items()):
+            lines.append(f';   {name}: {sym.ctype}')
+    return '\n'.join(lines)
+
+
 def _v_block(log, title: str, rows: list[str], level: int = 2):
     log(f'{title}:', level=level)
     for row in rows:
@@ -223,6 +247,7 @@ def compile_c(src: str, src_name: str = '<stdin>',
               dump_ir_pre: bool = False,
               dump_ir_post: bool = False,
               dump_opt_stats: bool = False,
+              dump_semantic: bool = False,
               stop_after: str = None,
               verbose: bool = False,
               annotate_asm: bool = False,
@@ -325,10 +350,16 @@ def compile_c(src: str, src_name: str = '<stdin>',
         analyzer.analyze(ast)
     except SemanticError as e:
         _raise_with_context("Semantic error", e, src)
-    _stage_done('Semantic analysis')
+    sym_count = len(analyzer.global_scope.symbols)
+    _stage_done('Semantic analysis', f'{sym_count} global symbols')
+
+    if dump_semantic:
+        print(_dump_semantic(analyzer), file=sys.stderr)
 
     if stop_after == 'semantic':
-        return ''
+        if not dump_semantic:
+            print(_dump_semantic(analyzer), file=sys.stderr)
+        raise SystemExit(0)
 
     # 4. IR generation
     _v('IR generation ...')
@@ -375,7 +406,8 @@ def compile_c(src: str, src_name: str = '<stdin>',
                 _v(f'{name} removed functions: ' + ', '.join(removed), level=2)
             if added:
                 _v(f'{name} added functions: ' + ', '.join(added), level=2)
-            _v_block(_v, f'{name} functions', _ir_function_details(ir))
+            if before_i != after_i or removed or added:
+                _v_block(_v, f'{name} functions', _ir_function_details(ir))
 
         _run_pass('Inlining', inline)
 
@@ -392,7 +424,8 @@ def compile_c(src: str, src_name: str = '<stdin>',
             removed = sorted(before_funcs - {f.name for f in ir.functions})
             if removed:
                 _v(f'Fold/DCE iteration {iteration} removed functions: ' + ', '.join(removed), level=2)
-            _v_block(_v, f'Fold/DCE iteration {iteration} functions', _ir_function_details(ir))
+            if curr_instrs != before_iter or removed:
+                _v_block(_v, f'Fold/DCE iteration {iteration} functions', _ir_function_details(ir))
             if curr_instrs == prev_instrs:
                 _v(f'Fold/DCE converged after {iteration} iteration(s)')
                 break
@@ -431,10 +464,12 @@ def compile_c(src: str, src_name: str = '<stdin>',
         stats.append(('ASM peephole', 0, 0, asm_lines + elim, asm_lines))
     else:
         elim = 0
-    _stage_done('Code generation', f'{asm_lines} asm lines, {elim} peephole eliminations')
+    data_words = sum(words for _, words, _ in ir.globals) + sum(len(chars) for _, chars in ir.strings)
+    _stage_done('Code generation', f'{asm_lines} asm lines, {elim} peephole eliminations, {data_words} data words')
+    _v_block(_v, 'Codegen functions', _codegen_func_details(gen.func_stats), level=1)
     _v('ASM detail: ' + _asm_details(asm), level=2)
 
-    if dump_opt_stats or (verbose and stats):
+    if dump_opt_stats or (verbosity >= 1 and stats):
         _print_opt_stats(stats)
 
     if stop_after == 'codegen':
@@ -464,6 +499,8 @@ def main():
                     help='Dump IR before optimization passes')
     ap.add_argument('--dump-ir-post', action='store_true',
                     help='Dump IR after optimization passes')
+    ap.add_argument('--dump-semantic', action='store_true',
+                    help='Dump global symbol table (functions and globals with types) to stderr')
     ap.add_argument('--dump-opt-stats', action='store_true',
                     help='Print instruction/function count changes for each optimization pass')
     ap.add_argument('--stop-after',
@@ -495,6 +532,7 @@ def main():
                         dump_ir_pre=args.dump_ir_pre,
                         dump_ir_post=args.dump_ir_post,
                         dump_opt_stats=args.dump_opt_stats,
+                        dump_semantic=args.dump_semantic,
                         stop_after=args.stop_after,
                         verbose=args.verbose,
                         annotate_asm=args.annotate,

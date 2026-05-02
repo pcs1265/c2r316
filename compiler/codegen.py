@@ -194,6 +194,8 @@ class Codegen:
         self._va_spill_n:    int = 0   # number of arg-reg spill slots (0 or 6)
         # ASM peephole stats
         self._peephole_eliminated: int = 0
+        # per-function stats for verbose logging: list of (name, ir_instrs, asm_lines, frame, leaf)
+        self.func_stats: list = []
 
     # ── Source annotation (-g) ────────────────────────────────────────────────
 
@@ -567,6 +569,8 @@ class Codegen:
 
         if not self._no_opt:
             self._asm_peephole(func_start)
+        asm_lines = len(self._out) - func_start
+        self.func_stats.append((fn.name, len(fn.instrs), asm_lines, total, self._is_leaf))
         self._emit('')
 
     def _asm_peephole(self, func_start: int):
