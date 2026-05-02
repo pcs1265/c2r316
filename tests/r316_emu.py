@@ -9,8 +9,9 @@ Scope:
       mov add adc sub sbb mul and or xor shl shr ld st jmp <jcc> hlt
     Plus manual spellings useful for inline asm/debug tests:
       movf adds/adcs/subs/sbbs ands/ors/xors shls/shrs exh/exhs mulh/muls/mulx
-  - Macros: cmp / test / nop / call / ret (hardcoded; we skip %include "common")
-  - Skipped: %include, %define, %eval, %ifndef, %endif, %macro definitions,
+  - Macros: cmp / test / nop (hardcoded common.asm aliases) and simple
+    `%macro name arg...` definitions embedded in compiler output.
+  - Skipped: %include, %define, %eval, %ifndef, %endif,
     {RPN expressions}, and most of runtime/runtime.asm. Execution starts at
     `_C_main:` directly, with SP and LR initialized by the harness.
   - Terminal: writes to 0x9FB5 are captured into stdout. Nothing else MMIO.
@@ -167,14 +168,18 @@ class Program:
     code_end: int = 0   # one past the last assembled cell — used for diagnostics
 
 
-# Macros we hardcode: TPTASM common.asm defines these.
+# Common aliases we hardcode: TPTASM common.asm defines these.
 _MACROS = {
     'cmp':  ('sub', ['r0']),
     'test': ('and', ['r0']),
     'nop':  ('mov', ['r0', 'r0']),
-    'call': ('jmp', ['r31']),
-    'ret':  ('jmp', ['r31']),
 }
+
+
+@dataclass
+class AsmMacro:
+    params: list[str]
+    body: list[str]
 
 # Jump aliases from common.asm
 _JMP_ALIASES = {
@@ -225,8 +230,9 @@ def parse_asm(text: str) -> Program:
     labels: dict[str, int] = {}
     pending_labels: list[str] = []      # labels waiting for the next placed cell
     deferred_dw: list[tuple[int, str]] = []  # (addr, raw_token) — resolve later
+    asm_macros: dict[str, AsmMacro] = {}
     cur_global = ''
-    in_macro_def = False
+    macro_def: tuple[str, list[str], list[str]] | None = None
     if_stack: list[bool] = []
     cursor = 0
 
@@ -236,35 +242,43 @@ def parse_asm(text: str) -> Program:
             labels[lbl] = addr & _MASK16
         pending_labels = []
 
-    for lineno, raw in enumerate(text.splitlines(), 1):
-        line = _strip_comment(raw).strip()
-        if not line:
-            continue
+    def expand_macro_line(macro: AsmMacro, args: list[str], unique: int) -> list[str]:
+        subst = {name: (args[i] if i < len(args) else '') for i, name in enumerate(macro.params)}
+        out: list[str] = []
+        for body_line in macro.body:
+            expanded = body_line
+            for name, value in subst.items():
+                expanded = re.sub(rf'\b{re.escape(name)}\b', value, expanded)
+            # TPTASM peer labels are macro-local. Normalize the subset used by
+            # runtime.asm into ordinary local labels with a per-expansion suffix.
+            expanded = expanded.replace('_Macrounique', f'__macro_{unique}')
+            expanded = re.sub(r'\.\s+_Peerlabel\s+(\w+)\s+(__macro_\d+)',
+                              r'.__\1_\2', expanded)
+            out.append(expanded)
+        return out
 
-        # %macro definition block — skip until %endmacro
-        if in_macro_def:
-            if line.startswith('%endmacro'):
-                in_macro_def = False
-            continue
-        if line.startswith('%macro'):
-            in_macro_def = True
-            continue
+    def process_line(line: str, lineno: int, expansion_depth: int = 0) -> None:
+        nonlocal cur_global, cursor
+        if not line:
+            return
+        if expansion_depth > 20:
+            raise RuntimeError(f"macro expansion too deep at source line {lineno}")
 
         # Conditional blocks (very limited %ifndef / %endif / %else)
         if line.startswith('%ifndef'):
             if_stack.append(True)
-            continue
+            return
         if line.startswith('%ifdef'):
             if_stack.append(False)
-            continue
+            return
         if line.startswith('%endif'):
             if if_stack: if_stack.pop()
-            continue
+            return
         if line.startswith('%else'):
             if if_stack: if_stack[-1] = not if_stack[-1]
-            continue
+            return
         if if_stack and not if_stack[-1]:
-            continue
+            return
 
         # %eval name rpn... — evaluate RPN expression and store as label
         if line.startswith('%eval '):
@@ -283,7 +297,7 @@ def parse_asm(text: str) -> Program:
                         except ValueError: stack.append(0)
                 if stack:
                     labels[sym] = stack[-1] & _MASK16
-            continue
+            return
 
         # %define name value — only handle simple numeric defines
         if line.startswith('%define '):
@@ -293,11 +307,11 @@ def parse_asm(text: str) -> Program:
                     labels[parts[1]] = int(parts[2], 0) & _MASK16
                 except ValueError:
                     pass
-            continue
+            return
 
         # Directives we ignore but don't fail on
         if line.startswith('%'):
-            continue
+            return
 
         # Label?  `name:` or `name: instr ...`
         m = re.match(r'^(\.?[A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$', line)
@@ -309,7 +323,7 @@ def parse_asm(text: str) -> Program:
             full = lbl if not lbl.startswith('.') else cur_global + lbl
             pending_labels.append(full)
             if not rest:
-                continue
+                return
             line = rest
 
         # `dw value, value, value` → place each at the cursor
@@ -321,17 +335,23 @@ def parse_asm(text: str) -> Program:
                 deferred_dw.append((cursor, v))
                 mem[cursor] = 0   # placeholder, overwritten in resolve pass
                 cursor = (cursor + 1) & _MASK16
-            continue
+            return
 
         # Instruction
         m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)(?:\s+(.*))?$', line)
         if not m:
-            continue
+            return
         op = m.group(1)
         args_str = m.group(2) or ''
         args = [a.strip() for a in args_str.split(',')] if args_str else []
         args = [a for a in args if a]
         update_flags: Optional[bool] = None
+
+        if op in asm_macros:
+            unique = lineno * 100 + expansion_depth
+            for expanded in expand_macro_line(asm_macros[op], args, unique):
+                process_line(_strip_comment(expanded).strip(), lineno, expansion_depth + 1)
+            return
 
         if op in _MACROS:
             new_op, prefix = _MACROS[op]
@@ -349,6 +369,27 @@ def parse_asm(text: str) -> Program:
         mem[cursor] = Insn(op=op, args=args, src_line=lineno, scope=cur_global,
                            update_flags=update_flags)
         cursor = (cursor + 1) & _MASK16
+
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = _strip_comment(raw).strip()
+        if not line:
+            continue
+
+        if macro_def is not None:
+            if line.startswith('%endmacro'):
+                name, params, body = macro_def
+                asm_macros[name] = AsmMacro(params, body)
+                macro_def = None
+            else:
+                macro_def[2].append(line)
+            continue
+        if line.startswith('%macro'):
+            parts = line.split()
+            if len(parts) >= 2:
+                macro_def = (parts[1], parts[2:], [])
+            continue
+
+        process_line(line, lineno)
 
     # Any labels still pending at EOF point one past the last placed cell
     flush_labels_to(cursor)
