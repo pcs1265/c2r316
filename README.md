@@ -56,7 +56,6 @@ C Source
    - **Linear-scan register allocator** — r10–r18 (caller-saved), r19–r29 (callee-saved)
    - **Compare-branch fusion** — `t = a < b; if t goto L` → `sub r0, a, b; jl L`
    - **3-operand arithmetic** — `add dst, src1, src2` when dst ≠ src
-   - **Assembly peephole** — `st Rx, r30, N; ld Ry, r30, N` → `mov Ry, Rx`
 
 ## R316 Architecture
 

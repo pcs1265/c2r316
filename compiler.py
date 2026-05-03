@@ -86,8 +86,7 @@ def _print_opt_stats(stats: list):
         sign_i = '+' if di >= 0 else ''
         sign_f = '+' if df >= 0 else ''
         print(f'  {name}:', file=sys.stderr)
-        label = 'lines ' if name == 'ASM peephole' else 'instrs'
-        print(f'    {label}: {bi:4d} -> {ai:4d}  ({sign_i}{di})', file=sys.stderr)
+        print(f'    instrs: {bi:4d} -> {ai:4d}  ({sign_i}{di})', file=sys.stderr)
         if df != 0:
             print(f'    funcs  : {bf:4d} -> {af:4d}  ({sign_f}{df})', file=sys.stderr)
 
@@ -459,13 +458,8 @@ def compile_c(src: str, src_name: str = '<stdin>',
         raise SystemExit(f"Codegen error: {e}")
 
     asm_lines = asm.count('\n') + 1 if asm else 0
-    if not no_opt:
-        elim = gen._peephole_eliminated
-        stats.append(('ASM peephole', 0, 0, asm_lines + elim, asm_lines))
-    else:
-        elim = 0
     data_words = sum(words for _, words, _ in ir.globals) + sum(len(chars) for _, chars in ir.strings)
-    _stage_done('Code generation', f'{asm_lines} asm lines, {elim} peephole eliminations, {data_words} data words')
+    _stage_done('Code generation', f'{asm_lines} asm lines, {data_words} data words')
     _v_block(_v, 'Codegen functions', _codegen_func_details(gen.func_stats), level=1)
     _v('ASM detail: ' + _asm_details(asm), level=2)
 

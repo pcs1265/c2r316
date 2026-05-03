@@ -43,5 +43,4 @@
 ## Potential Optimizations
 
 - Lower more builtins directly in IR/codegen instead of via auto-prepended C helpers where it materially reduces call overhead.
-- Add peepholes for common long low/high instruction pairs.
 - Improve register allocation cost modeling for callee-saved registers in small functions.

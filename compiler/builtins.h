@@ -19,18 +19,19 @@ static unsigned int __builtin_udiv(unsigned int dividend, unsigned int divisor) 
         "mov r10, 0\n"
         "mov r11, 16\n"
         "._udiv_loop:\n"
-        "add %0, %0\n"
+        "add %1, %1\n"
         "adc r10, r10\n"
-        "sub r12, r10, %1\n"
+        "sub r12, r10, %2\n"
         "jc ._udiv_skip\n"
         "mov r10, r12\n"
-        "or %0, 1\n"
+        "or %1, 1\n"
         "._udiv_skip:\n"
         "sub r11, 1\n"
         "jnz ._udiv_loop\n"
-        "st %0, %2"
-        :
-        : "r"(dividend), "r"(divisor), "r"(&res)
+        "add %0, %1, r0"
+        : "=r"(res)
+        : "r"(dividend), "r"(divisor)
+        : "r10", "r11", "r12"
     );
     return res;
 }
@@ -41,17 +42,18 @@ static unsigned int __builtin_umod(unsigned int dividend, unsigned int divisor) 
         "mov r10, 0\n"
         "mov r11, 16\n"
         "._umod_loop:\n"
-        "add %0, %0\n"
+        "add %1, %1\n"
         "adc r10, r10\n"
-        "sub r12, r10, %1\n"
+        "sub r12, r10, %2\n"
         "jc ._umod_skip\n"
         "mov r10, r12\n"
         "._umod_skip:\n"
         "sub r11, 1\n"
         "jnz ._umod_loop\n"
-        "st r10, %2"
-        :
-        : "r"(dividend), "r"(divisor), "r"(&res)
+        "add %0, r10, r0"
+        : "=r"(res)
+        : "r"(dividend), "r"(divisor)
+        : "r10", "r11", "r12"
     );
     return res;
 }
@@ -151,46 +153,90 @@ static unsigned long __builtin_ulshr1(unsigned long value) {
 }
 
 static unsigned long __builtin_uldiv(unsigned long dividend, unsigned long divisor) {
-    unsigned long quotient;
-    unsigned long bit;
-    quotient = 0;
-    bit = 1;
-    if (divisor == 0) {
-        return 0;
-    }
-    while (divisor <= dividend && divisor <= 0x7FFFFFFF) {
-        divisor = divisor + divisor;
-        bit = bit + bit;
-    }
-    while (bit != 0) {
-        if (dividend >= divisor) {
-            dividend = dividend - divisor;
-            quotient = quotient + bit;
-        }
-        divisor = __builtin_ulshr1(divisor);
-        bit = __builtin_ulshr1(bit);
-    }
-    return quotient;
+    unsigned long result;
+    unsigned int *dwords;
+    unsigned int *vwords;
+    unsigned int *rwords;
+    dwords = (unsigned int *)&dividend;
+    vwords = (unsigned int *)&divisor;
+    rwords = (unsigned int *)&result;
+    asm(
+        "mov r15, %2\n"
+        "or r15, %3\n"
+        "jnz ._uldiv_nonzero\n"
+        "st r0, %4\n"
+        "st r0, %5\n"
+        "jmp ._uldiv_done\n"
+        "._uldiv_nonzero:\n"
+        "mov r13, 0\n"
+        "mov r14, 0\n"
+        "mov r17, 32\n"
+        "._uldiv_loop:\n"
+        "add %0, %0\n"
+        "adc %1, %1\n"
+        "adc r13, r13\n"
+        "adc r14, r14\n"
+        "sub r15, r13, %2\n"
+        "sbb r16, r14, %3\n"
+        "jc ._uldiv_skip\n"
+        "mov r13, r15\n"
+        "mov r14, r16\n"
+        "or %0, 1\n"
+        "._uldiv_skip:\n"
+        "sub r17, 1\n"
+        "jnz ._uldiv_loop\n"
+        "st %0, %4\n"
+        "st %1, %5\n"
+        "._uldiv_done:"
+        :
+        : "r"(dwords[0]), "r"(dwords[1]), "r"(vwords[0]), "r"(vwords[1]),
+          "r"(&rwords[0]), "r"(&rwords[1])
+        : "r13", "r14", "r15", "r16", "r17"
+    );
+    return result;
 }
 
 static unsigned long __builtin_ulmod(unsigned long dividend, unsigned long divisor) {
-    unsigned long bit;
-    bit = 1;
-    if (divisor == 0) {
-        return 0;
-    }
-    while (divisor <= dividend && divisor <= 0x7FFFFFFF) {
-        divisor = divisor + divisor;
-        bit = bit + bit;
-    }
-    while (bit != 0) {
-        if (dividend >= divisor) {
-            dividend = dividend - divisor;
-        }
-        divisor = __builtin_ulshr1(divisor);
-        bit = __builtin_ulshr1(bit);
-    }
-    return dividend;
+    unsigned long result;
+    unsigned int *dwords;
+    unsigned int *vwords;
+    unsigned int *rwords;
+    dwords = (unsigned int *)&dividend;
+    vwords = (unsigned int *)&divisor;
+    rwords = (unsigned int *)&result;
+    asm(
+        "mov r15, %2\n"
+        "or r15, %3\n"
+        "jnz ._ulmod_nonzero\n"
+        "st r0, %4\n"
+        "st r0, %5\n"
+        "jmp ._ulmod_done\n"
+        "._ulmod_nonzero:\n"
+        "mov r13, 0\n"
+        "mov r14, 0\n"
+        "mov r17, 32\n"
+        "._ulmod_loop:\n"
+        "add %0, %0\n"
+        "adc %1, %1\n"
+        "adc r13, r13\n"
+        "adc r14, r14\n"
+        "sub r15, r13, %2\n"
+        "sbb r16, r14, %3\n"
+        "jc ._ulmod_skip\n"
+        "mov r13, r15\n"
+        "mov r14, r16\n"
+        "._ulmod_skip:\n"
+        "sub r17, 1\n"
+        "jnz ._ulmod_loop\n"
+        "st r13, %4\n"
+        "st r14, %5\n"
+        "._ulmod_done:"
+        :
+        : "r"(dwords[0]), "r"(dwords[1]), "r"(vwords[0]), "r"(vwords[1]),
+          "r"(&rwords[0]), "r"(&rwords[1])
+        : "r13", "r14", "r15", "r16", "r17"
+    );
+    return result;
 }
 
 static long __builtin_sldiv(long dividend, long divisor) {
