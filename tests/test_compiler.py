@@ -306,6 +306,20 @@ def test_execution_smoke():
          "int main() { return test(-1); }", 1, ''),
         # __builtin_smod with negative dividend (the real-world hello.c hang)
         ("int main() { int x = -7; return x % 3; }", 0xFFFF, ''),  # -7 % 3 = -1 = 0xFFFF
+        # 32-bit long smoke tests: full-width constants, local load/store,
+        # add carry into the high half, return, and argument passing.
+        ("int main() { long x = 0x12345678; return x == 0x12345678; }", 1, ''),
+        ("int main() { long x = 0xFFFF; x = x + 1; return x == 0x10000; }", 1, ''),
+        ("long id(long x) { return x; } int main() { return id(0x12345678) == 0x12345678; }", 1, ''),
+        ("int eq(long x, long y) { return x == y; } int main() { return eq(0x10000, 0x10000); }", 1, ''),
+        ("int main() { long x = 0x10000; return (x * 3) == 0x30000; }", 1, ''),
+        ("int main() { long x = 0x10000; x *= 3; return x == 0x30000; }", 1, ''),
+        ("int main() { unsigned long x = 0x12345678; return (x / 0x10000) == 0x1234; }", 1, ''),
+        ("int main() { unsigned long x = 0x12345678; return (x % 0x10000) == 0x5678; }", 1, ''),
+        ("int main() { long x = -70000; return (x / 10) == -7000; }", 1, ''),
+        ("int main() { long x = -70003; return (x % 10) == -3; }", 1, ''),
+        ("int main() { long x = 0x12345678; x /= 0x10000; return x == 0x1234; }", 1, ''),
+        ("int main() { long x = 0x12345678; x %= 0x10000; return x == 0x5678; }", 1, ''),
     ]
 
     for src, expect_ret, expect_out in cases:
