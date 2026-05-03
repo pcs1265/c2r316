@@ -32,7 +32,8 @@ asm_call_mix: PASS
 asm_then_call: PASS
 two_steps: PASS
 three_steps: PASS
+explicit_clobber: PASS
 ================
-PASS: 32
+PASS: 33
 FAIL: 0
 === done ===

@@ -225,9 +225,10 @@ class DeclStmt(Stmt):
 
 @dataclass
 class AsmStmt(Stmt):
-    """asm("template" : "r"(e0), "r"(e1), ...)  — inputs only"""
+    """asm("template" : "r"(e0), ... : "r10", ...)"""
     text:   str        # template string, %0..%N are substituted
     inputs: list       # list[Expr]
+    clobbers: list = field(default_factory=list)  # list[str]
 
 @dataclass
 class CaseClause:

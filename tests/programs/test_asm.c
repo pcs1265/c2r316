@@ -307,6 +307,18 @@ int asm_three_steps(int a, int b, int c, int d, int e) {
     return v;
 }
 
+int asm_explicit_clobber(int a, int b) {
+    int out;
+    int *p;
+    p = &out;
+    asm("mov r10, %0\n"
+        "add r10, %1\n"
+        "st r10, %2"
+        : "r"(a), "r"(b), "r"(p)
+        : "r10");
+    return out;
+}
+
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -394,6 +406,8 @@ int main(void) {
     check("two_steps",   asm_two_steps(3, 4, 5),          35);
     /* asm_three_steps(2,3,4,5,6): t=5, u=20, v=20+5+6=31 */
     check("three_steps", asm_three_steps(2, 3, 4, 5, 6),  31);
+
+    check("explicit_clobber", asm_explicit_clobber(12, 30), 42);
 
     /* summary */
     puts("================");

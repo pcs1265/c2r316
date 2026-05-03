@@ -612,8 +612,9 @@ class IRGen:
 
         elif isinstance(stmt, AsmStmt):
             srcs = [self._gen_expr(e) for e in stmt.inputs]
+            explicit = frozenset(c for c in stmt.clobbers if c in ASM_REGS)
             self._emit(IInlineAsm(stmt.text, srcs, self._loc(stmt),
-                                  clobbers=frozenset(ASM_REGS[:len(srcs)])))
+                                  clobbers=frozenset(ASM_REGS[:len(srcs)]) | explicit))
 
         else:
             raise IRGenError(f"Unhandled statement: {type(stmt)}")

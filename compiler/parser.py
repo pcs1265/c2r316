@@ -619,14 +619,15 @@ class Parser:
         return IfStmt(cond, then, else_)
 
     def _parse_asm(self) -> AsmStmt:
-        # asm("template")  or  asm("template" : "r"(e), ...)
+        # asm("template")  or  asm("template" : "r"(e), ... : "r10", ...)
         self._eat(TK.ASM)
         self._eat(TK.LPAREN)
         template_chars = self._eat(TK.STRING_LIT).value
         template = ''.join(chr(c) for c in template_chars)
         inputs = []
+        clobbers = []
         if self._try_eat(TK.COLON):
-            while not self._at(TK.RPAREN):
+            while not self._at(TK.RPAREN) and not self._at(TK.COLON):
                 # consume constraint string, e.g. "r"
                 self._eat(TK.STRING_LIT)
                 self._eat(TK.LPAREN)
@@ -634,9 +635,15 @@ class Parser:
                 self._eat(TK.RPAREN)
                 if not self._try_eat(TK.COMMA):
                     break
+            if self._try_eat(TK.COLON):
+                while not self._at(TK.RPAREN):
+                    chars = self._eat(TK.STRING_LIT).value
+                    clobbers.append(''.join(chr(c) for c in chars))
+                    if not self._try_eat(TK.COMMA):
+                        break
         self._eat(TK.RPAREN)
         self._eat(TK.SEMICOLON)
-        return AsmStmt(template, inputs)
+        return AsmStmt(template, inputs, clobbers)
 
     def _parse_while(self) -> WhileStmt:
         self._eat(TK.WHILE)
