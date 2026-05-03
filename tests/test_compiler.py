@@ -572,6 +572,38 @@ def test_nop_does_not_clobber_r16():
               f'encoding redirect')
 
 
+def test_mul_forwards_p_upper_half():
+    """Manual line 48: 'The 16 MSBs of the output produced by ALU
+    operations are the 16 MSBs of the primary operand.' Multiplication
+    is an ALU op (line 42); the emu was zeroing the upper 16 bits of D
+    instead of forwarding P's upper 16. Any code that round-trips a
+    multiplied value through `exh` to inspect the upper half would
+    diverge from real hardware."""
+    print('\n[bugfix: mul/mulh/muls/mulx forward P upper 16]')
+    from tests.emu.parser import parse_asm
+    from tests.emu.machine import Machine
+
+    # Seed P with a known upper half via exh, then mul. After mul, the
+    # destination's upper 16 bits must equal P's upper 16 bits.
+    for op in ('mul', 'mulh', 'muls', 'mulx'):
+        asm = f"""_start:
+    mov r1, 0xCAFE
+    exh r1, r1, r1     ; r1 upper = 0xCAFE
+    mov r2, 7
+    {op} r3, r1, r2
+    exh r4, r3, r0     ; r4 low = r3 upper
+    hlt
+"""
+        prog = parse_asm(asm)
+        m = Machine(prog)
+        m.pc = prog.labels['_start']
+        m.run()
+        upper = (m.regs[3] >> 16) & 0xFFFF
+        check(f'{op} forwards P upper half (0xCAFE)',
+              upper == 0xCAFE,
+              f'{op}: D upper = {upper:#06x}, expected 0xCAFE')
+
+
 def test_print_long_via_printf():
     """End-to-end: printf("%ld", N) on the emulator must terminate and emit
     the correct decimal expansion.  The hello.c hang at commit 62854de was
@@ -1056,6 +1088,7 @@ if __name__ == '__main__':
     test_print_int_signed()
     test_sub_imm_carry_inverted()
     test_nop_does_not_clobber_r16()
+    test_mul_forwards_p_upper_half()
     test_print_long_via_printf()
     test_examples_run()
     test_goto()

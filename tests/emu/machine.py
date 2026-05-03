@@ -374,22 +374,26 @@ class Machine:
             r = self._sub_result(self.operand_value(p), self.operand_value(s), self.flags.C,
                                  ins.update_flags, default=True)
             self.wr(d, self._source_high(p) | r); return
+        # Manual line 48: "the 16 MSBs of the output produced by ALU operations
+        # are the 16 MSBs of the primary operand. The ALU blindly forwards
+        # these bits". Multiplication is an ALU op (line 42), so D's upper
+        # 16 bits must come from P's upper 16 bits, not be zeroed.
         if op == 'mul':
             d, p, s = self._three(args)
             r = (self.operand_value(p) * self.operand_value(s)) & _MASK16
-            self.wr(d, r); return
+            self.wr(d, self._source_high(p) | r); return
         if op == 'mulh':
             d, p, s = self._three(args)
             r = ((self.operand_value(p) * self.operand_value(s)) >> 16) & _MASK16
-            self.wr(d, r); return
+            self.wr(d, self._source_high(p) | r); return
         if op == 'muls':
             d, p, s = self._three(args)
             r = ((_s16(self.operand_value(p)) * _s16(self.operand_value(s))) >> 16) & _MASK16
-            self.wr(d, r); return
+            self.wr(d, self._source_high(p) | r); return
         if op == 'mulx':
             d, p, s = self._three(args)
             r = (((self.operand_value(p) & _MASK16) * _s16(self.operand_value(s))) >> 16) & _MASK16
-            self.wr(d, r); return
+            self.wr(d, self._source_high(p) | r); return
         # ── logic ──
         if op in ('and', 'or', 'xor'):
             d, p, s = self._three(args)
