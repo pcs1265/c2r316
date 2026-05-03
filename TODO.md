@@ -6,7 +6,7 @@
 - `int`, `unsigned int`, `char`, `unsigned char`, `void`
 - `short`, `unsigned short` — equivalent to `int` on this 16-bit platform
 - `signed` — explicit signedness keyword (no-op, int/char are signed by default)
-- `long`, `unsigned long` — parsed and type-checked; **no working codegen** (see Known Issues)
+- `long`, `unsigned long` — represented as two 16-bit halves; basic load/store, constants, `+`, `-`, `*`, comparisons, returns, and fixed-argument calls work
 - Pointers (single and multi-level)
 - 1D arrays (with initializers, inferred size from `{}` or string literal)
 - Multi-dimensional arrays (`int a[3][4]`, with initializers and subscripting)
@@ -36,10 +36,10 @@
 - Inline assembly: `asm("template" : "r"(expr), ...)` — input operands only
 
 ### Expressions
-- Integer literals (decimal, hex `0x`, octal `0`-prefix; `u`/`l` suffixes accepted and ignored)
+- Integer literals (decimal, hex `0x`, octal `0`-prefix; `u`/`l` suffixes accepted; 32-bit values preserved when used as `long`)
 - Character literals with escape sequences: `\n \t \r \0 \a \b \f \v \\ \' \" \? \xHH \ooo` (octal up to 3 digits)
 - String literals (adjacent concatenation, same escape sequences)
-- All arithmetic: `+ - * / %` (div/mod dispatched to `__udiv`/`__umod` runtime helpers)
+- Arithmetic: `+ - * / %` for 16-bit integers and `long`
 - All bitwise: `& | ^ ~ << >>`
 - All comparison: `== != < > <= >=`
 - Logical: `&& ||` (short-circuit evaluation)
@@ -51,7 +51,7 @@
 - Address-of `&`, dereference `*`
 - Array subscript `a[i]` (including multi-dimensional)
 - Member access `.` and `->` (with field offset arithmetic)
-- Function calls (≤6 args in registers, 7th+ via stack)
+- Function calls (≤6 scalar argument words in registers, overflow via stack; `long` fixed arguments consume two words)
 - Variadic calls via `va_start` / `va_arg` / `va_end`
 - Function pointer calls (typedef, local declarator `int (*fp)(int)`, global, array of function pointers, passing as argument)
 
@@ -90,11 +90,31 @@
 
 ## Known Issues
 
-- **`long` (32-bit) arithmetic** — type parses and type-checks, but all arithmetic is 16-bit; multi-word codegen (`add+adc`, `sub+sbb`, `mul+mulh`, even-register alignment per ABI §9) is not implemented
-- **Integer literals > 16 bits** — truncated to 16 bits at IR generation; codegen does not emit multi-word constants
+- **`long` shifts** — `<<` and `>>` for `long` are not implemented yet. Add either inline lowering loops or runtime helpers (`__lshl`, `__lshr`, unsigned variants).
+- **`long` bitwise operators** — `&`, `|`, and `^` for `long` are not implemented yet. These should lower independently on low/high halves.
+- **`long` constant folding** — optimizer folds scalar constants only. Add fold support for `ILongBinOp`, `ILongUnaryOp`, and `ILongCompare`.
+- **`long` inliner support** — scalar inliner currently skips functions containing long IR. Teach `compiler/inline.py` to clone/rename `ILong*` instructions before enabling long-function inlining.
+- **`long` variadic support** — `va_arg(ap, long)` and variadic long argument layout need ABI validation and tests.
+- **`long` ABI alignment** — current implementation flattens long args as two consecutive argument words. Revisit even-register alignment/skipped argument registers if strict ABI §2.2.1 compatibility is required.
+- **Long literal suffix typing** — `L`/`UL` suffixes are accepted, but semantic typing is still broad/simple. Audit parser/semantic behavior for C-compatible literal type selection.
 - **Struct/union pass-by-value** — hidden-pointer ABI (ABI §4) not generated; use explicit pointers
 
 ---
+
+## Long Support TODO
+
+Current implemented slice:
+- Two-slot storage: `addr+0 = low16`, `addr+1 = high16`.
+- Shared long IR: `LongValue`, `ILongLoad`, `ILongStore`, `ILongBinOp`, `ILongUnaryOp`, `ILongCompare`, `ILongRet`, `ILongCall`.
+- R316 lowering for constants, load/store, assignment, scalar casts/truncation, truthiness, `+`, `-`, `*`, `/`, `%`, comparisons, fixed-argument calls, and returns.
+- Tests cover full-width constants, carry into high half, long return, long argument passing, unsigned/signed long division/modulo, compound long division/modulo assignment, and legacy `test_long_truncation.c`.
+
+Next steps:
+- Add `long` bitwise ops: `&`, `|`, `^`, `~` complete high/low behavior and tests.
+- Add `long` shifts: constant small shifts first, then variable shifts.
+- Update `printf`/`scanf` formats for `%ld`, `%lu`, `%lx` if desired.
+- Teach inliner, fold, and DCE optimizations more long-specific simplifications.
+- Add focused execution tests for arrays of long, struct fields of long, globals/statics, stack overflow args containing long, and function-pointer calls with long signatures.
 
 ## Not Implemented (C Language Features)
 

@@ -35,6 +35,7 @@ The following items have been implemented since the last survey:
 | Dead function elimination | S | ★★ | Implemented in `compiler/dce.py` — removes functions unreachable from `main` via call-graph reachability (handles function-pointer address-taken references) |
 | Function inlining | M | ★★ | Implemented in `compiler/inline.py` — inlines `always_inline` functions unconditionally; auto-inlines small static functions (≤ 10 IR instrs) and non-static functions called exactly once; collapses arbitrarily deep `always_inline` chains in phase 1 |
 | Linear scan register allocation | M | ★★ | Implemented in `compiler/regalloc.py` — builds live intervals, classifies call-crossing temps (→ callee-saved) vs. non-crossing (→ caller-saved), spills when no register is free, includes move coalescing |
+| Initial 32-bit `long` support | L | ★★★ | Implemented first slice — shared long IR plus R316 lowering for two-slot load/store, constants, `+`, `-`, `*`, comparisons, returns, and fixed-argument calls |
 
 ---
 
@@ -43,8 +44,8 @@ The following items have been implemented since the last survey:
 ### Critical — known bugs / silent miscompiles
 | Item | Size | Value | Notes |
 |---|---|---|---|
-| 32-bit `long` arithmetic | XL | ★★★ | Type parses but codegen is 16-bit. Need `add+adc`, `sub+sbb`, `mul+mulh` on register pairs, even-register alignment per ABI §9. Touches IR (split `IBinOp` for long, or post-pass that lowers long ops), codegen, regalloc, fold (constant fold of long), and runtime helpers (`__lmul`, `__ldiv`). |
-| Integer literals > 16 bits | M | ★★★ | Currently truncated at IR generation. Needs multi-word `ImmInt` (or `ImmLong`) and codegen that emits two `mov` instructions. Blocked by long arithmetic. |
+| Complete 32-bit `long` support | L | ★★★ | Basic two-slot long support exists. Remaining work: `long` bitwise ops, shifts, division/modulo, variadic `long`, long-aware inlining, long constant folding, and strict ABI even-register alignment if required. |
+| Long literal typing polish | S | ★★ | 32-bit values are preserved when lowered as `long`, but `L`/`UL` suffix semantics and C-compatible literal type selection need audit. |
 | Struct/union pass-by-value | M | ★★ | ABI §4 hidden-pointer convention not generated. Caller allocates result slot and passes its address as implicit first arg; callee writes through it. Symmetric for parameters. |
 | Pointer arithmetic scaling | S | ★★ | Verify `p + n` scales by `sizeof(*p)`. Spot-check codegen for non-`int*` pointers; if missing, add scaling in irgen. |
 | Standard integer promotions | M | ★★ | `char + char` should promote to `int` per C99 §6.3.1.1. Likely partial. Audit semantic + irgen. |
