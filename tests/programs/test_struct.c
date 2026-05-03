@@ -33,6 +33,12 @@ struct Rect {
     struct Point br;
 };
 
+struct LongBox {
+    int tag;
+    long value;
+    unsigned long uvalue;
+};
+
 union Val {
     int i;
     char c;
@@ -43,6 +49,7 @@ union Val {
 struct Point g_origin;
 struct Point g_cursor;
 struct Rect  g_viewport;
+struct LongBox g_lbox;
 
 void g_cursor_move(int dx, int dy) {
     g_cursor.x = g_cursor.x + dx;
@@ -190,6 +197,22 @@ int main(void) {
     g_cursor.x = 55;
     point_sum(&a);
     check("g_after_call", g_cursor.x, 55);
+
+    /* structs with long fields */
+    struct LongBox lb;
+    lb.tag = 7;
+    lb.value = 0x12345678;
+    lb.uvalue = 0x87654321;
+    check("long_field", lb.value == 0x12345678, 1);
+    check("ulong_field", lb.uvalue == 0x87654321, 1);
+    check("long_neighbor", lb.tag, 7);
+
+    g_lbox.tag = 9;
+    g_lbox.value = lb.value + 0x10000;
+    g_lbox.uvalue = lb.uvalue - 0x10000;
+    check("g_long_field", g_lbox.value == 0x12355678, 1);
+    check("g_ulong_field", g_lbox.uvalue == 0x87644321, 1);
+    check("g_long_neighbor", g_lbox.tag, 9);
 
     /* summary */
     puts("================");

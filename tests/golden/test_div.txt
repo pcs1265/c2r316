@@ -62,10 +62,15 @@
 -32767 % 2: PASS
 100 /= 3: PASS
 100 %= 3: PASS
+long -70003 / 10: PASS
+long -70003 % 10: PASS
+ulong / 0x10000: PASS
+ulong % 0x10000: PASS
+ulong /= 0x10000: PASS
 (100 / 2) / 2: PASS
 (100 % 30) % 7: PASS
 100 / (2 * 2): PASS
 ================
-PASS: 66
+PASS: 71
 FAIL: 0
 === done ===

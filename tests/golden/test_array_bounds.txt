@@ -33,7 +33,9 @@ str[0]: PASS
 str[4]: PASS
 *p: PASS
 *(p+1): PASS
+lvals[idx]: PASS
+*(lp+2): PASS
 ================
-PASS: 34
+PASS: 36
 FAIL: 0
 === done ===

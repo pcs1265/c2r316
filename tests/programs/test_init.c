@@ -27,9 +27,12 @@ int g_a, g_b, g_c;
 
 /* global array initializer */
 int g_arr[4] = {10, 20, 30, 40};
+long g_larr[3] = {0x10000, 0x20000, 0x30000};
 
 /* global scalar with init + multi */
 int g_x = 5, g_y, g_z = 7;
+long g_lx = 0x12345678;
+unsigned long g_ulx = 0x87654321;
 
 int g_arr_sum(void) {
     return g_arr[0] + g_arr[1] + g_arr[2] + g_arr[3];
@@ -58,11 +61,15 @@ int main(void) {
     check("g_arr[2]",  g_arr[2], 30);
     check("g_arr[3]",  g_arr[3], 40);
     check("g_arr_sum", g_arr_sum(), 100);
+    check("g_larr[0]", g_larr[0] == 0x10000, 1);
+    check("g_larr[2]", g_larr[2] == 0x30000, 1);
 
     /* 4. global scalar initializer in multi-decl */
     check("g_x", g_x, 5);
     check("g_y", g_y, 0);
     check("g_z", g_z, 7);
+    check("g_lx", g_lx == 0x12345678, 1);
+    check("g_ulx", g_ulx == 0x87654321, 1);
 
     /* 5. local multi-decl, no init */
     int a, b, c;
@@ -76,6 +83,8 @@ int main(void) {
     check("x", x, 1);
     check("y", y, 2);
     check("z", z, 3);
+    long lx = 0x10000, ly = 0x20000;
+    check("long multi init", (lx + ly) == 0x30000, 1);
 
     /* 7. local multi-decl: first init, rest not */
     int p = 99, q, r;
@@ -115,6 +124,8 @@ int main(void) {
     int drr[] = {100, 200, 300};
     drr[1] = drr[1] + 1;
     check("drr_mut", drr[1], 201);
+    long lrr[] = {0x10000, 0x20000, 0x30000};
+    check("long arr init", lrr[0] + lrr[1] == lrr[2], 1);
 
     /* 12. sum via loop over initialized array */
     int sum;

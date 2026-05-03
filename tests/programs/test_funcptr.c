@@ -39,9 +39,14 @@ int apply(int (*op)(int, int), int a, int b) {
     return op(a, b);
 }
 
+int long_eq(long a, long b) {
+    return a == b;
+}
+
 /* ── function pointer typedefs ── */
 
 typedef int (*binop_t)(int, int);
+typedef int (*long_pred_t)(long, long);
 
 /* ── function returning a function pointer ── */
 
@@ -76,6 +81,7 @@ int fold(binop_t op, int *arr, int len, int init) {
 /* ── global function pointers ── */
 
 binop_t g_op;
+long_pred_t g_long_pred;
 
 /* ── main ── */
 
@@ -95,6 +101,8 @@ int main(void) {
     /* 2. global function pointer */
     g_op = mul;
     check("global_mul", g_op(6, 7), 42);
+    g_long_pred = long_eq;
+    check("global_long_fp", g_long_pred(0x12345678, 0x12345678), 1);
 
     /* 3. passing function pointer as argument */
     check("apply_add", apply(add, 20, 30), 50);
@@ -153,6 +161,10 @@ int main(void) {
     check("reassign_3", r(4, 5), 20);
     r = add;
     check("reassign_4", r(1, 1), 2);
+
+    /* 11. function pointer with long arguments */
+    long_pred_t lp = long_eq;
+    check("long_fp_args", lp(0x87654321, 0x87654321), 1);
 
     /* summary */
     puts("================");

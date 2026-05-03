@@ -31,6 +31,10 @@ int reg6(int a, int b, int c, int d, int e, int f) {
     return a + b + c + d + e + f;
 }
 
+long long_id(long x) { return x; }
+unsigned long ulong_id(unsigned long x) { return x; }
+int long_pair_eq(long a, long b) { return a == b; }
+
 /* ── stack arguments (7th+) ── */
 
 int sum7(int a, int b, int c, int d, int e, int f, int g) {
@@ -51,6 +55,10 @@ int pick8(int a, int b, int c, int d, int e, int f, int g, int h) {
 
 int add_stack(int a, int b, int c, int d, int e, int f, int g, int h) {
     return g + h;
+}
+
+int long_stack_arg(int a, int b, int c, int d, int e, int f, long g) {
+    return a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 0x12345678;
 }
 
 /* ── variadic functions ── */
@@ -144,6 +152,9 @@ int main(void) {
     check("reg1",      reg1(7),                       7);
     check("reg2",      reg2(3, 4),                    7);
     check("reg6",      reg6(1, 2, 3, 4, 5, 6),        21);
+    check("long_ret",   long_id(0x12345678) == 0x12345678, 1);
+    check("ulong_ret",  ulong_id(0x87654321) == 0x87654321, 1);
+    check("long_pair",  long_pair_eq(0x10000, 0x10000), 1);
 
     /* 2. stack args (7th+) */
     check("sum7",      sum7(1, 2, 3, 4, 5, 6, 7),     28);
@@ -152,6 +163,7 @@ int main(void) {
     check("pick8",     pick8(0, 0, 0, 0, 0, 0, 0, 42),42);
     check("add_stack", add_stack(0,0,0,0,0,0, 3, 4),  7);
     check("sum7b",     sum7(10,10,10,10,10,10, 5),     65);
+    check("long_stack", long_stack_arg(1,2,3,4,5,6,0x12345678), 1);
 
     /* 3. variadic */
     check("va_sum1",   sum_va(1, 42),                 42);

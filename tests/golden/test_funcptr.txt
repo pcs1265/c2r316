@@ -2,6 +2,7 @@
 typedef_add: PASS
 typedef_sub: PASS
 global_mul: PASS
+global_long_fp: PASS
 apply_add: PASS
 apply_sub: PASS
 decl_add: PASS
@@ -22,7 +23,8 @@ reassign_1: PASS
 reassign_2: PASS
 reassign_3: PASS
 reassign_4: PASS
+long_fp_args: PASS
 ================
-PASS: 23
+PASS: 25
 FAIL: 0
 === done ===

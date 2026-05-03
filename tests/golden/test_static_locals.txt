@@ -10,7 +10,11 @@ accumulate 3: PASS
 accumulate 7: PASS
 two_statics 1: PASS
 two_statics 2: PASS
+static long 1: PASS
+static long 2: PASS
+static ulong 1: PASS
+static ulong 2: PASS
 ================
-PASS: 11
+PASS: 15
 FAIL: 0
 === done ===

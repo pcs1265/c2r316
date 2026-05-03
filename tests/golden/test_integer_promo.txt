@@ -18,7 +18,13 @@ char<<4: PASS
 char>>2: PASS
 char cond 0: PASS
 char cond 42: PASS
+long+int promotes: PASS
+int+long promotes: PASS
+long+uint promotes: PASS
+ulong==long bits: PASS
+long<ulong unsigned: PASS
+long assign int trunc: PASS
 ================
-PASS: 19
+PASS: 25
 FAIL: 0
 === done ===

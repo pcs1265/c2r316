@@ -2,12 +2,16 @@
 reg1: PASS
 reg2: PASS
 reg6: PASS
+long_ret: PASS
+ulong_ret: PASS
+long_pair: PASS
 sum7: PASS
 sum8: PASS
 pick7: PASS
 pick8: PASS
 add_stack: PASS
 sum7b: PASS
+long_stack: PASS
 va_sum1: PASS
 va_sum2: PASS
 va_sum3: PASS
@@ -25,6 +29,6 @@ pt_scale_y: PASS
 chain_x: PASS
 chain_y: PASS
 ================
-PASS: 25
+PASS: 29
 FAIL: 0
 === done ===

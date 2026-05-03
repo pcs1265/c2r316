@@ -110,6 +110,20 @@ int main(void) {
     check("sizeof(int)", sizeof(int), 1);
     check("sizeof(int*)", sizeof(int*), 1);
 
+    /* 9. long pointer arithmetic - should scale by 2 words */
+    long larr[4];
+    long *lp;
+    larr[0] = 0x10000;
+    larr[1] = 0x20000;
+    larr[2] = 0x30000;
+    lp = larr;
+    check("long* init", lp - larr, 0);
+    lp = lp + 1;
+    check("long* + 1", lp - larr, 1);
+    check("long* load", *lp == 0x20000, 1);
+    lp[1] = 0x40000;
+    check("long* store", larr[2] == 0x40000, 1);
+
     /* summary */
     puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);

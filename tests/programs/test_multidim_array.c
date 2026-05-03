@@ -20,6 +20,8 @@ int g2d[2][3] = {{10, 20, 30}, {40, 50, 60}};
 /* Global 3D array */
 int g3d[2][2][2] = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}};
 
+long gl2d[2][2] = {{0x10000, 0x20000}, {0x30000, 0x40000}};
+
 int sum_2d(int a[][3], int rows) {
     int s = 0;
     int i, j;
@@ -42,6 +44,10 @@ int main(void) {
     check("g3d[1][0][1]", g3d[1][0][1], 6);
     check("g3d[1][1][1]", g3d[1][1][1], 8);
 
+    /* --- global long 2D read --- */
+    check("gl2d[0][0]", gl2d[0][0] == 0x10000, 1);
+    check("gl2d[1][1]", gl2d[1][1] == 0x40000, 1);
+
     /* --- local 2D array, manual fill --- */
     int a[2][4];
     int i, j;
@@ -61,6 +67,12 @@ int main(void) {
     /* --- write then read --- */
     b[0][1] = 99;
     check("b[0][1] after write", b[0][1], 99);
+
+    /* --- local long 2D with brace initializer --- */
+    long lb[2][2] = {{0x10000, 0x20000}, {0x30000, 0x40000}};
+    check("lb[0][1]", lb[0][1] == 0x20000, 1);
+    lb[1][0] = lb[0][0] + lb[0][1];
+    check("lb[1][0] write", lb[1][0] == 0x30000, 1);
 
     /* --- 3D local array --- */
     int c[2][2][2];

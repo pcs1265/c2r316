@@ -46,6 +46,15 @@ int twelve_args(int a, int b, int c, int d, int e, int f, int g, int h, int i, i
     return a + b + c + d + e + f + g + h + i + j + k + l;
 }
 
+int long_after_regs(int a, int b, int c, int d, int e, int f, long g) {
+    return a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 0x12345678;
+}
+
+int two_stack_longs(int a, int b, int c, int d, int e, int f, long g, unsigned long h) {
+    return a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 &&
+           g == 0x12345678 && h == 0x87654321;
+}
+
 /* Function with stack args calling another function with stack args */
 int caller_stack(void) {
     return seven_args(1, 2, 3, 4, 5, 6, 7);
@@ -90,6 +99,8 @@ int main(void) {
     /* 5. Twelve args (stress test) */
     check("twelve(1..12)", twelve_args(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 78);
     check("twelve(12..1)", twelve_args(12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1), 78);
+    check("long after regs", long_after_regs(1, 2, 3, 4, 5, 6, 0x12345678), 1);
+    check("two stack longs", two_stack_longs(1, 2, 3, 4, 5, 6, 0x12345678, 0x87654321), 1);
 
     /* 6. Large values in stack args */
     check("seven large", seven_args(1000, 2000, 3000, 4000, 5000, 6000, 7000), 28000);

@@ -18,7 +18,11 @@ np[1]: PASS
 np[2]: PASS
 sizeof(int): PASS
 sizeof(int*): PASS
+long* init: PASS
+long* + 1: PASS
+long* load: PASS
+long* store: PASS
 ================
-PASS: 19
+PASS: 23
 FAIL: 0
 === done ===

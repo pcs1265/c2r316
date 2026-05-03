@@ -142,6 +142,17 @@ int main(void) {
     p = p + 1;
     check("*(p+1)", *p, 400);
 
+    /* 11. Long array element addressing */
+    long lvals[3];
+    long *lp;
+    lvals[0] = 0x10000;
+    lvals[1] = 0x20000;
+    lvals[2] = 0x30000;
+    idx = 1;
+    check("lvals[idx]", lvals[idx] == 0x20000, 1);
+    lp = &lvals[0];
+    check("*(lp+2)", *(lp + 2) == 0x30000, 1);
+
     /* summary */
     puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);

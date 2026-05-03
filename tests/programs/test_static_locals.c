@@ -44,6 +44,18 @@ int two_statics() {
     return a + b;
 }
 
+int static_long_counter() {
+    static long n = 0xFFFF;
+    n = n + 1;
+    return n == 0x10000 || n == 0x10001;
+}
+
+int static_ulong_value() {
+    static unsigned long u = 0x12345678;
+    u = u + 0x10000;
+    return u == 0x12355678 || u == 0x12365678;
+}
+
 int main() {
     pass_count = 0;
     fail_count = 0;
@@ -63,6 +75,10 @@ int main() {
 
     check("two_statics 1", two_statics(), 2 + 110);
     check("two_statics 2", two_statics(), 3 + 120);
+    check("static long 1", static_long_counter(), 1);
+    check("static long 2", static_long_counter(), 1);
+    check("static ulong 1", static_ulong_value(), 1);
+    check("static ulong 2", static_ulong_value(), 1);
 
     puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);

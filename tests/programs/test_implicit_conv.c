@@ -159,6 +159,21 @@ int main(void) {
     bool_result = !0;
     check("! result", bool_result, 1);
 
+    /* 13. long in conditions and explicit scalar conversion */
+    long l;
+    l = 0x10000;
+    if (l) {
+        check("long high cond", 1, 1);
+    } else {
+        check("long high cond", 0, 1);
+    }
+    n = l;
+    check("long to int zero low", n, 0);
+
+    l = 0x12345678;
+    n = l;
+    check("long to int low", n, 0x5678);
+
     /* summary */
     puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);

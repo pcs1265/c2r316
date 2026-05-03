@@ -1,0 +1,51 @@
+=== test_long ===
+long const full: PASS
+long to int low: PASS
+ulong const full: PASS
+ulong to int low: PASS
+long add carry: PASS
+long add assign: PASS
+long sub borrow: PASS
+long sub assign: PASS
+long mul high: PASS
+long mul assign: PASS
+signed long div: PASS
+signed long mod: PASS
+ulong div: PASS
+ulong mod: PASS
+ulong div assign: PASS
+ulong mod assign: PASS
+ulong compare: PASS
+signed compare: PASS
+long condition high: PASS
+long return: PASS
+ulong return: PASS
+long args: PASS
+ulong args: PASS
+split reg stack: PASS
+stack long args: PASS
+func ptr long: PASS
+global long init: PASS
+global ulong init: PASS
+global long write: PASS
+global ulong write: PASS
+local long array: PASS
+long pointer load: PASS
+long pointer store: PASS
+global long array 0: PASS
+global long array 2: PASS
+global long array write: PASS
+struct long field: PASS
+struct ulong field: PASS
+struct int neighbor: PASS
+global struct long: PASS
+global struct ulong: PASS
+global struct int: PASS
+static long 1: PASS
+static long 2: PASS
+sizeof long: PASS
+sizeof ulong: PASS
+================
+PASS: 46
+FAIL: 0
+=== done ===

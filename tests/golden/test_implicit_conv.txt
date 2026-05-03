@@ -22,7 +22,10 @@ int to uint: PASS
 && result: PASS
 || result: PASS
 ! result: PASS
+long high cond: PASS
+long to int zero low: PASS
+long to int low: PASS
 ================
-PASS: 23
+PASS: 26
 FAIL: 0
 === done ===

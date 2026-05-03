@@ -146,6 +146,34 @@ int main(void) {
         check("char cond 42", 0, 1);  /* should not execute */
     }
 
+    /* 15. int/long usual arithmetic conversions */
+    long l;
+    unsigned long ul;
+    l = 0x10000;
+    result = (l + 5) == 0x10005;
+    check("long+int promotes", result, 1);
+    result = (5 + l) == 0x10005;
+    check("int+long promotes", result, 1);
+
+    /* 16. unsigned int promotes into long without losing high half */
+    ui = 0xFFFF;
+    result = (l + ui) == 0x1FFFF;
+    check("long+uint promotes", result, 1);
+
+    /* 17. unsigned long dominates mixed signedness */
+    ul = 0xFFFFFFFF;
+    l = -1;
+    result = ul == l;
+    check("ulong==long bits", result, 1);
+    ul = 1;
+    result = l < ul;
+    check("long<ulong unsigned", result, 0);
+
+    /* 18. assignment still performs explicit destination conversion */
+    l = 0x12345678;
+    result = l;
+    check("long assign int trunc", result, 0x5678);
+
     /* summary */
     puts("================");
     print_str("PASS: "); print_int(pass_count); putchar(10);

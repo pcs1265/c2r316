@@ -30,7 +30,13 @@ g_pts_xsum: PASS
 g_pts[1].y: PASS
 g_pts_xsum2: PASS
 g_after_call: PASS
+long_field: PASS
+ulong_field: PASS
+long_neighbor: PASS
+g_long_field: PASS
+g_ulong_field: PASS
+g_long_neighbor: PASS
 ================
-PASS: 31
+PASS: 37
 FAIL: 0
 === done ===

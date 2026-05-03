@@ -10,15 +10,20 @@ g_arr[1]: PASS
 g_arr[2]: PASS
 g_arr[3]: PASS
 g_arr_sum: PASS
+g_larr[0]: PASS
+g_larr[2]: PASS
 g_x: PASS
 g_y: PASS
 g_z: PASS
+g_lx: PASS
+g_ulx: PASS
 a: PASS
 b: PASS
 c: PASS
 x: PASS
 y: PASS
 z: PASS
+long multi init: PASS
 p_init: PASS
 q_zero: PASS
 arr[0]: PASS
@@ -38,6 +43,7 @@ zerr[2]: PASS
 zerr[3]: PASS
 zerr[4]: PASS
 drr_mut: PASS
+long arr init: PASS
 loop_sum: PASS
 g_arr_wr: PASS
 g_part[0]: PASS
@@ -55,6 +61,6 @@ str[3]: PASS
 str[4]: PASS
 str[5]: PASS
 ================
-PASS: 55
+PASS: 61
 FAIL: 0
 === done ===

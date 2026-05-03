@@ -126,6 +126,18 @@ int main(void) {
     x %= 3;
     check("100 %= 3", x, 1);
 
+    /* Long division/modulo */
+    long lx;
+    unsigned long ulx;
+    lx = -70003;
+    check("long -70003 / 10", (lx / 10) == -7000, 1);
+    check("long -70003 % 10", (lx % 10) == -3, 1);
+    ulx = 0x12345678;
+    check("ulong / 0x10000", (ulx / 0x10000) == 0x1234, 1);
+    check("ulong % 0x10000", (ulx % 0x10000) == 0x5678, 1);
+    ulx /= 0x10000;
+    check("ulong /= 0x10000", ulx == 0x1234, 1);
+
     /* Multiple operations */
     check("(100 / 2) / 2", (100 / 2) / 2, 25);
     check("(100 % 30) % 7", (100 % 30) % 7, 3);
