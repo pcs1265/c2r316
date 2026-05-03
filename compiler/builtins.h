@@ -239,6 +239,40 @@ static unsigned long __builtin_ulmod(unsigned long dividend, unsigned long divis
     return result;
 }
 
+static unsigned int __builtin_uldivmod10(unsigned long dividend, unsigned long *quotient) {
+    unsigned int rem;
+    unsigned int *dwords;
+    unsigned int *qwords;
+    dwords = (unsigned int *)&dividend;
+    qwords = (unsigned int *)quotient;
+    asm(
+        "mov r13, 0\n"
+        "mov r14, 0\n"
+        "mov r17, 32\n"
+        "._uldivmod10_loop:\n"
+        "add %1, %1\n"
+        "adc %2, %2\n"
+        "adc r13, r13\n"
+        "adc r14, r14\n"
+        "sub r15, r13, 10\n"
+        "sbb r16, r14, r0\n"
+        "jc ._uldivmod10_skip\n"
+        "mov r13, r15\n"
+        "mov r14, r16\n"
+        "or %1, 1\n"
+        "._uldivmod10_skip:\n"
+        "sub r17, 1\n"
+        "jnz ._uldivmod10_loop\n"
+        "st %1, %3\n"
+        "st %2, %4\n"
+        "add %0, r13, r0"
+        : "=r"(rem)
+        : "r"(dwords[0]), "r"(dwords[1]), "r"(&qwords[0]), "r"(&qwords[1])
+        : "r13", "r14", "r15", "r16", "r17"
+    );
+    return rem;
+}
+
 static long __builtin_sldiv(long dividend, long divisor) {
     int neg;
     unsigned long udividend;

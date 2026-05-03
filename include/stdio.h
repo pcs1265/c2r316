@@ -263,8 +263,7 @@ static void print_long(long n) {
     }
     count = 0;
     while (u != 0) {
-        digits[count] = u % 10;
-        u = u / 10;
+        digits[count] = __builtin_uldivmod10(u, &u);
         count++;
     }
     i = count - 1;
@@ -285,8 +284,7 @@ static void print_ulong(unsigned long n) {
     }
     count = 0;
     while (n != 0) {
-        digits[count] = n % 10;
-        n = n / 10;
+        digits[count] = __builtin_uldivmod10(n, &n);
         count++;
     }
     i = count - 1;
@@ -473,10 +471,9 @@ static int printf(const char *fmt, ...) {
                             }
                         } else {
                             while (vl) {
-                                d = vl % 10;
+                                d = __builtin_uldivmod10(vl, &vl);
                                 buf[blen] = '0' + d;
                                 blen++;
-                                vl = vl / 10;
                             }
                         }
                         lo = 0; hi = blen - 1;
@@ -736,7 +733,7 @@ static int vsnprintf(char *buf, int size, const char *fmt, va_list ap) {
                     if (ulval==0) { if(prec!=0){ibuf[0]='0';blen=1;} }
                     else { vl=ulval;
                         if (spec=='x'||spec=='X'||spec=='o') { while(vl){ if(spec=='o'){d=vl%8;ibuf[blen]='0'+d;vl=vl/8;}else{d=vl%16;ibuf[blen]=(d<10)?'0'+d:((spec=='x')?'a'+d-10:'A'+d-10);vl=vl/16;} blen++; } }
-                        else { while(vl){d=vl%10;ibuf[blen]='0'+d;blen++;vl=vl/10;} }
+                        else { while(vl){d=__builtin_uldivmod10(vl,&vl);ibuf[blen]='0'+d;blen++;} }
                         lo=0;hi=blen-1; while(lo<hi){tmp=ibuf[lo];ibuf[lo]=ibuf[hi];ibuf[hi]=tmp;lo++;hi--;}
                     }
                 } else if (uval==0) { if(prec!=0){ibuf[0]='0';blen=1;} }
