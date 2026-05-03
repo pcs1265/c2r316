@@ -3,17 +3,22 @@ sprintf_ret: PASS
 sprintf_str: PASS
 sprintf_s: PASS
 sprintf_x: PASS
+sprintf_ld: PASS
+sprintf_lu: PASS
+sprintf_lx: PASS
 snprintf_ret: PASS
 snprintf_str: PASS
 snprintf_trunc_ret: PASS
 snprintf_trunc_buf: PASS
 fprintf:7
 fprintf_ret: PASS
+flong:-70000
+fprintf_long_ret: PASS
 fflush_ret: PASS
 ungetc_getchar: PASS
 99
 fscanf_d: PASS
 ===================
-12
+16
 0
 === done ===

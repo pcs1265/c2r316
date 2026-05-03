@@ -94,7 +94,7 @@
 - **`long` bitwise operators** — `&`, `|`, and `^` for `long` are not implemented yet. These should lower independently on low/high halves.
 - **`long` constant folding** — optimizer folds scalar constants only. Add fold support for `ILongBinOp`, `ILongUnaryOp`, and `ILongCompare`.
 - **`long` inliner support** — scalar inliner currently skips functions containing long IR. Teach `compiler/inline.py` to clone/rename `ILong*` instructions before enabling long-function inlining.
-- **`long` variadic support** — `va_arg(ap, long)` and variadic long argument layout need ABI validation and tests.
+- **`long` variadic edge cases** — `va_arg(ap, long)` and `%l` stdio formats work for supported fixed/variadic layouts; broaden tests for mixed long varargs beyond stdio.
 - **`long` ABI alignment** — current implementation flattens long args as two consecutive argument words. Revisit even-register alignment/skipped argument registers if strict ABI §2.2.1 compatibility is required.
 - **Long literal suffix typing** — `L`/`UL` suffixes are accepted, but semantic typing is still broad/simple. Audit parser/semantic behavior for C-compatible literal type selection.
 - **Struct/union pass-by-value** — hidden-pointer ABI (ABI §4) not generated; use explicit pointers
@@ -112,7 +112,7 @@ Current implemented slice:
 Next steps:
 - Add `long` bitwise ops: `&`, `|`, `^`, `~` complete high/low behavior and tests.
 - Add `long` shifts: constant small shifts first, then variable shifts.
-- Update `printf`/`scanf` formats for `%ld`, `%lu`, `%lx` if desired.
+- Extend stdio long formatting/parsing beyond `%ld`, `%lu`, and `%lx` if needed (`%lo`, `%lX`, width/precision edge cases).
 - Teach inliner, fold, and DCE optimizations more long-specific simplifications.
 - Add focused execution tests for arrays of long, struct fields of long, globals/statics, stack overflow args containing long, and function-pointer calls with long signatures.
 

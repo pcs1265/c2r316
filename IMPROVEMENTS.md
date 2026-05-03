@@ -24,8 +24,8 @@ The following items have been implemented since the last survey:
 | Algebraic identities | S | ★★ | Implemented — `x & 0`, `x & 0xFFFF`, `x | 0`, `x | 0xFFFF`, `x ^ 0`, self-ops |
 | `short`, `signed`, `register` keywords | S | ★★ | Implemented — all parsed and accepted; `short` maps to 16-bit type |
 | `string.h` core functions | M | ★★★ | Implemented — `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`, `strchr`, `strstr` in `include/string.h` |
-| `printf` | L | ★★★ | Implemented — `%d %u %x %c %s %%` in `include/stdio.h` |
-| `scanf` | M | ★★ | Implemented — `%d %u %x %c %s` in `include/stdio.h` |
+| `printf` | L | ★★★ | Implemented — `%d %u %x %ld %lu %lx %c %s %%` in `include/stdio.h` |
+| `scanf` | M | ★★ | Implemented — `%d %u %x %ld %lu %lx %c %s` in `include/stdio.h` |
 | Dead store elimination (DSE) | S | ★★ | Implemented in `compiler/fold.py` — removes stores to locals overwritten before read |
 | Common subexpression elimination (CSE) | S | ★★ | Implemented in `compiler/fold.py` — `IAddrOf` CSE and Var-load CSE within basic blocks |
 | Trivial jump removal | S | ★ | Implemented in `compiler/fold.py` — eliminates `jmp L` where L is the immediately following label |

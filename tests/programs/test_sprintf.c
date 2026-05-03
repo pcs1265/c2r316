@@ -42,6 +42,10 @@ int main(void) {
     char buf[32];
     int n;
     int x;
+    long sl;
+    unsigned long ul;
+    sl = -70000;
+    ul = 305419896;
 
     puts("=== test_sprintf ===");
 
@@ -58,6 +62,14 @@ int main(void) {
     sprintf(buf, "%x", 255);
     check_str("sprintf_x", buf, "ff");
 
+    /* sprintf long formats */
+    sprintf(buf, "%ld", sl);
+    check_str("sprintf_ld", buf, "-70000");
+    sprintf(buf, "%lu", ul);
+    check_str("sprintf_lu", buf, "305419896");
+    sprintf(buf, "%lx", ul);
+    check_str("sprintf_lx", buf, "12345678");
+
     /* snprintf fits */
     n = snprintf(buf, 32, "%d+%d=%d", 1, 2, 3);
     check("snprintf_ret", n, 5);
@@ -71,6 +83,9 @@ int main(void) {
     /* fprintf (writes to terminal, return value) */
     n = fprintf(stdout, "fprintf:%d\n", 7);
     check("fprintf_ret", n, 10);
+
+    n = fprintf(stdout, "flong:%ld\n", sl);
+    check("fprintf_long_ret", n, 13);
 
     /* fflush no-op */
     n = fflush(stdout);

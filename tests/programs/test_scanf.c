@@ -23,6 +23,9 @@ int main() {
     int d;
     unsigned int u;
     unsigned int x;
+    long ld;
+    unsigned long lu;
+    unsigned long lx;
     int c;
     char s[16];
     int ret;
@@ -45,6 +48,21 @@ int main() {
     /* %x */
     ret = scanf("%x", &x);
     check("scanf_x", x, 0xFF);
+
+    /* %ld */
+    ret = scanf("%ld", &ld);
+    check("scanf_ld_ret", ret, 1);
+    check("scanf_ld", ld == -70000, 1);
+
+    /* %lu */
+    ret = scanf("%lu", &lu);
+    check("scanf_lu_ret", ret, 1);
+    check("scanf_lu", lu == 305419896UL, 1);
+
+    /* %lx */
+    ret = scanf("%lx", &lx);
+    check("scanf_lx_ret", ret, 1);
+    check("scanf_lx", lx == 0x12345678, 1);
 
     /* %c */
     ret = scanf(" %c", &c);

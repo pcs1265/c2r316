@@ -8,6 +8,15 @@ scanf_d_neg: PASS
 scanf_u: PASS
 ff
 scanf_x: PASS
+-70000
+scanf_ld_ret: PASS
+scanf_ld: PASS
+305419896
+scanf_lu_ret: PASS
+scanf_lu: PASS
+12345678
+scanf_lx_ret: PASS
+scanf_lx: PASS
 A
 scanf_c: PASS
 hi
@@ -20,6 +29,6 @@ scanf_multi_ret: PASS
 scanf_multi_0: PASS
 scanf_multi_1: PASS
 ================
-13
+19
 0
 === done ===
