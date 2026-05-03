@@ -540,7 +540,7 @@ def test_inline_asm_clobbers():
 
     try:
         asm = _compile_via_main(
-            'int main() { asm("mov r19, 1" :: "r19"); return 0; }'
+            'int main() { asm("mov r19, 1" ::: "r19"); return 0; }'
         )
         check('asm callee-saved clobber saves r19',
               'st r19, r30' in asm and 'ld r19, r30' in asm,
@@ -549,18 +549,34 @@ def test_inline_asm_clobbers():
         check('asm callee-saved clobber saves r19', False, f'{type(e).__name__}: {e}')
 
     try:
-        _compile_via_main('int main() { asm("test r1, r1" :: "cc", "memory"); return 0; }')
+        _compile_via_main('int main() { asm("test r1, r1" ::: "cc", "memory"); return 0; }')
         check('asm accepts cc and memory clobbers', True)
     except Exception as e:
         check('asm accepts cc and memory clobbers', False, f'{type(e).__name__}: {e}')
 
     try:
-        _compile_via_main('int main() { asm("mov r30, 0" :: "r30"); return 0; }')
+        _compile_via_main('int main() { asm("mov r30, 0" ::: "r30"); return 0; }')
         check('asm rejects sp clobber', False, 'expected compiler error')
     except SystemExit as e:
         check('asm rejects sp clobber', 'r30' in str(e), str(e))
     except Exception as e:
         check('asm rejects sp clobber', False, f'{type(e).__name__}: {e}')
+
+    try:
+        asm = _compile_via_main('int main() { int x; asm("mov %0, 42" : "=r"(x)); return x; }')
+        ret, _, _ = _emu_run_main(asm)
+        check('asm output operand stores result', ret == 42, f'got {ret}')
+    except Exception as e:
+        check('asm output operand stores result', False, f'{type(e).__name__}: {e}')
+
+    try:
+        asm = _compile_via_main(
+            'int main() { int x = 5; asm("add %0, %1" : "+r"(x) : "r"(7)); return x; }'
+        )
+        ret, _, _ = _emu_run_main(asm)
+        check('asm read-write output operand', ret == 12, f'got {ret}')
+    except Exception as e:
+        check('asm read-write output operand', False, f'{type(e).__name__}: {e}')
 
 
 def test_goto():

@@ -207,7 +207,9 @@ class Analyzer:
             self._analyze_stmt(stmt.body)
 
         elif isinstance(stmt, AsmStmt):
-            for e in stmt.inputs:
+            for _, e in stmt.outputs:
+                self._analyze_expr(e)
+            for _, e in stmt.inputs:
                 self._analyze_expr(e)
 
         else:

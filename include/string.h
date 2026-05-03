@@ -14,7 +14,7 @@ static void memset(char *dst, int val, int n) {
         "add %0, 1\n"
         "sub %2, 1\n"
         "jnz .memset_loop"
-        : "r"(dst), "r"(val), "r"(n));
+        :: "r"(dst), "r"(val), "r"(n));
 }
 
 static void memcpy(char *dst, char *src, int n) {
@@ -26,7 +26,7 @@ static void memcpy(char *dst, char *src, int n) {
         "add %1, 1\n"
         "sub %2, 1\n"
         "jnz .memcpy_loop"
-        : "r"(dst), "r"(src), "r"(n));
+        :: "r"(dst), "r"(src), "r"(n));
 }
 
 static void memmove(char *dst, char *src, int n) {

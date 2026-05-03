@@ -618,32 +618,44 @@ class Parser:
             else_ = self._parse_stmt()
         return IfStmt(cond, then, else_)
 
+    def _parse_asm_operand_list(self):
+        operands = []
+        while not self._at(TK.RPAREN) and not self._at(TK.COLON):
+            chars = self._eat(TK.STRING_LIT).value
+            constraint = ''.join(chr(c) for c in chars)
+            self._eat(TK.LPAREN)
+            operands.append((constraint, self._parse_expr()))
+            self._eat(TK.RPAREN)
+            if not self._try_eat(TK.COMMA):
+                break
+        return operands
+
     def _parse_asm(self) -> AsmStmt:
-        # asm("template")  or  asm("template" : "r"(e), ... : "r10", ...)
+        # GCC-style: asm("template" : outputs : inputs : clobbers)
         self._eat(TK.ASM)
         self._eat(TK.LPAREN)
         template_chars = self._eat(TK.STRING_LIT).value
         template = ''.join(chr(c) for c in template_chars)
+        outputs = []
         inputs = []
         clobbers = []
         if self._try_eat(TK.COLON):
-            while not self._at(TK.RPAREN) and not self._at(TK.COLON):
-                # consume constraint string, e.g. "r"
-                self._eat(TK.STRING_LIT)
-                self._eat(TK.LPAREN)
-                inputs.append(self._parse_expr())
-                self._eat(TK.RPAREN)
-                if not self._try_eat(TK.COMMA):
-                    break
+            outputs = self._parse_asm_operand_list()
             if self._try_eat(TK.COLON):
-                while not self._at(TK.RPAREN):
-                    chars = self._eat(TK.STRING_LIT).value
-                    clobbers.append(''.join(chr(c) for c in chars))
-                    if not self._try_eat(TK.COMMA):
-                        break
+                inputs = self._parse_asm_operand_list()
+                if self._try_eat(TK.COLON):
+                    while not self._at(TK.RPAREN):
+                        chars = self._eat(TK.STRING_LIT).value
+                        clobbers.append(''.join(chr(c) for c in chars))
+                        if not self._try_eat(TK.COMMA):
+                            break
+            elif outputs:
+                first = outputs[0][0]
+                if not (first.startswith('=') or first.startswith('+')):
+                    raise self._err("asm input operands require a second ':' in GCC-style asm")
         self._eat(TK.RPAREN)
         self._eat(TK.SEMICOLON)
-        return AsmStmt(template, inputs, clobbers)
+        return AsmStmt(template, outputs, inputs, clobbers)
 
     def _parse_while(self) -> WhileStmt:
         self._eat(TK.WHILE)

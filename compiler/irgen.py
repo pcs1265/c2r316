@@ -15,7 +15,7 @@ from .ir import (
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram,
     ILongLoad, ILongStore, ILongBinOp, ILongUnaryOp, ILongCompare,
-    ILongRet, ILongCall,
+    ILongRet, ILongCall, AsmOutput,
     ASM_REGS,
 )
 
@@ -615,10 +615,31 @@ class IRGen:
             self._gen_stmt(stmt.body)
 
         elif isinstance(stmt, AsmStmt):
-            srcs = [self._gen_expr(e) for e in stmt.inputs]
+            outputs = []
+            for constraint, target in stmt.outputs:
+                if not constraint.startswith(('=', '+')) or 'r' not in constraint:
+                    raise IRGenError(f"asm: unsupported output constraint {constraint!r}")
+                if isinstance(getattr(target, 'ctype', None), CLong):
+                    raise IRGenError("asm: long output operands are not supported")
+                loc = self._loc(target)
+                t = self._tmp()
+                init = self._gen_expr(target) if constraint.startswith('+') else None
+                outputs.append((AsmOutput(t, init), target))
+            for constraint, _ in stmt.inputs:
+                if constraint.startswith(('=', '+')) or 'r' not in constraint:
+                    raise IRGenError(f"asm: unsupported input constraint {constraint!r}")
+            srcs = [self._gen_expr(e) for _, e in stmt.inputs]
             explicit = self._validate_asm_clobbers(stmt.clobbers)
-            self._emit(IInlineAsm(stmt.text, srcs, self._loc(stmt),
-                                  clobbers=frozenset(ASM_REGS[:len(srcs)]) | explicit))
+            operand_count = len(outputs) + len(srcs)
+            if operand_count > len(ASM_REGS):
+                raise IRGenError(
+                    f"asm: too many operands ({operand_count}, max {len(ASM_REGS)})"
+                )
+            self._emit(IInlineAsm(stmt.text, srcs, [out for out, _ in outputs],
+                                  self._loc(stmt),
+                                  clobbers=frozenset(ASM_REGS[:operand_count]) | explicit))
+            for out, target in outputs:
+                self._gen_store_to(out.dst, target)
 
         else:
             raise IRGenError(f"Unhandled statement: {type(stmt)}")

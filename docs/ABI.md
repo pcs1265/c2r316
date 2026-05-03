@@ -295,12 +295,19 @@ instruction groups (e.g., `sub r0, ... ; jz label`) to avoid flag clobbering.
 
 ## 7. Inline Assembly
 
-The inline assembly syntax `asm("template" : "r"(e0), "r"(e1), ...)` maps input
-operands to physical registers.  The compiler loads each input expression into
-a register before emitting the template, and substitutes `%0`, `%1`, … in the
-template with the corresponding register names.
+The inline assembly syntax is GCC-style:
 
-Available register pool for inline asm inputs (in order):
+```c
+asm("template" : outputs : inputs : clobbers);
+```
+
+Supported register constraints are `=r` for write-only outputs, `+r` for
+read-write outputs, and `r` for inputs. The compiler maps operands to physical
+registers, emits the template, then stores output registers back to their C
+lvalues. It substitutes `%0`, `%1`, … in the template with the corresponding
+register names. Output operands are numbered first, followed by input operands.
+
+Available register pool for inline asm operands (in order):
 
 ```
 %0 → r7  (t0)      %5 → r12 (t5)
@@ -310,7 +317,7 @@ Available register pool for inline asm inputs (in order):
 %4 → r11 (t4)      %9 → r16 (t9)
 ```
 
-Maximum 10 input operands per inline asm statement.
+Maximum 10 total operands per inline asm statement.
 
 Inline asm MUST NOT modify callee-saved registers (r19–r29), sp (r30), or lr
 (r31) unless it saves and restores them.  Caller-saved registers (r1–r18) may

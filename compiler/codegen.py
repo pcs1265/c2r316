@@ -1147,12 +1147,25 @@ class Codegen:
              etc.).  Break each cycle by moving one register's content to a parking
              register outside the asm target range, then rerun the safe-load loop.
         """
-        if len(instr.srcs) > len(ASM_REGS):
+        operand_count = len(instr.outputs) + len(instr.srcs)
+        if operand_count > len(ASM_REGS):
             raise CodegenError(
-                f"asm: too many input operands ({len(instr.srcs)}, max {len(ASM_REGS)})"
+                f"asm: too many operands ({operand_count}, max {len(ASM_REGS)})"
             )
-        n = len(instr.srcs)
-        targets = list(ASM_REGS[:n])
+        all_targets = list(ASM_REGS[:operand_count])
+        output_targets = all_targets[:len(instr.outputs)]
+        input_targets = all_targets[len(instr.outputs):]
+
+        load_targets: List[str] = []
+        load_srcs: List[Operand] = []
+        for out, target in zip(instr.outputs, output_targets):
+            if out.readwrite:
+                load_targets.append(target)
+                load_srcs.append(out.init)
+        for src, target in zip(instr.srcs, input_targets):
+            load_targets.append(target)
+            load_srcs.append(src)
+        n = len(load_srcs)
 
         def _src_preg(src) -> Optional[str]:
             """Physical register currently holding src's value, or None."""
@@ -1168,18 +1181,18 @@ class Codegen:
 
         # cur[i]: where operand i's value currently lives (None = memory/immediate).
         # This array is updated when cycle-breaking moves redirect a source.
-        cur: List[Optional[str]] = [_src_preg(instr.srcs[i]) for i in range(n)]
+        cur: List[Optional[str]] = [_src_preg(load_srcs[i]) for i in range(n)]
         done: List[bool] = [False] * n
-        target_set: Set[str] = set(targets)
+        target_set: Set[str] = set(all_targets)
 
         def _emit_load(i: int) -> None:
             r = cur[i]
             if r is not None:
-                if r != targets[i]:
-                    self._ins(f'mov {targets[i]}, {r}')
+                if r != load_targets[i]:
+                    self._ins(f'mov {load_targets[i]}, {r}')
                 # else: value is already in the right register
             else:
-                self._load_op(instr.srcs[i], targets[i])
+                self._load_op(load_srcs[i], load_targets[i])
             done[i] = True
 
         def _try_safe_loads() -> bool:
@@ -1190,7 +1203,7 @@ class Codegen:
                 if done[i]:
                     continue
                 # Safe if no other unfinished operand j reads from targets[i].
-                if all(done[j] or cur[j] != targets[i] for j in range(n) if j != i):
+                if all(done[j] or cur[j] != load_targets[i] for j in range(n) if j != i):
                     _emit_load(i)
                     progress = True
             return progress
@@ -1207,10 +1220,10 @@ class Codegen:
                 r for r in ('r17', 'r18', 'r19', 'r20', 'r21')
                 if r not in target_set
             )
-            self._ins(f'mov {park}, {targets[i]}')
+            self._ins(f'mov {park}, {load_targets[i]}')
             # Redirect any operand whose source was targets[i] to the parking reg.
             for j in range(n):
-                if not done[j] and cur[j] == targets[i]:
+                if not done[j] and cur[j] == load_targets[i]:
                     cur[j] = park
 
         self._invalidate_scratch()
@@ -1219,9 +1232,11 @@ class Codegen:
             text = line.strip()
             if not text:
                 continue
-            for i, reg in enumerate(targets):
+            for i, reg in enumerate(all_targets):
                 text = text.replace(f'%{i}', reg)
             self._ins(text)
+        for out, reg in zip(instr.outputs, output_targets):
+            self._store_op(reg, out.dst)
 
     def _gen_epilogue(self, lr_slot: int, frame_size: int):
         # Restore callee-saved registers

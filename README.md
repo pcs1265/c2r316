@@ -115,7 +115,7 @@ The compiler provides C header files with inline implementations:
 - `return`, `break`, `continue`
 - `switch` / `case` / `default` (with fallthrough support)
 - `goto` and labels
-- Inline assembly: `asm("template" : "r"(expr), ...)` — input operands, `%0`–`%9` substitution
+- Inline assembly: `asm("template" : outputs : inputs : clobbers)` with `=r`, `+r`, `r`, and `%0`–`%9` substitution
 
 ### Expressions
 - Integer literals: decimal, hex (`0x`), octal (`0`-prefix); `u`/`l` suffixes accepted
@@ -161,7 +161,6 @@ See [TODO.md](TODO.md) for the full list. Key gaps:
 - **`__func__` / `__FUNCTION__`** — C99 implicit per-function string; not yet implemented
 - **Designated initializers** — `{.field = val, [3] = x}` not supported
 - **Compound literals** — `(Type){...}` not supported
-- **Inline asm output operands / clobbers** — input-only `asm()`
 - **Bitfield struct members** — `: N` not supported
 - **Variable-length arrays (VLAs)** — not supported
 - **Signed division** — `__udiv`/`__umod` are unsigned helpers; no signed division

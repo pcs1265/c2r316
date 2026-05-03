@@ -32,7 +32,7 @@ from .ir import (
     Temp, Var, Global, ImmInt, StrLabel, Operand,
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
-    IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
+    IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr, AsmOutput,
     ILongLoad, ILongStore, ILongBinOp, ILongUnaryOp, ILongCompare,
     ILongRet, ILongCall, iter_defs,
 )
@@ -173,7 +173,13 @@ def _clone_instrs(
                 lambda m: _rl(m.group(1)),
                 instr.text,
             )
-            out.append(IInlineAsm(renamed_text, [_ro(s) for s in instr.srcs], instr.loc, instr.clobbers))
+            asm_outputs = [
+                AsmOutput(Temp(o.dst.id + temp_offset),
+                          _ro(o.init) if o.init is not None else None)
+                for o in instr.outputs
+            ]
+            out.append(IInlineAsm(renamed_text, [_ro(s) for s in instr.srcs],
+                                  asm_outputs, instr.loc, instr.clobbers))
 
         elif isinstance(instr, IVaStart):
             out.append(IVaStart(Temp(instr.dst.id + temp_offset), instr.num_fixed, instr.loc))

@@ -225,9 +225,10 @@ class DeclStmt(Stmt):
 
 @dataclass
 class AsmStmt(Stmt):
-    """asm("template" : "r"(e0), ... : "r10", ...)"""
+    """asm("template" : outputs : inputs : clobbers)"""
     text:   str        # template string, %0..%N are substituted
-    inputs: list       # list[Expr]
+    outputs: list = field(default_factory=list)   # list[(constraint, Expr)]
+    inputs:  list = field(default_factory=list)   # list[(constraint, Expr)]
     clobbers: list = field(default_factory=list)  # list[str]
 
 @dataclass
@@ -418,8 +419,10 @@ def dump_ast(node, indent: int = 0) -> str:
         return f'{prefix}DeclStmt({dump_ast(node.decl, 0)})'
 
     if isinstance(node, AsmStmt):
-        inputs = ', '.join(dump_ast(i, 0) for i in node.inputs)
-        return f'{prefix}AsmStmt("{node.text}"{", " + inputs if inputs else ""})'
+        outputs = ', '.join(f'{c}({dump_ast(e, 0)})' for c, e in node.outputs)
+        inputs = ', '.join(f'{c}({dump_ast(e, 0)})' for c, e in node.inputs)
+        parts = [p for p in (outputs, inputs) if p]
+        return f'{prefix}AsmStmt("{node.text}"{", " + ", ".join(parts) if parts else ""})'
 
     # ── Expressions ──
 

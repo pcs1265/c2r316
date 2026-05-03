@@ -390,24 +390,38 @@ ASM_REGS: List[str] = ['r7', 'r8', 'r9', 'r10', 'r11', 'r12',
                         'r13', 'r14', 'r15', 'r16']
 
 
+@dataclass(frozen=True)
+class AsmOutput:
+    dst: Temp
+    init: Optional[Operand] = None
+
+    @property
+    def readwrite(self) -> bool:
+        return self.init is not None
+
+
 @dataclass
 class IInlineAsm(Instr):
-    """asm("template" : srcs...)  — %0..%N substituted at codegen time.
+    """asm("template" : outputs : inputs : clobbers) — %0..%N substituted.
 
     clobbers: frozenset of physical register names that this instruction may
-    overwrite.  Set by irgen to ASM_REGS[:len(srcs)]; the register allocator
-    uses this to exclude those registers from Temps whose live range crosses
-    this instruction.
+    overwrite.  Set by irgen to operand registers plus explicit clobbers; the
+    register allocator uses this to exclude those registers from Temps whose
+    live range crosses this instruction.
     """
     text: str
     srcs: List[Operand]
+    outputs: List[AsmOutput] = field(default_factory=list)
     loc: Loc = field(default=None, repr=False)
     clobbers: frozenset = field(default_factory=frozenset)
 
-    def defs(self): return None
-    def uses(self): return list(self.srcs)
+    def defs(self): return [out.dst for out in self.outputs]
+    def uses(self):
+        return [out.init for out in self.outputs if out.init is not None] + list(self.srcs)
     def __str__(self):
-        return f'  asm({self.text!r}, {", ".join(str(s) for s in self.srcs)}){self._loc_str()}'
+        outs = ', '.join(('+' if o.readwrite else '=') + str(o.dst) for o in self.outputs)
+        ins = ', '.join(str(s) for s in self.srcs)
+        return f'  asm({self.text!r}; {outs}; {ins}){self._loc_str()}'
 
 
 @dataclass

@@ -40,7 +40,7 @@ void check(char *name, int got, int expected) {
 /* ── A. Basic asm mechanics ──────────────────────────────────────────────── */
 
 void asm_putchar(int c) {
-    asm("st %0, 0x9FB5" : "r"(c));
+    asm("st %0, 0x9FB5" :: "r"(c));
 }
 
 void asm_memset(int *dst, int val, int n) {
@@ -48,7 +48,7 @@ void asm_memset(int *dst, int val, int n) {
     for (i = 0; i < n; i++) {
         int *p;
         p = dst + i;
-        asm("st %0, %1" : "r"(val), "r"(p));
+        asm("st %0, %1" :: "r"(val), "r"(p));
     }
 }
 
@@ -58,7 +58,7 @@ void asm_memcpy(int *dst, int *src, int n) {
         int *ps; int *pd;
         ps = src + i;
         pd = dst + i;
-        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(ps), "r"(pd));
+        asm("ld %0, %1\nst %0, %2" :: "r"(0), "r"(ps), "r"(pd));
     }
 }
 
@@ -71,7 +71,7 @@ int asm_strlen(char *s) {
     while (1) {
         int *ps;
         ps = s + n;
-        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(ps), "r"(pc));
+        asm("ld %0, %1\nst %0, %2" :: "r"(0), "r"(ps), "r"(pc));
         if (c == 0) return n;
         n = n + 1;
     }
@@ -87,8 +87,8 @@ int asm_strcmp(char *a, char *b) {
     while (1) {
         int *pa; int *pb;
         pa = a + i; pb = b + i;
-        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(pa), "r"(pca));
-        asm("ld %0, %1\nst %0, %2" : "r"(0), "r"(pb), "r"(pcb));
+        asm("ld %0, %1\nst %0, %2" :: "r"(0), "r"(pa), "r"(pca));
+        asm("ld %0, %1\nst %0, %2" :: "r"(0), "r"(pb), "r"(pcb));
         if (ca != cb) return ca - cb;
         if (ca == 0)  return 0;
         i = i + 1;
@@ -98,7 +98,7 @@ int asm_strcmp(char *a, char *b) {
 
 /* 2-operand asm (%0,%1 → r7,r8): clobbers r7,r8 — both scratch, no allocatable regs */
 void asm_add(int a, int b, int *out) {
-    asm("add %0, %1\nst %0, %2" : "r"(a), "r"(b), "r"(out));
+    asm("add %0, %1\nst %0, %2" :: "r"(a), "r"(b), "r"(out));
 }
 
 /* 4-operand asm (%0..%3 → r7..r10): clobbers r7-r10, includes allocatable r10 */
@@ -106,7 +106,7 @@ void asm_multiline(int a, int b, int c, int *out) {
     asm("add %0, %1\n"
         "mul %0, %0, %2\n"
         "st %0, %3"
-        : "r"(a), "r"(b), "r"(c), "r"(out));
+        :: "r"(a), "r"(b), "r"(c), "r"(out));
 }
 
 /* ── B. Many-operand asm ─────────────────────────────────────────────────── */
@@ -121,7 +121,7 @@ void asm_weighted_sum(int a, int w1, int b, int w2, int *out) {
         "mul %2, %2, %3\n"
         "add %0, %2\n"
         "st %0, %4"
-        : "r"(a), "r"(w1), "r"(b), "r"(w2), "r"(out));
+        :: "r"(a), "r"(w1), "r"(b), "r"(w2), "r"(out));
 }
 
 /*
@@ -136,7 +136,7 @@ void asm_sum6(int a, int b, int c, int d, int e, int f, int *out) {
         "add %0, %4\n"
         "add %0, %5\n"
         "st %0, %6"
-        : "r"(a), "r"(b), "r"(c), "r"(d), "r"(e), "r"(f), "r"(out));
+        :: "r"(a), "r"(b), "r"(c), "r"(d), "r"(e), "r"(f), "r"(out));
 }
 
 /* ── C. Value live across multi-operand asm ──────────────────────────────── */
@@ -157,7 +157,7 @@ int live_across_4op_asm(int a, int b, int c) {
     asm("add %0, %1\n"
         "add %0, %2\n"
         "st %0, %3"
-        : "r"(a), "r"(b), "r"(c), "r"(p));
+        :: "r"(a), "r"(b), "r"(c), "r"(p));
     return pre + asm_result;
 }
 
@@ -179,7 +179,7 @@ int live_across_7op_asm(int a, int b, int c, int d, int e, int f) {
         "add %0, %4\n"
         "add %0, %5\n"
         "st %0, %6"
-        : "r"(a), "r"(b), "r"(c), "r"(d), "r"(e), "r"(f), "r"(p));
+        :: "r"(a), "r"(b), "r"(c), "r"(d), "r"(e), "r"(f), "r"(p));
     return pre + asm_result;
 }
 
@@ -199,7 +199,7 @@ int asm_accumulate(int n) {
     for (i = 0; i < n; i++) {
         int tmp;
         int *ptmp = &tmp;
-        asm("add %0, %1\nst %0, %2" : "r"(sum), "r"(i), "r"(ptmp));
+        asm("add %0, %1\nst %0, %2" :: "r"(sum), "r"(i), "r"(ptmp));
         sum = tmp;
     }
     return sum;  /* n*(n-1)/2 */
@@ -217,7 +217,7 @@ void asm_double_array(int *arr, int n) {
         val = arr[i];
         int *pdoubled = &doubled;
         /* 3-operand asm: %0=val(r7), %1=val(r8), %2=&doubled(r9) */
-        asm("add %0, %1\nst %0, %2" : "r"(val), "r"(val), "r"(pdoubled));
+        asm("add %0, %1\nst %0, %2" :: "r"(val), "r"(val), "r"(pdoubled));
         arr[i] = doubled;
     }
 }
@@ -245,7 +245,7 @@ int asm_call_mix(int a, int b, int c) {
     /* 4-operand asm: %0=b(r7), %1=c(r8), %2=b(r9), %3=&asm_result(r10) */
     asm("add %0, %1\n"
         "st %0, %3"
-        : "r"(b), "r"(c), "r"(b), "r"(p));
+        :: "r"(b), "r"(c), "r"(b), "r"(p));
     return sq + asm_result;
 }
 
@@ -258,7 +258,7 @@ int asm_then_call(int a, int b) {
     int asm_result;
     int *p = &asm_result;
     /* 3-operand asm */
-    asm("add %0, %1\nst %0, %2" : "r"(a), "r"(b), "r"(p));
+    asm("add %0, %1\nst %0, %2" :: "r"(a), "r"(b), "r"(p));
     return square(asm_result);   /* last use of asm_result IS the call arg */
 }
 
@@ -277,8 +277,8 @@ int asm_two_steps(int a, int b, int c) {
     int result;
     int *p1 = &r1_val;
     int *p2 = &result;
-    asm("add %0, %1\nst %0, %2" : "r"(a), "r"(b), "r"(p1));
-    asm("mul %0, %0, %1\nst %0, %2" : "r"(r1_val), "r"(c), "r"(p2));
+    asm("add %0, %1\nst %0, %2" :: "r"(a), "r"(b), "r"(p1));
+    asm("mul %0, %0, %1\nst %0, %2" :: "r"(r1_val), "r"(c), "r"(p2));
     return result;
 }
 
@@ -297,13 +297,13 @@ int asm_three_steps(int a, int b, int c, int d, int e) {
     int *pu = &u;
     int *pv = &v;
     asm("add %0, %1\nst %0, %2"
-        : "r"(a), "r"(b), "r"(pt));
+        :: "r"(a), "r"(b), "r"(pt));
     asm("mul %0, %0, %1\nst %0, %3"
-        : "r"(t), "r"(c), "r"(t), "r"(pu));
+        :: "r"(t), "r"(c), "r"(t), "r"(pu));
     asm("add %0, %1\n"
         "add %0, %2\n"
         "st %0, %3"
-        : "r"(u), "r"(d), "r"(e), "r"(pv));
+        :: "r"(u), "r"(d), "r"(e), "r"(pv));
     return v;
 }
 
@@ -314,7 +314,7 @@ int asm_explicit_clobber(int a, int b) {
     asm("mov r10, %0\n"
         "add r10, %1\n"
         "st r10, %2"
-        : "r"(a), "r"(b), "r"(p)
+        :: "r"(a), "r"(b), "r"(p)
         : "r10");
     return out;
 }

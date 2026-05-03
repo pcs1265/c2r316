@@ -29,6 +29,7 @@ static unsigned int __builtin_udiv(unsigned int dividend, unsigned int divisor) 
         "sub r11, 1\n"
         "jnz ._udiv_loop\n"
         "st %0, %2"
+        :
         : "r"(dividend), "r"(divisor), "r"(&res)
     );
     return res;
@@ -49,6 +50,7 @@ static unsigned int __builtin_umod(unsigned int dividend, unsigned int divisor) 
         "sub r11, 1\n"
         "jnz ._umod_loop\n"
         "st r10, %2"
+        :
         : "r"(dividend), "r"(divisor), "r"(&res)
     );
     return res;
@@ -113,9 +115,9 @@ static unsigned long __builtin_ulmake(unsigned int lo, unsigned int hi) {
 static unsigned int __builtin_umulh(unsigned int left, unsigned int right) {
     unsigned int result;
     asm(
-        "mulh %0, %0, %1\n"
-        "st %0, %2"
-        : "r"(left), "r"(right), "r"(&result)
+        "mulh %0, %1, %2"
+        : "=r"(result)
+        : "r"(left), "r"(right)
     );
     return result;
 }

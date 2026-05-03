@@ -325,7 +325,12 @@ def _subst_instr(instr: Instr, addr_sub, val_sub) -> Instr:
     if isinstance(instr, IJumpIfNot):
         return IJumpIfNot(val_sub(instr.cond), instr.target, instr.loc)
     if isinstance(instr, IInlineAsm):
-        return IInlineAsm(instr.text, [val_sub(s) for s in instr.srcs], instr.loc, instr.clobbers)
+        outputs = [
+            type(out)(out.dst, val_sub(out.init) if out.init is not None else None)
+            for out in instr.outputs
+        ]
+        return IInlineAsm(instr.text, [val_sub(s) for s in instr.srcs],
+                          outputs, instr.loc, instr.clobbers)
     if isinstance(instr, IVaArg):
         return IVaArg(instr.dst, val_sub(instr.ap), instr.step, instr.loc)
     return instr
