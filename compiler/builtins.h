@@ -249,12 +249,13 @@ static unsigned int __builtin_uldivmod10(unsigned long dividend, unsigned long *
         "mov r13, 0\n"
         "mov r14, 0\n"
         "mov r17, 32\n"
+        "mov r18, 10\n"
         "._uldivmod10_loop:\n"
         "add %1, %1\n"
         "adc %2, %2\n"
         "adc r13, r13\n"
         "adc r14, r14\n"
-        "sub r15, r13, 10\n"
+        "sub r15, r13, r18\n"
         "sbb r16, r14, r0\n"
         "jc ._uldivmod10_skip\n"
         "mov r13, r15\n"
@@ -268,7 +269,7 @@ static unsigned int __builtin_uldivmod10(unsigned long dividend, unsigned long *
         "add %0, r13, r0"
         : "=r"(rem)
         : "r"(dwords[0]), "r"(dwords[1]), "r"(&qwords[0]), "r"(&qwords[1])
-        : "r13", "r14", "r15", "r16", "r17"
+        : "r13", "r14", "r15", "r16", "r17", "r18"
     );
     return rem;
 }
