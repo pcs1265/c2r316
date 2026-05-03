@@ -328,12 +328,39 @@ class Machine:
                                  ins.update_flags, default=True)
             self.wr(d, self._source_high(p) | r); return
         if op == 'sub':
+            # Manual lines 313-342: there is no `sub D, P, Simm` encoding.
+            # The assembler rewrites `sub D, P, Simm` to `add D, P, -Simm` and
+            # `sub D, Simm` to `add D, D, -Simm`. The carry flag observed by
+            # downstream code is therefore the add's natural carry — which is
+            # the bitwise inverse of a true subtract's borrow. The two-arg-reg
+            # form expands to a real `sub D, D, Sreg`.
             d, p, s = self._three(args)
+            if not _is_reg(s):
+                neg = (-self.operand_value(s)) & _MASK16
+                r = self._add_result(self.operand_value(p), neg, 0,
+                                     ins.update_flags, default=True)
+                self.wr(d, self._source_high(p) | r); return
             pv = self.operand_value(p); sv = self.operand_value(s)
             r = self._sub_result(pv, sv, 0, ins.update_flags, default=True)
             self.wr(d, self._source_high(p) | r); return
         if op == 'sbb':
+            # Manual lines 344-371: assembler rewrites
+            #   `sbb D, Sreg`     → `sub D, D, Sreg`         (real sub, NO borrow)
+            #   `sbb D, Simm`     → `adc D, D, Simm ^ 0xFFFF`
+            #   `sbb D, P, Simm`  → `adc D, P, Simm ^ 0xFFFF`
+            # The adc forms naturally produce a carry that is the inverse of
+            # a true `sbb`'s borrow. Only the three-arg-reg form is real `sbb`.
+            if len(args) == 2 and _is_reg(args[1]):
+                d, s = args
+                pv = self.operand_value(d); sv = self.operand_value(s)
+                r = self._sub_result(pv, sv, 0, ins.update_flags, default=True)
+                self.wr(d, self._source_high(d) | r); return
             d, p, s = self._three(args)
+            if not _is_reg(s):
+                inv = self.operand_value(s) ^ _MASK16
+                r = self._add_result(self.operand_value(p), inv, self.flags.C,
+                                     ins.update_flags, default=True)
+                self.wr(d, self._source_high(p) | r); return
             r = self._sub_result(self.operand_value(p), self.operand_value(s), self.flags.C,
                                  ins.update_flags, default=True)
             self.wr(d, self._source_high(p) | r); return

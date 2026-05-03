@@ -425,6 +425,136 @@ def test_print_int_signed():
             check(f'print_int({n})', False, f'{type(e).__name__}: {e}')
 
 
+def test_sub_imm_carry_inverted():
+    """The R316 has no `sub D, P, Simm` encoding — the assembler rewrites
+    it to `add D, P, -Simm`, producing a carry that is the bitwise inverse
+    of a true subtract's borrow (manual sections sub/sbb).  The emulator
+    must model this so inline-asm code that relies on the post-`sub-imm`
+    carry behaves the same in tests as it does on real hardware.
+
+    The hello.c hang at commit 62854de was exactly this gap: __builtin_uldivmod10
+    used `sub r15, r13, 10` followed by `sbb r16, r14, r0` and `jc skip` —
+    the emu's old "real subtract" semantics produced the carry programmers
+    intuitively expect, while real HW produces the inverse.  Lock the
+    correct behavior with focused asserts."""
+    print('\n[bugfix: sub/sbb with immediate carry polarity]')
+    from tests.emu.parser import parse_asm
+    from tests.emu.machine import Machine
+
+    def run_carry(asm: str) -> int:
+        prog = parse_asm(asm)
+        m = Machine(prog)
+        m.pc = prog.labels['_start']
+        m.run()
+        return m.flags.C
+
+    # `sub D, P, Simm` ≡ `add D, P, -Simm`: carry = 1 iff p >= imm (the
+    # add's natural overflow), i.e. the OPPOSITE of a real subtract's borrow.
+    cases = [
+        # (p, imm, expected_C)
+        (20, 10, 1),    # 20 + 0xFFF6 overflows → C=1 (real sub: 20-10 no borrow → would be C=0)
+        (5,  10, 0),    # 5 + 0xFFF6 = 0xFFFB no overflow → C=0 (real sub: borrow → would be C=1)
+        (10, 10, 1),    # 10 + 0xFFF6 = 0x10000 overflows → C=1
+        (0,  10, 0),    # 0 + 0xFFF6 → C=0
+        (0xFFFF, 1, 1), # max + 0xFFFF → C=1
+    ]
+    for p, imm, exp in cases:
+        asm = f'_start:\n    mov r1, {p}\n    sub r0, r1, {imm}\n    hlt\n'
+        got = run_carry(asm)
+        check(f'sub r0, {p}, {imm}: C={exp}', got == exp,
+              f'got C={got} (real-HW expects {exp}, emu must NOT use real-sub borrow)')
+
+    # Two-arg `sub D, Simm` follows the same rewrite.
+    asm = '_start:\n    mov r1, 5\n    sub r1, 10\n    hlt\n'
+    got = run_carry(asm)
+    check('sub r1, 10 (two-arg imm): C=0 (no overflow on add)',
+          got == 0, f'got C={got}')
+
+    # `cmp P, Simm` is `sub r0, P, Simm` after macro expansion → same rule.
+    asm = '_start:\n    mov r1, 20\n    cmp r1, 10\n    hlt\n'
+    got = run_carry(asm)
+    check('cmp r1, 10 with r1=20: C=1', got == 1, f'got C={got}')
+
+    # Reg-form `sub` is unaffected (real subtract semantics preserved).
+    asm = '_start:\n    mov r1, 20\n    mov r2, 10\n    sub r0, r1, r2\n    hlt\n'
+    got = run_carry(asm)
+    check('sub r0, r1, r2 (reg form): C=0 (real sub, no borrow)',
+          got == 0, f'got C={got}')
+
+    # The exact uldivmod10 inner-loop pattern: sub-imm + sbb-reg + jc.
+    # On real HW this branches the OPPOSITE way from a naive read of `sub`.
+    # r13:r14 = 5:0, trial subtract 10 — should "skip" (i.e. NOT take it).
+    # Real HW: `sub r15, 5, 10` → C=0; then `sbb r16, 0, r0` with cin=0 → r16=0, C=0;
+    # `jc skip` not taken — would WRONGLY take the subtract on raw HW unless
+    # the C source compensates.  We assert the emu reproduces this trap.
+    asm = """_start:
+    mov r13, 5
+    mov r14, 0
+    sub r15, r13, 10
+    sbb r16, r14, r0
+    hlt
+"""
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_start']
+    m.run()
+    check('uldivmod10 trap: C=0 after sub-imm/sbb-reg with r13<imm',
+          m.flags.C == 0,
+          f'got C={m.flags.C} — emu still using pre-fix real-sub semantics?')
+
+    # `sbb D, P, Simm` rewrites to `adc D, P, ~Simm`.  Verify carry behaves
+    # like the adc's natural carry, not a true sbb borrow.
+    # adc with carry-in=0, p=10, ~Simm=~5=0xFFFA: 10 + 0xFFFA = 0x10004 → C=1.
+    asm = """_start:
+    mov r1, 10
+    add r0, r0    ; clear carry (0+0=0, no carry out)
+    sbb r2, r1, 5
+    hlt
+"""
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_start']
+    m.run()
+    check('sbb r2, r1=10, 5: C=1 (adc 10+0xFFFA overflows)',
+          m.flags.C == 1, f'got C={m.flags.C}')
+
+
+def test_print_long_via_printf():
+    """End-to-end: printf("%ld", N) on the emulator must terminate and emit
+    the correct decimal expansion.  The hello.c hang at commit 62854de was
+    a printf("%ld", 0x12345678) infinite loop driven by an inline-asm
+    divide-by-10 helper whose `sub r15, r13, 10; sbb r16, r14, r0; jc` chain
+    was broken by R316's carry-inversion on `sub-imm`.  This test executes
+    the full printf path; pre-fix it would burn through max_cycles."""
+    print('\n[execution: printf %ld]')
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('c2r316_main', os.path.join(ROOT, 'compiler.py'))
+    mod  = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    cases = [
+        (0,          '0'),
+        (1,          '1'),
+        (10,         '10'),
+        (305419896,  '305419896'),   # 0x12345678 — the hello.c case
+        (0xFFFFFFFF, '4294967295'),  # unsigned max as %lu, but %ld is signed: prints -1
+    ]
+    for n, expected in cases:
+        if n == 0xFFFFFFFF:
+            # signed: %ld of 0xFFFFFFFF is -1
+            src = f'#include <stdio.h>\nint main() {{ unsigned long x = {n}u; printf("%lu", x); return 0; }}\n'
+            expected = str(n)
+        else:
+            src = f'#include <stdio.h>\nint main() {{ long x = {n}; printf("%ld", x); return 0; }}\n'
+        try:
+            asm = mod.compile_c(src, src_name='<t>')
+            ret, out, _ = _emu_run_main(asm, max_cycles=2_000_000)
+            check(f'printf("%ld", {n}) == {expected!r}',
+                  out == expected,
+                  f'expected {expected!r} got {out!r}')
+        except Exception as e:
+            check(f'printf("%ld", {n})', False, f'{type(e).__name__}: {e}')
+
+
 def test_left_operand_preserved_across_binop():
     """Critical correctness: codegen must NOT clobber the left operand's
     register when generating 2-op forms like AND/OR/XOR/SHL/SHR.
@@ -871,6 +1001,8 @@ if __name__ == '__main__':
     test_inline_asm_clobbers()
     test_execution_smoke()
     test_print_int_signed()
+    test_sub_imm_carry_inverted()
+    test_print_long_via_printf()
     test_examples_run()
     test_goto()
     test_switch()
