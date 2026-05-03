@@ -643,6 +643,62 @@ def test_memory_round_trip_32bit():
           f'load upper={dst>>16:#06x}, store upper={src>>16:#06x}')
 
 
+def test_physically_zero_canonicalization():
+    """Manual line 32: writing a *physically zero* value (0x00000000,
+    0x40000000, 0x80000000, 0xC0000000) silently OR's 0x20000000 into the
+    stored cell; reading a cell that contains one of those values yields
+    0x0000001F. The emu must model both, AND the parser/loader must
+    canonicalize `dw 0` and uninitialized cells the same way the
+    assembler does, or programs that use bare `dw 0` for zero-init will
+    diverge between emu and real HW."""
+    print('\n[bugfix: physically-zero cell canonicalization]')
+    from tests.emu.parser import parse_asm
+    from tests.emu.machine import Machine
+
+    # `dw 0` must not read back as 0x0000001F: the loader is expected to
+    # canonicalize to 0x20000000 (low half = 0). The reading program sees
+    # 0 in the low half, which is what high-level languages assume.
+    asm = """_start:
+    mov r1, _zero
+    ld  r2, r1
+    hlt
+_zero:
+    dw 0
+"""
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_start']
+    m.run()
+    full = m.regs[2] & 0xFFFFFFFF
+    check('dw 0 reads back without 0x1F sentinel',
+          (full & 0xFFFF) == 0,
+          f'r2={full:#010x} — low half should be 0')
+    check('dw 0 stored canonicalized (bit 0x20000000 set)',
+          full == 0x20000000,
+          f'r2={full:#010x} — expected 0x20000000')
+
+    # Storing a physically-zero value via `st` must canonicalize. We
+    # construct 0x80000000 directly in r1 by writing it through the
+    # machine's register file (bypassing the assembler so we're sure the
+    # bit pattern is exact), then store and reload.
+    asm = """_start:
+    mov r2, 0x100
+    st  r1, r2
+    ld  r3, r2
+    hlt
+"""
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_start']
+    m.regs[1] = 0x80000000   # raw physically-zero, no asm rewrite involved
+    m.run()
+    stored = m.regs[3] & 0xFFFFFFFF
+    check('st of 0x80000000 canonicalizes to 0xA0000000',
+          stored == 0xA0000000,
+          f'r3={stored:#010x}, expected 0xA0000000 '
+          f'(= 0x80000000 | 0x20000000)')
+
+
 def test_print_long_via_printf():
     """End-to-end: printf("%ld", N) on the emulator must terminate and emit
     the correct decimal expansion.  The hello.c hang at commit 62854de was
@@ -1129,6 +1185,7 @@ if __name__ == '__main__':
     test_nop_does_not_clobber_r16()
     test_mul_forwards_p_upper_half()
     test_memory_round_trip_32bit()
+    test_physically_zero_canonicalization()
     test_print_long_via_printf()
     test_examples_run()
     test_goto()

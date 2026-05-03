@@ -292,12 +292,26 @@ def parse_asm(text: str) -> Program:
     # Any labels still pending at EOF point one past the last placed cell
     flush_labels_to(cursor)
 
-    # Resolve dw references to symbols
+    # Resolve dw references to symbols. Manual line 32 + line 531: cells
+    # whose stored value is one of the four *physically zero* patterns get
+    # the 0x20000000 bit set automatically by the assembler when written
+    # out, so a `dw 0` doesn't load as a value that subsequently reads as
+    # 0x0000001F. Mirror that canonicalization here.
     for addr, tok in deferred_dw:
         try:
-            mem[addr] = _resolve_symbol(tok, labels) & _MASK16
+            v = _resolve_symbol(tok, labels) & 0xFFFFFFFF
         except ValueError:
-            mem[addr] = 0
+            v = 0
+        if (v & 0x3FFFFFFF) == 0:
+            v |= 0x20000000
+        mem[addr] = v
+
+    # Uninitialized RAM cells default to 0 in `mem[] = [0] * (_MASK16+1)`,
+    # which on real HW would read back as 0x0000001F. Canonicalize them
+    # too so test programs that touch un-`dw`'d addresses don't surprise.
+    for i in range(len(mem)):
+        if isinstance(mem[i], int) and (mem[i] & 0x3FFFFFFF) == 0:
+            mem[i] = 0x20000000
 
     return Program(mem=mem, labels=labels, code_end=cursor)
 

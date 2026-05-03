@@ -663,7 +663,16 @@ class Machine:
         cell = self._fetch_cell(addr)
         if isinstance(cell, Insn):
             return 0   # code memory has no real opcode encoding
-        return cell & 0xFFFFFFFF
+        # Manual line 32: cells whose stored ctype is one of the four
+        # *physically zero* values (0x00000000 / 0x40000000 / 0x80000000 /
+        # 0xC0000000) are misinterpreted on read as the temperature-dependent
+        # 0x0000001F sentinel. In practice writes set bit 0x20000000 to keep
+        # the cell out of this range, but a freshly-zeroed RAM cell or one
+        # initialized via `dw 0` can still trip it.
+        v = cell & 0xFFFFFFFF
+        if (v & 0x3FFFFFFF) == 0:
+            return 0x0000001F
+        return v
 
     def mem_write(self, addr: int, value: int) -> None:
         addr &= _MASK16
@@ -767,7 +776,15 @@ class Machine:
             return   # other terminal MMIO: ignore in emulator
         if not self._is_writable_internal_addr(addr):
             return   # read-only mirror / external mirror — write ignored
-        self.mem[self._map_internal_addr(addr)] = value & 0xFFFFFFFF
+        # Manual line 32: writing a *physically zero* value yields a stored
+        # cell with the 0x20000000 bit set — the assembler/HW silently
+        # rewrites the four bad patterns. Apply the same canonicalization
+        # so emu writes never produce a cell that subsequent reads would
+        # mis-interpret as 0x0000001F.
+        v = value & 0xFFFFFFFF
+        if (v & 0x3FFFFFFF) == 0:
+            v |= 0x20000000
+        self.mem[self._map_internal_addr(addr)] = v
 
     def _r316_to_ansi(self, color: int) -> int:
         """Map R316 color index to ANSI 256-color palette."""
