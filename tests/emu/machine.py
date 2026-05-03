@@ -312,6 +312,16 @@ class Machine:
                 p = s if _is_reg(s) else 'r0'
             else:
                 raise RuntimeError(f"unexpected mov arity: {args}")
+            # Manual lines 522-531: the four `mov r0, r0, {r0|0}` /
+            # `movf r0, r0, {r0|0}` encodings are physically zero. The
+            # assembler/HW sets the 0x20000000 bit on output, which redirects
+            # the destination field from r0 to r16. Model that redirect so
+            # tests catch any code (inline asm, raw `nop`, etc.) that hits it.
+            if d == 'r0' and p == 'r0' and (
+                (_is_reg(s) and s == 'r0') or
+                (not _is_reg(s) and self.operand_value(s) == 0)
+            ):
+                d = 'r16'
             value = self._source_high(p) | (self.operand_value(s) & _MASK16)
             self._maybe_logic_flags(value, ins.update_flags, default=False)
             self.wr(d, value)

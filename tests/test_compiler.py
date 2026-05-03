@@ -519,6 +519,59 @@ def test_sub_imm_carry_inverted():
           m.flags.C == 1, f'got C={m.flags.C}')
 
 
+def test_nop_does_not_clobber_r16():
+    """Manual section `mov` (lines 522-531): the four `mov r0, r0, {r0|0}`
+    encodings are physically zero, and the assembler/HW silently sets the
+    0x20000000 bit on output, redirecting D from r0 to r16. The `nop`
+    macro therefore MUST NOT be `mov r0, r0, r0` — that's one of the bad
+    encodings. Real TPTASM expands `nop` to `mov r0, r0, r1`.
+
+    Pre-fix the emu defined `nop` as `mov r0, r0` (2-arg, expanding to
+    `mov r0, r0, r0`) and the dispatcher quietly executed it as a write
+    to r0 (discarded), masking the r16 corruption that would happen on
+    real hardware."""
+    print('\n[bugfix: nop must not corrupt r16]')
+    from tests.emu.parser import parse_asm
+    from tests.emu.machine import Machine
+
+    # The macro form: r16 must be untouched.
+    asm = """_start:
+    mov r16, 0xBEEF
+    nop
+    hlt
+"""
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_start']
+    m.run()
+    check('nop preserves r16', m.regs[16] & 0xFFFF == 0xBEEF,
+          f'r16={m.regs[16]:#x} after nop — macro is encoding as physically-zero')
+
+    # The four bad raw encodings: emu must reproduce the r16 redirect so
+    # any test or inline asm that hits one fails loudly.
+    bad_forms = [
+        ('mov r0, r0, r0', 'mov-reg'),
+        ('mov r0, r0, 0',  'mov-imm'),
+        ('movf r0, r0, r0','movf-reg'),
+        ('movf r0, r0, 0', 'movf-imm'),
+    ]
+    for instr, label in bad_forms:
+        asm = f'_start:\n    mov r16, 0xBEEF\n    mov r1, 0x1234\n    {instr}\n    hlt\n'
+        prog = parse_asm(asm)
+        m = Machine(prog)
+        m.pc = prog.labels['_start']
+        m.run()
+        # Real HW redirects D=r0 → D=r16 and stores S there. S is r0 (= 0)
+        # or imm 0; either way the result is whatever `_source_high(r0) |
+        # 0` evaluates to. For our purposes any change away from 0xBEEF is
+        # the redirect firing.
+        clobbered = (m.regs[16] & 0xFFFF) != 0xBEEF
+        check(f'{label} redirects r0→r16 (real HW behavior)',
+              clobbered,
+              f'r16 still {m.regs[16]:#x} — emu missed the physically-zero '
+              f'encoding redirect')
+
+
 def test_print_long_via_printf():
     """End-to-end: printf("%ld", N) on the emulator must terminate and emit
     the correct decimal expansion.  The hello.c hang at commit 62854de was
@@ -1002,6 +1055,7 @@ if __name__ == '__main__':
     test_execution_smoke()
     test_print_int_signed()
     test_sub_imm_carry_inverted()
+    test_nop_does_not_clobber_r16()
     test_print_long_via_printf()
     test_examples_run()
     test_goto()

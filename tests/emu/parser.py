@@ -51,10 +51,14 @@ def _strip_comment(line: str) -> str:
     return ''.join(out).rstrip()
 
 # Common aliases we hardcode: TPTASM common.asm defines these.
+# `nop` per manual line 516 is `mov r0, r0, r1`, NOT `mov r0, r0, r0` —
+# the latter encodes as 0x00000000 (physically zero), which the assembler/HW
+# silently rewrites to set bit 0x20000000, redirecting the destination from
+# r0 to r16 and clobbering it.
 _MACROS = {
     'cmp':  ('sub', ['r0']),
     'test': ('and', ['r0']),
-    'nop':  ('mov', ['r0', 'r0']),
+    'nop':  ('mov', ['r0', 'r0', 'r1']),
 }
 
 
