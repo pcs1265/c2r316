@@ -9,12 +9,12 @@
  *   puts(s), print_str(s)
  *   fputs(s, stream), fgets(s, n, stream)
  *   fflush(stream)
- *   print_int(n), print_uint(n), print_hex(n)
- *   printf(fmt, ...)         — %d %u %x %c %s %%
+ *   print_int(n), print_uint(n), print_long(n), print_ulong(n), print_hex(n)
+ *   printf(fmt, ...)         — %d %u %x %ld %lu %lx %c %s %%
  *   fprintf(stream, fmt, ...)
  *   sprintf(buf, fmt, ...)
  *   snprintf(buf, n, fmt, ...)
- *   scanf(fmt, ...)          — %d %u %x %c %s
+ *   scanf(fmt, ...)          — %d %u %x %ld %lu %lx %c %s
  *   fscanf(stream, fmt, ...)
  */
 
@@ -245,6 +245,57 @@ static void print_uint(unsigned int n) {
     }
 }
 
+static void print_long(long n) {
+    int digits[11];
+    int count;
+    int i;
+    unsigned long u;
+
+    if (n < 0) {
+        term_putch('-');
+        u = 0 - n;
+    } else {
+        u = n;
+    }
+    if (u == 0) {
+        term_putch('0');
+        return;
+    }
+    count = 0;
+    while (u != 0) {
+        digits[count] = u % 10;
+        u = u / 10;
+        count++;
+    }
+    i = count - 1;
+    while (i >= 0) {
+        term_putch(digits[i] + '0');
+        i--;
+    }
+}
+
+static void print_ulong(unsigned long n) {
+    int digits[11];
+    int count;
+    int i;
+
+    if (n == 0) {
+        term_putch('0');
+        return;
+    }
+    count = 0;
+    while (n != 0) {
+        digits[count] = n % 10;
+        n = n / 10;
+        count++;
+    }
+    i = count - 1;
+    while (i >= 0) {
+        term_putch(digits[i] + '0');
+        i--;
+    }
+}
+
 /* ── print_hex ──────────────────────────────────────────────────────────── */
 
 static void print_hex(unsigned int n) {
@@ -276,9 +327,12 @@ static int printf(const char *fmt, ...) {
     int n;
     int flag_left, flag_zero, flag_plus, flag_space, flag_hash;
     int width, prec;
-    int spec;
+    int spec, length_long;
     int is_signed, negative;
     unsigned int uval;
+    unsigned long ulval;
+    unsigned long vl;
+    long lval;
     int ival;
     int buf[20];
     int prefix[4];
@@ -330,6 +384,12 @@ static int printf(const char *fmt, ...) {
                 }
             }
 
+            length_long = 0;
+            if (*fmt == 'l') {
+                length_long = 1;
+                fmt++;
+            }
+
             spec = *fmt;
             if (*fmt) fmt++;
 
@@ -364,7 +424,17 @@ static int printf(const char *fmt, ...) {
                        spec == 'x' || spec == 'X' || spec == 'o') {
                 is_signed = (spec == 'd' || spec == 'i');
                 negative = 0;
-                if (is_signed) {
+                if (length_long && is_signed) {
+                    lval = va_arg(ap, long);
+                    if (lval < 0) {
+                        negative = 1;
+                        ulval = 0 - lval;
+                    } else {
+                        ulval = lval;
+                    }
+                } else if (length_long) {
+                    ulval = va_arg(ap, unsigned long);
+                } else if (is_signed) {
                     ival = va_arg(ap, int);
                     if (ival & 0x8000) {
                         negative = 1;
@@ -379,7 +449,43 @@ static int printf(const char *fmt, ...) {
 
                 /* convert to digits in buf[], least-significant first */
                 blen = 0;
-                if (uval == 0) {
+                if (length_long) {
+                    if (ulval == 0) {
+                        if (prec != 0) { buf[0] = '0'; blen = 1; }
+                    } else {
+                        vl = ulval;
+                        if (spec == 'x' || spec == 'X' || spec == 'o') {
+                            while (vl) {
+                                if (spec == 'o') {
+                                    d = vl % 8;
+                                    buf[blen] = '0' + d;
+                                    vl = vl / 8;
+                                } else {
+                                    d = vl % 16;
+                                    if (spec == 'x') {
+                                        buf[blen] = (d < 10) ? '0' + d : 'a' + d - 10;
+                                    } else {
+                                        buf[blen] = (d < 10) ? '0' + d : 'A' + d - 10;
+                                    }
+                                    vl = vl / 16;
+                                }
+                                blen++;
+                            }
+                        } else {
+                            while (vl) {
+                                d = vl % 10;
+                                buf[blen] = '0' + d;
+                                blen++;
+                                vl = vl / 10;
+                            }
+                        }
+                        lo = 0; hi = blen - 1;
+                        while (lo < hi) {
+                            tmp = buf[lo]; buf[lo] = buf[hi]; buf[hi] = tmp;
+                            lo++; hi--;
+                        }
+                    }
+                } else if (uval == 0) {
                     if (prec != 0) { buf[0] = '0'; blen = 1; }
                 } else {
                     v = uval;
@@ -486,8 +592,8 @@ static int fprintf(FILE *stream, const char *fmt, ...) {
     {
         /* inline: same body as printf but driven by ap already started */
         int flag_left, flag_zero, flag_plus, flag_space, flag_hash;
-        int width, prec, spec, is_signed, negative;
-        unsigned int uval; int ival;
+        int width, prec, spec, length_long, is_signed, negative;
+        unsigned int uval; unsigned long ulval; unsigned long vl; long lval; int ival;
         int buf[20]; int prefix[4];
         int blen, plen, zero_pad, content_width, total_pad, pad;
         int lo, hi, bi, pi, zi, tmp, d;
@@ -510,6 +616,8 @@ static int fprintf(FILE *stream, const char *fmt, ...) {
                 while (*fmt>='0'&&*fmt<='9') { width=width*10+(*fmt-'0'); fmt++; }
                 prec=-1;
                 if (*fmt=='.') { fmt++; prec=0; while (*fmt>='0'&&*fmt<='9') { prec=prec*10+(*fmt-'0'); fmt++; } }
+                length_long=0;
+                if (*fmt=='l') { length_long=1; fmt++; }
                 spec=*fmt; if (*fmt) fmt++;
                 if (spec=='%') { term_putch('%'); n++; }
                 else if (spec=='c') {
@@ -526,10 +634,19 @@ static int fprintf(FILE *stream, const char *fmt, ...) {
                     if (flag_left) { while(pad>0){term_putch(' ');n++;pad--;} }
                 } else if (spec=='d'||spec=='i'||spec=='u'||spec=='x'||spec=='X'||spec=='o') {
                     is_signed=(spec=='d'||spec=='i'); negative=0;
-                    if (is_signed) { ival=va_arg(ap,int); if(ival&0x8000){negative=1;uval=(unsigned int)(0-ival);}else uval=(unsigned int)ival; }
+                    if (length_long&&is_signed) { lval=va_arg(ap,long); if(lval<0){negative=1;ulval=0-lval;}else ulval=lval; }
+                    else if (length_long) { ulval=va_arg(ap,unsigned long); }
+                    else if (is_signed) { ival=va_arg(ap,int); if(ival&0x8000){negative=1;uval=(unsigned int)(0-ival);}else uval=(unsigned int)ival; }
                     else { ival=va_arg(ap,int); uval=(unsigned int)ival; }
                     blen=0;
-                    if (uval==0) { if(prec!=0){buf[0]='0';blen=1;} }
+                    if (length_long) {
+                        if (ulval==0) { if(prec!=0){buf[0]='0';blen=1;} }
+                        else { vl=ulval;
+                            if (spec=='x'||spec=='X'||spec=='o') { while(vl){ if(spec=='o'){d=vl%8;buf[blen]='0'+d;vl=vl/8;}else{d=vl%16;buf[blen]=(d<10)?'0'+d:((spec=='x')?'a'+d-10:'A'+d-10);vl=vl/16;} blen++; } }
+                            else { while(vl){d=vl%10;buf[blen]='0'+d;blen++;vl=vl/10;} }
+                            lo=0;hi=blen-1; while(lo<hi){tmp=buf[lo];buf[lo]=buf[hi];buf[hi]=tmp;lo++;hi--;}
+                        }
+                    } else if (uval==0) { if(prec!=0){buf[0]='0';blen=1;} }
                     else { v=uval;
                         if (spec=='x') { while(v){d=v&0xF;buf[blen]=(d<10)?'0'+d:'a'+d-10;blen++;v=v>>4;} }
                         else if (spec=='X') { while(v){d=v&0xF;buf[blen]=(d<10)?'0'+d:'A'+d-10;blen++;v=v>>4;} }
@@ -564,8 +681,8 @@ static int vsnprintf(char *buf, int size, const char *fmt, va_list ap) {
     int n, rem;
     char *p;
     int flag_left, flag_zero, flag_plus, flag_space, flag_hash;
-    int width, prec, spec, is_signed, negative;
-    unsigned int uval; int ival;
+    int width, prec, spec, length_long, is_signed, negative;
+    unsigned int uval; unsigned long ulval; unsigned long vl; long lval; int ival;
     int ibuf[20]; int prefix[4];
     int blen, plen, zero_pad, content_width, total_pad, pad;
     int lo, hi, bi, pi, zi, tmp, d;
@@ -592,6 +709,8 @@ static int vsnprintf(char *buf, int size, const char *fmt, va_list ap) {
             while (*fmt>='0'&&*fmt<='9') { width=width*10+(*fmt-'0'); fmt++; }
             prec=-1;
             if (*fmt=='.') { fmt++; prec=0; while (*fmt>='0'&&*fmt<='9') { prec=prec*10+(*fmt-'0'); fmt++; } }
+            length_long=0;
+            if (*fmt=='l') { length_long=1; fmt++; }
             spec=*fmt; if (*fmt) fmt++;
             if (spec=='%') { _EMIT('%'); }
             else if (spec=='c') {
@@ -608,10 +727,19 @@ static int vsnprintf(char *buf, int size, const char *fmt, va_list ap) {
                 if (flag_left) { while(pad>0){_EMIT(' ');pad--;} }
             } else if (spec=='d'||spec=='i'||spec=='u'||spec=='x'||spec=='X'||spec=='o') {
                 is_signed=(spec=='d'||spec=='i'); negative=0;
-                if (is_signed) { ival=va_arg(ap,int); if(ival&0x8000){negative=1;uval=(unsigned int)(0-ival);}else uval=(unsigned int)ival; }
+                if (length_long&&is_signed) { lval=va_arg(ap,long); if(lval<0){negative=1;ulval=0-lval;}else ulval=lval; }
+                else if (length_long) { ulval=va_arg(ap,unsigned long); }
+                else if (is_signed) { ival=va_arg(ap,int); if(ival&0x8000){negative=1;uval=(unsigned int)(0-ival);}else uval=(unsigned int)ival; }
                 else { ival=va_arg(ap,int); uval=(unsigned int)ival; }
                 blen=0;
-                if (uval==0) { if(prec!=0){ibuf[0]='0';blen=1;} }
+                if (length_long) {
+                    if (ulval==0) { if(prec!=0){ibuf[0]='0';blen=1;} }
+                    else { vl=ulval;
+                        if (spec=='x'||spec=='X'||spec=='o') { while(vl){ if(spec=='o'){d=vl%8;ibuf[blen]='0'+d;vl=vl/8;}else{d=vl%16;ibuf[blen]=(d<10)?'0'+d:((spec=='x')?'a'+d-10:'A'+d-10);vl=vl/16;} blen++; } }
+                        else { while(vl){d=vl%10;ibuf[blen]='0'+d;blen++;vl=vl/10;} }
+                        lo=0;hi=blen-1; while(lo<hi){tmp=ibuf[lo];ibuf[lo]=ibuf[hi];ibuf[hi]=tmp;lo++;hi--;}
+                    }
+                } else if (uval==0) { if(prec!=0){ibuf[0]='0';blen=1;} }
                 else { v=uval;
                     if (spec=='x') { while(v){d=v&0xF;ibuf[blen]=(d<10)?'0'+d:'a'+d-10;blen++;v=v>>4;} }
                     else if (spec=='X') { while(v){d=v&0xF;ibuf[blen]=(d<10)?'0'+d:'A'+d-10;blen++;v=v>>4;} }
@@ -658,7 +786,7 @@ static int sprintf(char *buf, const char *fmt, ...) {
 }
 
 /* ── scanf ──────────────────────────────────────────────────────────────── */
-/* Supports: %d %u %x %c %s — no width/precision/length modifiers.         */
+/* Supports: %d %u %x %ld %lu %lx %c %s — no width/precision.              */
 /* Returns number of items successfully assigned (EOF=-1 not implemented).  */
 
 static int _is_space(int c) {
@@ -694,9 +822,13 @@ static int scanf(const char *fmt, ...) {
     int c;
     int neg;
     unsigned int uval;
+    unsigned long ulval;
     int *iptr;
     unsigned int *uptr;
+    long *lptr;
+    unsigned long *ulptr;
     char *sptr;
+    int length_long;
 
     va_start(ap, fmt);
     assigned = 0;
@@ -705,6 +837,11 @@ static int scanf(const char *fmt, ...) {
     while (*fmt) {
         if (*fmt == '%') {
             fmt++;
+            length_long = 0;
+            if (*fmt == 'l') {
+                length_long = 1;
+                fmt++;
+            }
             if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x') {
                 /* skip leading whitespace */
                 if (c == 0) c = _cooked_getch();
@@ -712,38 +849,72 @@ static int scanf(const char *fmt, ...) {
 
                 if (*fmt == 'x') {
                     uval = 0;
+                    ulval = 0;
                     if (!_is_xdigit(c)) { fmt++; continue; }
                     while (_is_xdigit(c)) {
-                        uval = uval * 16 + _xdigit_val(c);
+                        if (length_long) {
+                            ulval = ulval * 16 + _xdigit_val(c);
+                        } else {
+                            uval = uval * 16 + _xdigit_val(c);
+                        }
                         c = _cooked_getch();
                     }
-                    uptr = va_arg(ap, unsigned int *);
-                    *uptr = uval;
+                    if (length_long) {
+                        ulptr = va_arg(ap, unsigned long *);
+                        *ulptr = ulval;
+                    } else {
+                        uptr = va_arg(ap, unsigned int *);
+                        *uptr = uval;
+                    }
                     assigned++;
                 } else if (*fmt == 'u') {
                     uval = 0;
+                    ulval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
                     while (_is_digit(c)) {
-                        uval = uval * 10 + (c - '0');
+                        if (length_long) {
+                            ulval = ulval * 10 + (c - '0');
+                        } else {
+                            uval = uval * 10 + (c - '0');
+                        }
                         c = _cooked_getch();
                     }
-                    uptr = va_arg(ap, unsigned int *);
-                    *uptr = uval;
+                    if (length_long) {
+                        ulptr = va_arg(ap, unsigned long *);
+                        *ulptr = ulval;
+                    } else {
+                        uptr = va_arg(ap, unsigned int *);
+                        *uptr = uval;
+                    }
                     assigned++;
                 } else {
                     neg = 0;
                     if (c == '-') { neg = 1; c = _cooked_getch(); }
                     uval = 0;
+                    ulval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
                     while (_is_digit(c)) {
-                        uval = uval * 10 + (c - '0');
+                        if (length_long) {
+                            ulval = ulval * 10 + (c - '0');
+                        } else {
+                            uval = uval * 10 + (c - '0');
+                        }
                         c = _cooked_getch();
                     }
-                    iptr = va_arg(ap, int *);
-                    if (neg) {
-                        *iptr = 0 - uval;
+                    if (length_long) {
+                        lptr = va_arg(ap, long *);
+                        if (neg) {
+                            *lptr = 0 - ulval;
+                        } else {
+                            *lptr = ulval;
+                        }
                     } else {
-                        *iptr = uval;
+                        iptr = va_arg(ap, int *);
+                        if (neg) {
+                            *iptr = 0 - uval;
+                        } else {
+                            *iptr = uval;
+                        }
                     }
                     assigned++;
                 }
@@ -794,9 +965,13 @@ static int fscanf(FILE *stream, const char *fmt, ...) {
     int c;
     int neg;
     unsigned int uval;
+    unsigned long ulval;
     int *iptr;
     unsigned int *uptr;
+    long *lptr;
+    unsigned long *ulptr;
     char *sptr;
+    int length_long;
     (void)stream;
 
     va_start(ap, fmt);
@@ -806,27 +981,32 @@ static int fscanf(FILE *stream, const char *fmt, ...) {
     while (*fmt) {
         if (*fmt == '%') {
             fmt++;
+            length_long = 0;
+            if (*fmt == 'l') {
+                length_long = 1;
+                fmt++;
+            }
             if (*fmt == 'd' || *fmt == 'u' || *fmt == 'x') {
                 if (c == 0) c = _cooked_getch();
                 while (_is_space(c)) c = _cooked_getch();
                 if (*fmt == 'x') {
-                    uval = 0;
+                    uval = 0; ulval = 0;
                     if (!_is_xdigit(c)) { fmt++; continue; }
-                    while (_is_xdigit(c)) { uval = uval * 16 + _xdigit_val(c); c = _cooked_getch(); }
-                    uptr = va_arg(ap, unsigned int *); *uptr = uval; assigned++;
+                    while (_is_xdigit(c)) { if(length_long){ulval=ulval*16+_xdigit_val(c);}else{uval=uval*16+_xdigit_val(c);} c = _cooked_getch(); }
+                    if(length_long){ulptr=va_arg(ap,unsigned long *);*ulptr=ulval;}else{uptr = va_arg(ap, unsigned int *); *uptr = uval;} assigned++;
                 } else if (*fmt == 'u') {
-                    uval = 0;
+                    uval = 0; ulval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
-                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = _cooked_getch(); }
-                    uptr = va_arg(ap, unsigned int *); *uptr = uval; assigned++;
+                    while (_is_digit(c)) { if(length_long){ulval=ulval*10+(c-'0');}else{uval=uval*10+(c-'0');} c = _cooked_getch(); }
+                    if(length_long){ulptr=va_arg(ap,unsigned long *);*ulptr=ulval;}else{uptr = va_arg(ap, unsigned int *); *uptr = uval;} assigned++;
                 } else {
                     neg = 0;
                     if (c == '-') { neg = 1; c = _cooked_getch(); }
-                    uval = 0;
+                    uval = 0; ulval = 0;
                     if (!_is_digit(c)) { fmt++; continue; }
-                    while (_is_digit(c)) { uval = uval * 10 + (c - '0'); c = _cooked_getch(); }
-                    iptr = va_arg(ap, int *);
-                    *iptr = neg ? (int)(0 - uval) : (int)uval;
+                    while (_is_digit(c)) { if(length_long){ulval=ulval*10+(c-'0');}else{uval=uval*10+(c-'0');} c = _cooked_getch(); }
+                    if(length_long){lptr=va_arg(ap,long *);if(neg){*lptr=0-ulval;}else{*lptr=ulval;}}
+                    else{iptr = va_arg(ap, int *); *iptr = neg ? (int)(0 - uval) : (int)uval;}
                     assigned++;
                 }
                 fmt++;

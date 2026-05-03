@@ -207,6 +207,8 @@ class IRGen:
             if not isinstance(val, LongValue):
                 return self._as_long(val, loc, signed=not getattr(expr.ctype, 'unsigned', False))
             return val
+        if isinstance(expr, VaArg):
+            return self._gen_long_vaarg(expr)
         if isinstance(expr, BinOp):
             return self._gen_long_binop(expr)
         if isinstance(expr, UnaryOp):
@@ -1279,7 +1281,11 @@ class IRGen:
                 lv = self._gen_long_expr(arg_expr)
                 ir_args.extend([lv.lo, lv.hi])
             elif isinstance(getattr(arg_expr, 'ctype', None), CLong):
-                ir_args.append(self._gen_long_expr(arg_expr).lo)
+                lv = self._gen_long_expr(arg_expr)
+                if isinstance(func_ctype, CFunction) and func_ctype.is_variadic and i >= len(param_types):
+                    ir_args.extend([lv.lo, lv.hi])
+                else:
+                    ir_args.append(lv.lo)
             else:
                 ir_args.append(self._gen_expr(arg_expr))
 
@@ -1362,6 +1368,26 @@ class IRGen:
         self._emit(IStore(ap_addr, new_ap, loc))
 
         return dst
+
+    def _gen_long_vaarg(self, expr: VaArg) -> LongValue:
+        loc = self._loc(expr)
+        step = expr.arg_type.size() if expr.arg_type.size() > 0 else 1
+
+        ap_val = self._gen_expr(expr.ap)
+
+        lo = self._tmp()
+        hi = self._tmp()
+        self._emit(ILoad(lo, ap_val, loc))
+        ap_hi = self._tmp()
+        self._emit(IBinOp(ap_hi, '+', ap_val, ImmInt(1), loc))
+        self._emit(ILoad(hi, ap_hi, loc))
+
+        ap_addr = self._gen_addr(expr.ap)
+        new_ap = self._tmp()
+        self._emit(IBinOp(new_ap, '+', ap_val, ImmInt(step), loc))
+        self._emit(IStore(ap_addr, new_ap, loc))
+
+        return LongValue(lo, hi)
 
     # ── Ternary ───────────────────────────────────────────────────────────────
 
