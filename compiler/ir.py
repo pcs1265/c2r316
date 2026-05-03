@@ -68,8 +68,8 @@ Loc = Optional[Tuple[str, int]]   # (filename, line)  or None
 class Instr:
     loc: Loc = None
 
-    def defs(self) -> Optional[Temp]:
-        """Return the Temp this instruction defines, or None."""
+    def defs(self) -> Optional[Union[Temp, List[Temp]]]:
+        """Return Temp(s) this instruction defines, or None."""
         return None
 
     def uses(self) -> List[Operand]:
@@ -80,6 +80,26 @@ class Instr:
         if self.loc:
             return f'  ; {self.loc[0]}:{self.loc[1]}'
         return ''
+
+
+def iter_defs(instr: Instr) -> List[Temp]:
+    """Return instruction definitions as a list for scalar and multiword IR."""
+    d = instr.defs()
+    if d is None:
+        return []
+    if isinstance(d, list):
+        return d
+    return [d]
+
+
+@dataclass(frozen=True)
+class LongValue:
+    """A 32-bit C long represented as low/high 16-bit operands."""
+    lo: Operand
+    hi: Operand
+
+    def __str__(self):
+        return f'long({self.lo}, {self.hi})'
 
 
 @dataclass
@@ -168,6 +188,124 @@ class IStore(Instr):
     def defs(self): return None
     def uses(self): return [self.addr, self.src]
     def __str__(self): return f'  *{self.addr} = {self.src}{self._loc_str()}'
+
+
+@dataclass
+class ILongLoad(Instr):
+    """dst_lo,dst_hi = *(long*)addr"""
+    dst_lo: Temp
+    dst_hi: Temp
+    addr: Operand
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return [self.dst_lo, self.dst_hi]
+    def uses(self): return [self.addr]
+    def __str__(self):
+        return f'  {self.dst_lo}:{self.dst_hi} = long *{self.addr}{self._loc_str()}'
+
+
+@dataclass
+class ILongStore(Instr):
+    """*(long*)addr = src_lo,src_hi"""
+    addr: Operand
+    src_lo: Operand
+    src_hi: Operand
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return None
+    def uses(self): return [self.addr, self.src_lo, self.src_hi]
+    def __str__(self):
+        return f'  long *{self.addr} = {self.src_lo}:{self.src_hi}{self._loc_str()}'
+
+
+@dataclass
+class ILongBinOp(Instr):
+    """dst_lo,dst_hi = left op right"""
+    dst_lo: Temp
+    dst_hi: Temp
+    op: str
+    left_lo: Operand
+    left_hi: Operand
+    right_lo: Operand
+    right_hi: Operand
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return [self.dst_lo, self.dst_hi]
+    def uses(self): return [self.left_lo, self.left_hi, self.right_lo, self.right_hi]
+    def __str__(self):
+        return (f'  {self.dst_lo}:{self.dst_hi} = '
+                f'{self.left_lo}:{self.left_hi} {self.op} '
+                f'{self.right_lo}:{self.right_hi}{self._loc_str()}')
+
+
+@dataclass
+class ILongUnaryOp(Instr):
+    """dst_lo,dst_hi = op src_lo,src_hi"""
+    dst_lo: Temp
+    dst_hi: Temp
+    op: str
+    src_lo: Operand
+    src_hi: Operand
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return [self.dst_lo, self.dst_hi]
+    def uses(self): return [self.src_lo, self.src_hi]
+    def __str__(self):
+        return f'  {self.dst_lo}:{self.dst_hi} = {self.op}{self.src_lo}:{self.src_hi}{self._loc_str()}'
+
+
+@dataclass
+class ILongCompare(Instr):
+    """dst = left op right, comparing 32-bit low/high pairs."""
+    dst: Temp
+    op: str
+    left_lo: Operand
+    left_hi: Operand
+    right_lo: Operand
+    right_hi: Operand
+    unsigned: bool = False
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return self.dst
+    def uses(self): return [self.left_lo, self.left_hi, self.right_lo, self.right_hi]
+    def __str__(self):
+        u = 'u' if self.unsigned else ''
+        return (f'  {self.dst} = {self.left_lo}:{self.left_hi} '
+                f'{self.op}{u} {self.right_lo}:{self.right_hi}{self._loc_str()}')
+
+
+@dataclass
+class ILongRet(Instr):
+    """return long lo,hi"""
+    lo: Operand
+    hi: Operand
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self): return None
+    def uses(self): return [self.lo, self.hi]
+    def __str__(self):
+        return f'  ret long {self.lo}:{self.hi}{self._loc_str()}'
+
+
+@dataclass
+class ILongCall(Instr):
+    """dst_lo,dst_hi = func(args...) for long-returning calls.
+
+    args is already ABI-flattened: each long argument contributes lo,hi.
+    """
+    dst_lo: Optional[Temp]
+    dst_hi: Optional[Temp]
+    func: Union[Global, Temp]
+    args: List[Operand]
+    loc: Loc = field(default=None, repr=False)
+
+    def defs(self):
+        return [d for d in (self.dst_lo, self.dst_hi) if d is not None]
+    def uses(self): return ([self.func] if isinstance(self.func, Temp) else []) + list(self.args)
+    def __str__(self):
+        args_str = ', '.join(str(a) for a in self.args)
+        lhs = f'{self.dst_lo}:{self.dst_hi} = ' if self.dst_lo else ''
+        return f'  {lhs}call_long {self.func}({args_str}){self._loc_str()}'
 
 
 @dataclass
@@ -304,6 +442,7 @@ class IRFunction:
     params: List[str]           # parameter names in order
     instrs: List[Instr] = field(default_factory=list)
     local_sizes: Dict[str, int] = field(default_factory=dict)  # name → slot count
+    param_sizes: Dict[str, int] = field(default_factory=dict)  # name → slot count
     is_variadic: bool = False
     is_static: bool = False
     is_always_inline: bool = False

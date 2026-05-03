@@ -26,15 +26,19 @@ from .ir import (
     ILoad, IStore, ICall, IRet,
     ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg,
-    IRFunction, IRProgram,
+    ILongStore, ILongRet, ILongCall,
+    IRFunction, IRProgram, iter_defs,
 )
 
 
 def _always_keep(instr) -> bool:
     """Return True for instructions that must be preserved regardless of liveness."""
-    if isinstance(instr, (ILabel, IJump, IJumpIf, IJumpIfNot, IStore, IRet, IInlineAsm)):
+    if isinstance(instr, (ILabel, IJump, IJumpIf, IJumpIfNot, IStore, IRet,
+                          ILongStore, ILongRet, IInlineAsm)):
         return True
     if isinstance(instr, ICall) and instr.dst is None:
+        return True
+    if isinstance(instr, ILongCall) and instr.dst_lo is None:
         return True
     if isinstance(instr, IVaArg):
         return True
@@ -50,8 +54,7 @@ def dce_function(fn: IRFunction) -> None:
     # defining instructions, so we collect ALL of them.
     def_instrs: Dict[int, List[int]] = {}
     for i, instr in enumerate(instrs):
-        d = instr.defs()
-        if isinstance(d, Temp):
+        for d in iter_defs(instr):
             def_instrs.setdefault(d.id, []).append(i)
 
     # --- pass 1: seed worklist from roots ---
@@ -64,7 +67,7 @@ def dce_function(fn: IRFunction) -> None:
             worklist.append(op.id)
 
     for instr in instrs:
-        if _always_keep(instr) or isinstance(instr, ICall):
+        if _always_keep(instr) or isinstance(instr, (ICall, ILongCall)):
             for op in instr.uses():
                 _mark(op)
 
@@ -86,8 +89,14 @@ def dce_function(fn: IRFunction) -> None:
                 instr.dst = None
             kept.append(instr)
             continue
-        d = instr.defs()
-        if isinstance(d, Temp) and d.id not in live:
+        if isinstance(instr, ILongCall):
+            if instr.dst_lo is not None and instr.dst_lo.id not in live and instr.dst_hi.id not in live:
+                instr.dst_lo = None
+                instr.dst_hi = None
+            kept.append(instr)
+            continue
+        defs = iter_defs(instr)
+        if defs and all(d.id not in live for d in defs):
             continue  # dead — drop
         kept.append(instr)
 
@@ -105,7 +114,7 @@ def _reachable_functions(program: IRProgram, roots: set) -> set:
             continue
         reachable.add(name)
         for instr in func_instrs.get(name, []):
-            if isinstance(instr, ICall) and isinstance(instr.func, Global):
+            if isinstance(instr, (ICall, ILongCall)) and isinstance(instr.func, Global):
                 callee = instr.func.name
                 if callee not in reachable:
                     worklist.append(callee)
@@ -132,8 +141,7 @@ def verify_temps(program: IRProgram) -> None:
     for fn in program.functions:
         defs: Set[int] = set()
         for instr in fn.instrs:
-            d = instr.defs()
-            if isinstance(d, Temp):
+            for d in iter_defs(instr):
                 defs.add(d.id)
         for instr in fn.instrs:
             for op in instr.uses():

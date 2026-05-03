@@ -29,6 +29,9 @@ from .ir import (
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
+    ILongLoad, ILongStore, ILongBinOp, ILongUnaryOp, ILongCompare,
+    ILongRet, ILongCall,
+    iter_defs,
 )
 
 _MASK = 0xFFFF
@@ -145,8 +148,7 @@ def _fold_function(fn: IRFunction) -> None:
     # Count definitions of each temp (to reject temps defined in multiple branches)
     def_count: Dict[int, int] = {}
     for instr in instrs:
-        d = instr.defs()
-        if isinstance(d, Temp):
+        for d in iter_defs(instr):
             def_count[d.id] = def_count.get(d.id, 0) + 1
 
     # Map: temp id → (instr_index, propagatable operand, multi_use)
@@ -293,10 +295,31 @@ def _subst_instr(instr: Instr, addr_sub, val_sub) -> Instr:
         return ILoad(instr.dst, addr_sub(instr.addr), instr.loc)
     if isinstance(instr, IStore):
         return IStore(addr_sub(instr.addr), val_sub(instr.src), instr.loc)
+    if isinstance(instr, ILongLoad):
+        return ILongLoad(instr.dst_lo, instr.dst_hi, addr_sub(instr.addr), instr.loc)
+    if isinstance(instr, ILongStore):
+        return ILongStore(addr_sub(instr.addr), val_sub(instr.src_lo), val_sub(instr.src_hi), instr.loc)
+    if isinstance(instr, ILongBinOp):
+        return ILongBinOp(instr.dst_lo, instr.dst_hi, instr.op,
+                          val_sub(instr.left_lo), val_sub(instr.left_hi),
+                          val_sub(instr.right_lo), val_sub(instr.right_hi), instr.loc)
+    if isinstance(instr, ILongUnaryOp):
+        return ILongUnaryOp(instr.dst_lo, instr.dst_hi, instr.op,
+                            val_sub(instr.src_lo), val_sub(instr.src_hi), instr.loc)
+    if isinstance(instr, ILongCompare):
+        return ILongCompare(instr.dst, instr.op,
+                            val_sub(instr.left_lo), val_sub(instr.left_hi),
+                            val_sub(instr.right_lo), val_sub(instr.right_hi),
+                            instr.unsigned, instr.loc)
     if isinstance(instr, ICall):
         return ICall(instr.dst, val_sub(instr.func), [val_sub(a) for a in instr.args], instr.loc)
+    if isinstance(instr, ILongCall):
+        return ILongCall(instr.dst_lo, instr.dst_hi, val_sub(instr.func),
+                         [val_sub(a) for a in instr.args], instr.loc)
     if isinstance(instr, IRet):
         return IRet(val_sub(instr.src) if instr.src else None, instr.loc)
+    if isinstance(instr, ILongRet):
+        return ILongRet(val_sub(instr.lo), val_sub(instr.hi), instr.loc)
     if isinstance(instr, IJumpIf):
         return IJumpIf(val_sub(instr.cond), instr.target, instr.loc)
     if isinstance(instr, IJumpIfNot):
@@ -589,9 +612,9 @@ def _tail_call_opt(fn: IRFunction) -> None:
     # Build a fresh-temp counter starting above the max existing temp id
     max_id = -1
     for instr in instrs:
-        d = instr.defs()
-        if isinstance(d, Temp) and d.id > max_id:
-            max_id = d.id
+        for d in iter_defs(instr):
+            if d.id > max_id:
+                max_id = d.id
     next_id = max_id + 1
 
     entry_lbl = f'.__tce_{fn_name}'

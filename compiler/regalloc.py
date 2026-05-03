@@ -36,8 +36,8 @@ from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 from .ir import (
     Temp, Var, ImmInt,
-    ICall, IInlineAsm,
-    IRFunction,
+    ICall, ILongCall, IInlineAsm,
+    IRFunction, iter_defs,
 )
 
 # Registers reserved as codegen scratch — never allocated to Temps.
@@ -83,9 +83,9 @@ def allocate(fn: IRFunction) -> RegMap:
     last_use:  Dict[int, int] = {}
 
     for i, instr in enumerate(instrs):
-        d = instr.defs()
-        if isinstance(d, Temp) and d.id not in first_def:
-            first_def[d.id] = i
+        for d in iter_defs(instr):
+            if d.id not in first_def:
+                first_def[d.id] = i
         for op in instr.uses():
             if isinstance(op, Temp):
                 last_use[op.id] = i
@@ -98,7 +98,7 @@ def allocate(fn: IRFunction) -> RegMap:
     # Strictly < end: a Temp whose last use IS the event only needs to be
     # readable before it — it does not need to survive through it.
     call_sites: List[Tuple[int, None]] = [
-        i for i, instr in enumerate(instrs) if isinstance(instr, ICall)
+        i for i, instr in enumerate(instrs) if isinstance(instr, (ICall, ILongCall))
     ]
     asm_instrs: List[Tuple[int, IInlineAsm]] = [
         (i, instr) for i, instr in enumerate(instrs) if isinstance(instr, IInlineAsm)

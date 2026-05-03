@@ -33,6 +33,8 @@ from .ir import (
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
+    ILongLoad, ILongStore, ILongBinOp, ILongUnaryOp, ILongCompare,
+    ILongRet, ILongCall, iter_defs,
 )
 
 INLINE_THRESHOLD = 10    # max IR instructions to inline automatically (small leaf functions)
@@ -42,13 +44,21 @@ def _max_temp_id(instrs: List[Instr]) -> int:
     """Return the highest Temp ID used in instrs, or -1 if none."""
     hi = -1
     for instr in instrs:
-        d = instr.defs()
-        if isinstance(d, Temp) and d.id > hi:
-            hi = d.id
+        for d in iter_defs(instr):
+            if d.id > hi:
+                hi = d.id
         for op in instr.uses():
             if isinstance(op, Temp) and op.id > hi:
                 hi = op.id
     return hi
+
+
+_LONG_IR = (ILongLoad, ILongStore, ILongBinOp, ILongUnaryOp,
+            ILongCompare, ILongRet, ILongCall)
+
+
+def _has_long_ir(fn: IRFunction) -> bool:
+    return any(isinstance(instr, _LONG_IR) for instr in fn.instrs)
 
 
 def _rename_operand(op: Operand, temp_offset: int, param_map: Dict[str, Operand],
@@ -183,7 +193,7 @@ def _build_call_graph(program: IRProgram) -> Dict[str, Set[str]]:
     for fn in program.functions:
         callees: Set[str] = set()
         for instr in fn.instrs:
-            if isinstance(instr, ICall) and isinstance(instr.func, Global):
+            if isinstance(instr, (ICall, ILongCall)) and isinstance(instr.func, Global):
                 callees.add(instr.func.name)
         graph[fn.name] = callees
     return graph
@@ -327,7 +337,7 @@ def inline(program: IRProgram) -> IRProgram:
     call_site_count: Dict[str, int] = {}
     for fn in program.functions:
         for instr in fn.instrs:
-            if isinstance(instr, ICall) and isinstance(instr.func, Global):
+            if isinstance(instr, (ICall, ILongCall)) and isinstance(instr.func, Global):
                 name = instr.func.name
                 call_site_count[name] = call_site_count.get(name, 0) + 1
     # Also count address-taken references — a function whose address is taken
@@ -344,6 +354,8 @@ def inline(program: IRProgram) -> IRProgram:
         if fn.name in recursive:
             continue
         if fn.is_variadic:
+            continue
+        if _has_long_ir(fn):
             continue
         if fn.is_always_inline:
             inlineable[fn.name] = fn

@@ -33,7 +33,8 @@ from .ir import (
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram, Instr,
-    ASM_REGS,
+    ILongLoad, ILongStore, ILongBinOp, ILongUnaryOp, ILongCompare,
+    ILongRet, ILongCall, ASM_REGS, iter_defs,
 )
 from .regalloc import allocate, RegMap
 
@@ -77,6 +78,7 @@ class FuncContext:
     """
 
     def __init__(self, instrs: list, params: list[str], local_sizes: Dict[str, int] = None,
+                 param_sizes: Dict[str, int] = None,
                  outgoing_slots: int = 0, regmap: Optional[RegMap] = None):
         self._slots:    Dict[str, int] = {}
         self._free:     list[int]      = []   # recycled slots available
@@ -86,7 +88,11 @@ class FuncContext:
 
         # params first — permanent slots starting at outgoing_slots
         for name in params:
-            self._alloc_permanent(f'v_{name}')
+            size = (param_sizes or {}).get(name, 1)
+            if size > 1:
+                self._alloc_permanent_block(f'v_{name}', size)
+            else:
+                self._alloc_permanent(f'v_{name}')
 
         # pre-reserve contiguous slots for locals larger than 1 word (arrays)
         for name, size in (local_sizes or {}).items():
@@ -101,9 +107,9 @@ class FuncContext:
                     last_use[op.id] = i
             # a Temp that is defined but never used still gets a slot;
             # mark its last use as the def site so it's freed immediately
-            d = instr.defs()
-            if isinstance(d, Temp) and d.id not in last_use:
-                last_use[d.id] = i
+            for d in iter_defs(instr):
+                if d.id not in last_use:
+                    last_use[d.id] = i
 
         self._last_use = last_use
         self._instrs   = instrs
@@ -157,8 +163,9 @@ class FuncContext:
                 if key in self._slots:
                     self._free.append(self._slots.pop(key))
         # also free a def-only temp (never used) right after its def
-        d = instr.defs()
-        if isinstance(d, Temp) and self._last_use.get(d.id) == instr_idx:
+        for d in iter_defs(instr):
+            if self._last_use.get(d.id) != instr_idx:
+                continue
             key = f't{d.id}'
             if key in self._slots:
                 self._free.append(self._slots.pop(key))
@@ -462,7 +469,7 @@ class Codegen:
 
     def _gen_func(self, fn: IRFunction):
         instrs = fn.instrs if self._no_opt else self._peephole(fn.instrs)
-        fn = IRFunction(fn.name, fn.params, instrs, fn.local_sizes,
+        fn = IRFunction(fn.name, fn.params, instrs, fn.local_sizes, fn.param_sizes,
                         is_variadic=fn.is_variadic)
         self._scratch_a_temp = None
         self._scratch_c_temp = None
@@ -475,18 +482,19 @@ class Codegen:
 
         # dry run to compute true peak frame size with recycling.
         # Pass regmap so register-assigned temps don't consume spill slots.
-        dry = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots, self._regmap)
+        dry = FuncContext(fn.instrs, fn.params, fn.local_sizes, fn.param_sizes,
+                          outgoing_slots, self._regmap)
         for i, instr in enumerate(fn.instrs):
             for op in instr.uses():
                 if isinstance(op, Var):
                     dry.slot(op)
-            d = instr.defs()
-            if d is not None:
+            for d in iter_defs(instr):
                 dry.slot(d)
             dry.free_dead_temps(i)
         peak = dry.frame_size
 
-        self._ctx = FuncContext(fn.instrs, fn.params, fn.local_sizes, outgoing_slots, self._regmap)
+        self._ctx = FuncContext(fn.instrs, fn.params, fn.local_sizes, fn.param_sizes,
+                                outgoing_slots, self._regmap)
 
         # pre-scan: ensure all Var operands get permanent slots
         for instr in fn.instrs:
@@ -494,7 +502,7 @@ class Codegen:
                 if isinstance(op, Var):
                     self._ctx.slot(op)
 
-        self._is_leaf = not any(isinstance(i, ICall) for i in fn.instrs)
+        self._is_leaf = not any(isinstance(i, (ICall, ILongCall)) for i in fn.instrs)
 
         # Callee-saved registers assigned by the register allocator.
         self._callee_saves = self._detect_callee_saves(fn)
@@ -545,14 +553,18 @@ class Codegen:
         # Params 0..5: from argument registers a0-a5.
         # Params 6+:   from stack arg area above the callee's frame (§4.3).
         stack_arg_base = F + VS + CS + (0 if self._is_leaf else 1)
-        for i, pname in enumerate(fn.params):
+        arg_idx = 0
+        for pname in fn.params:
             slot = self._ctx.slot(Var(pname))
-            if i < len(ARG_REGS):
-                self._ins(f'st {ARG_REGS[i]}, {SP}, {slot}')
-            else:
-                overflow_idx = i - len(ARG_REGS)
-                self._ins(f'ld {SCRATCH_A}, {SP}, {stack_arg_base + overflow_idx}')
-                self._ins(f'st {SCRATCH_A}, {SP}, {slot}')
+            size = fn.param_sizes.get(pname, 1)
+            for part in range(size):
+                if arg_idx < len(ARG_REGS):
+                    self._ins(f'st {ARG_REGS[arg_idx]}, {SP}, {slot + part}')
+                else:
+                    overflow_idx = arg_idx - len(ARG_REGS)
+                    self._ins(f'ld {SCRATCH_A}, {SP}, {stack_arg_base + overflow_idx}')
+                    self._ins(f'st {SCRATCH_A}, {SP}, {slot + part}')
+                arg_idx += 1
 
         # Pre-scan: find compare instructions whose result is used only in
         # the immediately following JumpIf/JumpIfNot — these can be fused
@@ -905,7 +917,7 @@ class Codegen:
         """Count the max overflow stack arg words needed across all calls."""
         max_slots = 0
         for instr in fn.instrs:
-            if isinstance(instr, ICall):
+            if isinstance(instr, (ICall, ILongCall)):
                 overflow = max(0, len(instr.args) - len(ARG_REGS))
                 max_slots = max(max_slots, overflow)
         return max_slots
@@ -999,6 +1011,9 @@ class Codegen:
             if dst == SCRATCH_A:
                 self._store_op(SCRATCH_A, instr.dst)
 
+        elif isinstance(instr, ILongLoad):
+            self._gen_long_load(instr)
+
         elif isinstance(instr, IStore):
             if isinstance(instr.addr, Var):
                 # scalar local/param: direct spill-slot store
@@ -1012,6 +1027,9 @@ class Codegen:
                 areg = self._src_reg(instr.addr, SCRATCH_C)
                 sreg = self._src_reg(instr.src,  SCRATCH_A)
                 self._ins(f'st {sreg}, {areg}')
+
+        elif isinstance(instr, ILongStore):
+            self._gen_long_store(instr)
 
         elif isinstance(instr, IBinOp):
             fused = self._fused_cmp.get(self._cur_instr_idx)
@@ -1029,7 +1047,16 @@ class Codegen:
         elif isinstance(instr, IUnaryOp):
             self._gen_unaryop(instr)
 
-        elif isinstance(instr, ICall):
+        elif isinstance(instr, ILongBinOp):
+            self._gen_long_binop(instr)
+
+        elif isinstance(instr, ILongUnaryOp):
+            self._gen_long_unaryop(instr)
+
+        elif isinstance(instr, ILongCompare):
+            self._gen_long_compare(instr)
+
+        elif isinstance(instr, (ICall, ILongCall)):
             self._gen_call(instr)
             self._invalidate_scratch()
 
@@ -1038,6 +1065,13 @@ class Codegen:
                 lreg = self._src_reg(instr.src, RET_REG)
                 if lreg != RET_REG:
                     self._ins(f'mov {RET_REG}, {lreg}')
+            self._gen_epilogue(lr_slot, frame_size)
+
+        elif isinstance(instr, ILongRet):
+            self._load_op(instr.lo, SCRATCH_A)
+            self._load_op(instr.hi, SCRATCH_B)
+            self._ins(f'mov r1, {SCRATCH_A}')
+            self._ins(f'mov r2, {SCRATCH_B}')
             self._gen_epilogue(lr_slot, frame_size)
 
         elif isinstance(instr, IJump):
@@ -1213,6 +1247,151 @@ class Codegen:
         '<u':  'jc',  '>=u': 'jnc',
     }
 
+    def _addr_reg(self, addr: Operand) -> str:
+        if isinstance(addr, Var):
+            self._load_addr(addr, SCRATCH_C)
+            return SCRATCH_C
+        return self._src_reg(addr, SCRATCH_C)
+
+    def _gen_long_load(self, instr: ILongLoad):
+        areg = self._addr_reg(instr.addr)
+        dst_lo = self._dst_reg(instr.dst_lo)
+        dst_hi = self._dst_reg(instr.dst_hi)
+        self._scratch_a_temp = None
+        self._ins(f'ld {dst_lo}, {areg}')
+        if dst_lo == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst_lo)
+        self._ins(f'ld {dst_hi}, {areg}, 1')
+        if dst_hi == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst_hi)
+
+    def _gen_long_store(self, instr: ILongStore):
+        areg = self._addr_reg(instr.addr)
+        lo = self._src_reg(instr.src_lo, SCRATCH_A)
+        self._ins(f'st {lo}, {areg}')
+        hi = self._src_reg(instr.src_hi, SCRATCH_A)
+        self._ins(f'st {hi}, {areg}, 1')
+
+    def _gen_long_binop(self, instr: ILongBinOp):
+        if instr.op not in ('+', '-', '*'):
+            raise CodegenError(f"Unknown long binop: {instr.op!r}")
+        dst_lo = self._dst_reg(instr.dst_lo)
+        dst_hi = self._dst_reg(instr.dst_hi)
+        if instr.op == '*':
+            self._load_op(instr.left_lo, SCRATCH_A)
+            self._load_op(instr.right_lo, SCRATCH_B)
+            self._ins(f'mul {dst_lo}, {SCRATCH_A}, {SCRATCH_B}')
+            self._ins(f'mulh {SCRATCH_C}, {SCRATCH_A}, {SCRATCH_B}')
+            if dst_lo == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst_lo)
+            # high += left_lo * right_hi
+            self._load_op(instr.left_lo, SCRATCH_A)
+            self._load_op(instr.right_hi, SCRATCH_B)
+            self._ins(f'mul {SCRATCH_A}, {SCRATCH_A}, {SCRATCH_B}')
+            self._ins(f'add {SCRATCH_C}, {SCRATCH_A}')
+            # high += left_hi * right_lo
+            self._load_op(instr.left_hi, SCRATCH_A)
+            self._load_op(instr.right_lo, SCRATCH_B)
+            self._ins(f'mul {SCRATCH_A}, {SCRATCH_A}, {SCRATCH_B}')
+            self._ins(f'add {SCRATCH_C}, {SCRATCH_A}')
+            self._scratch_a_temp = None
+            if dst_hi != SCRATCH_C:
+                self._ins(f'mov {dst_hi}, {SCRATCH_C}')
+            if dst_hi == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst_hi)
+            elif dst_hi == SCRATCH_C:
+                self._store_op(SCRATCH_C, instr.dst_hi)
+            return
+        self._load_op(instr.left_lo, SCRATCH_A)
+        self._load_op(instr.right_lo, SCRATCH_B)
+        op_lo = 'add' if instr.op == '+' else 'sub'
+        op_hi = 'adc' if instr.op == '+' else 'sbb'
+        self._ins(f'{op_lo} {dst_lo}, {SCRATCH_A}, {SCRATCH_B}')
+        if dst_lo == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst_lo)
+        self._load_op(instr.left_hi, SCRATCH_A)
+        self._load_op(instr.right_hi, SCRATCH_B)
+        self._ins(f'{op_hi} {dst_hi}, {SCRATCH_A}, {SCRATCH_B}')
+        self._scratch_a_temp = None
+        if dst_hi == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst_hi)
+
+    def _gen_long_unaryop(self, instr: ILongUnaryOp):
+        if instr.op != '-':
+            raise CodegenError(f"Unknown long unary op: {instr.op!r}")
+        dst_lo = self._dst_reg(instr.dst_lo)
+        dst_hi = self._dst_reg(instr.dst_hi)
+        self._load_op(instr.src_lo, SCRATCH_A)
+        self._load_op(instr.src_hi, SCRATCH_B)
+        self._ins(f'sub {dst_lo}, r0, {SCRATCH_A}')
+        if dst_lo == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst_lo)
+        self._ins(f'sbb {dst_hi}, r0, {SCRATCH_B}')
+        self._scratch_a_temp = None
+        if dst_hi == SCRATCH_A:
+            self._store_op(SCRATCH_A, instr.dst_hi)
+
+    def _gen_long_compare(self, instr: ILongCompare):
+        dst = self._dst_reg(instr.dst)
+        true_lbl = f'._lcmp_t_{id(instr)}'
+        false_lbl = f'._lcmp_f_{id(instr)}'
+        end_lbl = f'._lcmp_e_{id(instr)}'
+
+        def emit_bool(value: int):
+            if value:
+                self._ins(f'mov {dst}, 1')
+            elif dst != 'r0':
+                self._ins(f'mov {dst}, r0')
+            if dst == SCRATCH_A:
+                self._store_op(SCRATCH_A, instr.dst)
+
+        self._load_op(instr.left_hi, SCRATCH_A)
+        self._load_op(instr.right_hi, SCRATCH_B)
+        self._ins(f'sub r0, {SCRATCH_A}, {SCRATCH_B}')
+        if instr.op == '==':
+            self._ins(f'jnz {false_lbl}')
+            self._load_op(instr.left_lo, SCRATCH_A)
+            self._load_op(instr.right_lo, SCRATCH_B)
+            self._ins(f'sub r0, {SCRATCH_A}, {SCRATCH_B}')
+            self._ins(f'jz {true_lbl}')
+            self._ins(f'jmp {false_lbl}')
+        elif instr.op == '!=':
+            self._ins(f'jnz {true_lbl}')
+            self._load_op(instr.left_lo, SCRATCH_A)
+            self._load_op(instr.right_lo, SCRATCH_B)
+            self._ins(f'sub r0, {SCRATCH_A}, {SCRATCH_B}')
+            self._ins(f'jnz {true_lbl}')
+            self._ins(f'jmp {false_lbl}')
+        elif instr.op in ('<', '>=', '>', '<='):
+            unsigned = instr.unsigned
+            if instr.op in ('>', '<='):
+                # a > b == b < a; a <= b == b >= a
+                swapped = ILongCompare(instr.dst, '<' if instr.op == '>' else '>=',
+                                       instr.right_lo, instr.right_hi,
+                                       instr.left_lo, instr.left_hi,
+                                       unsigned, instr.loc)
+                self._gen_long_compare(swapped)
+                return
+            less_j = 'jc' if unsigned else 'jl'
+            ge_j = 'jnc' if unsigned else 'jge'
+            self._ins(f'{less_j} {true_lbl if instr.op == "<" else false_lbl}')
+            self._ins(f'jnz {false_lbl if instr.op == "<" else true_lbl}')
+            self._load_op(instr.left_lo, SCRATCH_A)
+            self._load_op(instr.right_lo, SCRATCH_B)
+            self._ins(f'sub r0, {SCRATCH_A}, {SCRATCH_B}')
+            self._ins(f'jc {true_lbl if instr.op == "<" else false_lbl}')
+            self._ins(f'jmp {false_lbl if instr.op == "<" else true_lbl}')
+        else:
+            raise CodegenError(f"Unknown long compare: {instr.op!r}")
+
+        self._lbl(true_lbl)
+        emit_bool(1)
+        self._ins(f'jmp {end_lbl}')
+        self._lbl(false_lbl)
+        emit_bool(0)
+        self._lbl(end_lbl)
+        self._scratch_a_temp = None
+
     def _gen_binop(self, instr: IBinOp):
         op  = instr.op
         dst = self._dst_reg(instr.dst)
@@ -1359,7 +1538,24 @@ class Codegen:
                 self._load_op(instr.func, SCRATCH_A)
                 self._ins(f'call {SCRATCH_A}')
 
-            if instr.dst is not None:
+            if isinstance(instr, ILongCall):
+                if instr.dst_lo is not None:
+                    preg_lo = self._regmap.reg(instr.dst_lo.id) if self._regmap else None
+                    preg_hi = self._regmap.reg(instr.dst_hi.id) if self._regmap else None
+                    if preg_lo == 'r2' and preg_hi == 'r1':
+                        self._ins(f'mov {SCRATCH_A}, r1')
+                        self._ins('mov r1, r2')
+                        self._ins(f'mov r2, {SCRATCH_A}')
+                    else:
+                        if preg_lo is not None and preg_lo != 'r1':
+                            self._ins(f'mov {preg_lo}, r1')
+                        if preg_hi is not None and preg_hi != 'r2':
+                            self._ins(f'mov {preg_hi}, r2')
+                    if preg_lo is None:
+                        self._store_op('r1', instr.dst_lo)
+                    if preg_hi is None:
+                        self._store_op('r2', instr.dst_hi)
+            elif instr.dst is not None:
                 preg = self._regmap.reg(instr.dst.id) if self._regmap else None
                 if preg is not None and preg != RET_REG:
                     self._ins(f'mov {preg}, {RET_REG}')

@@ -10,10 +10,12 @@ from typing import Optional, List
 
 from .ast_nodes import *
 from .ir import (
-    Temp, Var, Global, ImmInt, StrLabel, Operand,
+    Temp, Var, Global, ImmInt, StrLabel, Operand, LongValue,
     IConst, ICopy, IAddrOf, IBinOp, IUnaryOp, ILoad, IStore,
     ICall, IRet, ILabel, IJump, IJumpIf, IJumpIfNot,
     IInlineAsm, IVaStart, IVaArg, IRFunction, IRProgram,
+    ILongLoad, ILongStore, ILongBinOp, ILongUnaryOp, ILongCompare,
+    ILongRet, ILongCall,
     ASM_REGS,
 )
 
@@ -47,6 +49,18 @@ def _leaf_elem_sz(t: 'CType') -> int:
     while isinstance(t, CArray):
         t = t.base
     return t.size()
+
+
+def _is_long_type(t: 'CType') -> bool:
+    return isinstance(t, CLong)
+
+
+def _pointed_size(t: 'CType') -> int:
+    if isinstance(t, CPointer):
+        return t.base.size()
+    if isinstance(t, CArray):
+        return t.base.size()
+    return 1
 
 
 class IRGen:
@@ -124,6 +138,108 @@ class IRGen:
         self._emit(ICopy(t, op, loc))
         return t
 
+    def _long_const(self, value: int) -> LongValue:
+        return LongValue(ImmInt(value & 0xFFFF), ImmInt((value >> 16) & 0xFFFF))
+
+    def _as_long(self, val, loc, signed: bool = False) -> LongValue:
+        """Convert a scalar operand to a long pair."""
+        if isinstance(val, LongValue):
+            return val
+        lo = val
+        hi = self._tmp()
+        if signed:
+            sign = self._tmp()
+            self._emit(IBinOp(sign, '&', lo, ImmInt(0x8000), loc))
+            is_neg = self._tmp()
+            self._emit(IBinOp(is_neg, '!=', sign, ImmInt(0), loc))
+            neg_hi = self._tmp()
+            self._emit(IUnaryOp(neg_hi, '-', is_neg, loc))
+            self._emit(ICopy(hi, neg_hi, loc))
+        else:
+            self._emit(ICopy(hi, ImmInt(0), loc))
+        return LongValue(lo, hi)
+
+    def _bool_operand(self, val, loc) -> Operand:
+        if isinstance(val, LongValue):
+            t_lo = self._tmp()
+            self._emit(IBinOp(t_lo, '!=', val.lo, ImmInt(0), loc))
+            t_hi = self._tmp()
+            self._emit(IBinOp(t_hi, '!=', val.hi, ImmInt(0), loc))
+            t = self._tmp()
+            self._emit(IBinOp(t, '|', t_lo, t_hi, loc))
+            return t
+        return val
+
+    def _gen_long_expr(self, expr: Expr) -> LongValue:
+        """Lower expression as a 32-bit long pair."""
+        loc = self._loc(expr)
+
+        if isinstance(expr, IntLit):
+            return self._long_const(expr.value)
+        if isinstance(expr, CharLit):
+            return self._long_const(expr.value & 0xFF)
+        if isinstance(expr, UnaryOp) and expr.op == '-':
+            src = self._gen_long_expr(expr.operand)
+            lo, hi = self._tmp(), self._tmp()
+            self._emit(ILongUnaryOp(lo, hi, '-', src.lo, src.hi, loc))
+            return LongValue(lo, hi)
+        if not isinstance(getattr(expr, 'ctype', None), CLong):
+            val = self._gen_expr(expr)
+            return self._as_long(val, loc, signed=not getattr(expr.ctype, 'unsigned', False))
+        if isinstance(expr, Ident):
+            return self._gen_long_load_ident(expr)
+        if isinstance(expr, Index):
+            addr = self._gen_addr(expr)
+            lo, hi = self._tmp(), self._tmp()
+            self._emit(ILongLoad(lo, hi, addr, loc))
+            return LongValue(lo, hi)
+        if isinstance(expr, Member):
+            addr = self._gen_member_addr(expr)
+            lo, hi = self._tmp(), self._tmp()
+            self._emit(ILongLoad(lo, hi, addr, loc))
+            return LongValue(lo, hi)
+        if isinstance(expr, Cast):
+            val = self._gen_expr(expr.expr)
+            signed = not getattr(expr.expr.ctype, 'unsigned', False)
+            return self._as_long(val, loc, signed=signed)
+        if isinstance(expr, Assign):
+            val = self._gen_assign(expr)
+            if not isinstance(val, LongValue):
+                return self._as_long(val, loc, signed=not getattr(expr.ctype, 'unsigned', False))
+            return val
+        if isinstance(expr, BinOp):
+            return self._gen_long_binop(expr)
+        if isinstance(expr, UnaryOp):
+            if expr.op == '*':
+                addr = self._gen_expr(expr.operand)
+                lo, hi = self._tmp(), self._tmp()
+                self._emit(ILongLoad(lo, hi, addr, loc))
+                return LongValue(lo, hi)
+            if expr.op == '~':
+                src = self._gen_long_expr(expr.operand)
+                lo, hi = self._tmp(), self._tmp()
+                self._emit(IUnaryOp(lo, '~', src.lo, loc))
+                self._emit(IUnaryOp(hi, '~', src.hi, loc))
+                return LongValue(lo, hi)
+        if isinstance(expr, Call):
+            return self._gen_long_call(expr)
+        raise IRGenError(f"long expression {type(expr).__name__} not implemented")
+
+    def _gen_long_load_ident(self, expr: Ident) -> LongValue:
+        loc, name = self._loc(expr), expr.name
+        if name in self._params or name in self._locals:
+            lo = self._tmp()
+            hi = self._tmp()
+            self._emit(ILongLoad(lo, hi, Var(name), loc))
+            return LongValue(lo, hi)
+        if name in self._const_globals:
+            return self._long_const(self._const_globals[name])
+        addr = self._var_addr(name, loc)
+        lo = self._tmp()
+        hi = self._tmp()
+        self._emit(ILongLoad(lo, hi, addr, loc))
+        return LongValue(lo, hi)
+
     # ── Top-Level ─────────────────────────────────────────────────────────────
 
     def generate(self, prog: Program) -> IRProgram:
@@ -135,10 +251,14 @@ class IRGen:
                 init_vals = None
                 if isinstance(decl.init, InitList):
                     init_vals = []
+                    elem_sz = _leaf_elem_sz(decl.ctype) if isinstance(decl.ctype, CArray) else decl.ctype.size()
                     for e in _flatten_init(decl.init):
                         cv = _const_int_value(e)
                         if cv is not None:
-                            init_vals.append(cv)
+                            if elem_sz == 2:
+                                init_vals.extend([cv & 0xFFFF, (cv >> 16) & 0xFFFF])
+                            else:
+                                init_vals.append(cv)
                         elif isinstance(e, StringLit):
                             lbl = f'_cstr_{len(self._strings) + 1}'
                             self._strings.append((lbl, e.chars))
@@ -146,7 +266,11 @@ class IRGen:
                         else:
                             init_vals.append(0)
                 elif _const_int_value(decl.init) is not None:
-                    init_vals = [_const_int_value(decl.init)]
+                    cv = _const_int_value(decl.init)
+                    if isinstance(decl.ctype, CLong):
+                        init_vals = [cv & 0xFFFF, (cv >> 16) & 0xFFFF]
+                    else:
+                        init_vals = [cv]
                 elif isinstance(decl.init, StringLit):
                     lbl = f'_cstr_{len(self._strings) + 1}'
                     self._strings.append((lbl, decl.init.chars))
@@ -201,10 +325,16 @@ class IRGen:
         self._fn = IRFunction(
             name=func.name,
             params=param_names,
+            param_sizes={
+                p.name: (2 if isinstance(p.ctype, CLong) else 1)
+                for p in func.params
+            },
             is_variadic=func.is_variadic,
             is_static=func.is_static,
             is_always_inline=func.is_always_inline,
         )
+        if self._struct_ret_type is not None:
+            self._fn.param_sizes['__ret'] = 1
 
         self._collect_locals(func.body)
         self._gen_block(func.body)
@@ -257,15 +387,21 @@ class IRGen:
             return None
         cv = _const_int_value(init)
         if cv is not None:
+            if isinstance(ctype, CLong):
+                return [cv & 0xFFFF, (cv >> 16) & 0xFFFF]
             return [cv]
         if isinstance(init, CharLit):
             return [init.value & 0xFF]
         if isinstance(init, InitList):
             vals = []
+            elem_sz = _leaf_elem_sz(ctype) if isinstance(ctype, CArray) else ctype.size()
             for e in init.elems:
                 cv = _const_int_value(e)
                 if cv is not None:
-                    vals.append(cv)
+                    if elem_sz == 2:
+                        vals.extend([cv & 0xFFFF, (cv >> 16) & 0xFFFF])
+                    else:
+                        vals.append(cv)
                 elif isinstance(e, StringLit):
                     lbl = f'_cstr_{len(self._strings) + 1}'
                     self._strings.append((lbl, e.chars))
@@ -287,7 +423,7 @@ class IRGen:
             if d.is_static:
                 return  # handled as a global via _collect_static_locals
             self._locals.add(d.name)
-            size = d.ctype.size() if isinstance(d.ctype, (CArray, CStruct, CUnion)) else 1
+            size = d.ctype.size() if isinstance(d.ctype, (CArray, CStruct, CUnion, CLong)) else 1
             self._fn.local_sizes[d.name] = size
         elif isinstance(node, Block):
             for s in node.stmts:
@@ -336,10 +472,14 @@ class IRGen:
                     # mark initialized
                     self._emit(IStore(flag_addr, ImmInt(1), loc))
                     # emit init code (re-use existing DeclStmt logic via a temp non-static decl)
-                    val = self._gen_expr(d.init)
                     g_addr = self._tmp()
                     self._emit(IAddrOf(g_addr, Global(mangled), loc))
-                    self._emit(IStore(g_addr, val, loc))
+                    if isinstance(d.ctype, CLong):
+                        val = self._gen_long_expr(d.init)
+                        self._emit(ILongStore(g_addr, val.lo, val.hi, loc))
+                    else:
+                        val = self._gen_expr(d.init)
+                        self._emit(IStore(g_addr, val, loc))
                     self._emit(ILabel(lbl_done, loc))
                 return
             if d.init is not None:
@@ -362,21 +502,34 @@ class IRGen:
                     base = self._var_addr(d.name, loc)
                     # write explicit initializer elements
                     for i, elem in enumerate(flat):
-                        val = self._gen_expr(elem)
+                        val = self._gen_long_expr(elem) if elem_sz == 2 else self._gen_expr(elem)
                         if i == 0:
-                            self._emit(IStore(base, val, loc))
+                            if isinstance(val, LongValue):
+                                self._emit(ILongStore(base, val.lo, val.hi, loc))
+                            else:
+                                self._emit(IStore(base, val, loc))
                         else:
                             t_off = self._tmp()
                             self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
-                            self._emit(IStore(t_off, val, loc))
+                            if isinstance(val, LongValue):
+                                self._emit(ILongStore(t_off, val.lo, val.hi, loc))
+                            else:
+                                self._emit(IStore(t_off, val, loc))
                     # zero-fill remaining words (standard C partial initializer rule)
                     for i in range(len(flat), total_words // elem_sz):
                         t_off = self._tmp()
                         self._emit(IBinOp(t_off, '+', base, ImmInt(i * elem_sz), loc))
-                        self._emit(IStore(t_off, ImmInt(0), loc))
+                        if elem_sz == 2:
+                            self._emit(ILongStore(t_off, ImmInt(0), ImmInt(0), loc))
+                        else:
+                            self._emit(IStore(t_off, ImmInt(0), loc))
                 elif isinstance(d.ctype, (CStruct, CUnion)):
                     addr = self._var_addr(d.name, loc)
                     self._copy_struct(d.init, addr, d.ctype, loc)
+                elif isinstance(d.ctype, CLong):
+                    val = self._gen_long_expr(d.init)
+                    addr = self._var_addr(d.name, loc)
+                    self._emit(ILongStore(addr, val.lo, val.hi, loc))
                 else:
                     val = self._gen_expr(d.init)
                     addr = self._var_addr(d.name, loc)
@@ -414,8 +567,12 @@ class IRGen:
                         self._emit(IStore(dst_i, word, loc))
                 self._emit(IRet(ret_ptr, loc))
             elif stmt.expr is not None:
-                val = self._gen_expr(stmt.expr)
-                self._emit(IRet(val, self._loc(stmt)))
+                if isinstance(getattr(stmt.expr, 'ctype', None), CLong):
+                    val = self._gen_long_expr(stmt.expr)
+                    self._emit(ILongRet(val.lo, val.hi, self._loc(stmt)))
+                else:
+                    val = self._gen_expr(stmt.expr)
+                    self._emit(IRet(val, self._loc(stmt)))
             else:
                 self._emit(IRet(None, self._loc(stmt)))
 
@@ -495,7 +652,7 @@ class IRGen:
         else_lbl = self._new_label('else')
         end_lbl  = self._new_label('endif')
 
-        cond = self._gen_expr(stmt.cond)
+        cond = self._bool_operand(self._gen_expr(stmt.cond), loc)
         self._emit(IJumpIfNot(cond, else_lbl, loc))
 
         self._gen_stmt(stmt.then)
@@ -516,7 +673,7 @@ class IRGen:
         self._cont_stack.append(cond_lbl)
 
         self._emit(ILabel(cond_lbl, loc))
-        cond = self._gen_expr(stmt.cond)
+        cond = self._bool_operand(self._gen_expr(stmt.cond), loc)
         self._emit(IJumpIfNot(cond, end_lbl, loc))
         self._gen_stmt(stmt.body)
         self._emit(IJump(cond_lbl, loc))
@@ -537,7 +694,7 @@ class IRGen:
         self._emit(ILabel(body_lbl, loc))
         self._gen_stmt(stmt.body)
         self._emit(ILabel(cond_lbl, loc))
-        cond = self._gen_expr(stmt.cond)
+        cond = self._bool_operand(self._gen_expr(stmt.cond), loc)
         self._emit(IJumpIf(cond, body_lbl, loc))
         self._emit(ILabel(end_lbl, loc))
 
@@ -558,7 +715,7 @@ class IRGen:
 
         self._emit(ILabel(cond_lbl, loc))
         if stmt.cond:
-            cond = self._gen_expr(stmt.cond)
+            cond = self._bool_operand(self._gen_expr(stmt.cond), loc)
             self._emit(IJumpIfNot(cond, end_lbl, loc))
 
         self._gen_stmt(stmt.body)
@@ -578,6 +735,9 @@ class IRGen:
     def _gen_expr(self, expr: Expr) -> Operand:
         """Lower expression, return the operand holding its value."""
         loc = self._loc(expr)
+
+        if isinstance(getattr(expr, 'ctype', None), CLong):
+            return self._gen_long_expr(expr)
 
         if isinstance(expr, IntLit):
             return ImmInt(expr.value)
@@ -619,6 +779,8 @@ class IRGen:
 
         if isinstance(expr, Cast):
             val = self._gen_expr(expr.expr)
+            if isinstance(val, LongValue) and not isinstance(expr.to_type, CLong):
+                val = val.lo
             if isinstance(expr.to_type, CChar):
                 t = self._tmp()
                 self._emit(IBinOp(t, '&', val, ImmInt(0xFF), loc))
@@ -773,6 +935,13 @@ class IRGen:
         """Store val into an lvalue target."""
         loc = self._loc(target)
         addr = self._gen_addr(target)
+        if isinstance(getattr(target, 'ctype', None), CLong):
+            lv = val if isinstance(val, LongValue) else self._as_long(
+                val, loc, signed=not getattr(target.ctype, 'unsigned', False))
+            self._emit(ILongStore(addr, lv.lo, lv.hi, loc))
+            return
+        if isinstance(val, LongValue):
+            val = val.lo
         # Truncate to 8 bits when storing to char
         if isinstance(getattr(target, 'ctype', None), CChar):
             t = self._tmp()
@@ -789,6 +958,54 @@ class IRGen:
             return self._gen_short_circuit(expr, is_or=False)
         if expr.op == '||':
             return self._gen_short_circuit(expr, is_or=True)
+
+        if expr.op == '-' and is_pointer(expr.left.ctype) and is_pointer(expr.right.ctype):
+            left = self._gen_expr(expr.left)
+            right = self._gen_expr(expr.right)
+            diff = self._tmp()
+            self._emit(IBinOp(diff, '-', left, right, loc))
+            elem_sz = _pointed_size(expr.left.ctype)
+            if elem_sz <= 1:
+                return diff
+            scaled = self._tmp()
+            self._emit(ICall(scaled, Global('__builtin_sdiv'), [diff, ImmInt(elem_sz)], loc))
+            return scaled
+
+        if expr.op in ('+', '-') and (
+            (is_pointer(expr.left.ctype) and is_integer(expr.right.ctype)) or
+            (expr.op == '+' and is_integer(expr.left.ctype) and is_pointer(expr.right.ctype))
+        ):
+            if is_pointer(expr.left.ctype):
+                ptr_expr, idx_expr = expr.left, expr.right
+                ptr_first = True
+            else:
+                ptr_expr, idx_expr = expr.right, expr.left
+                ptr_first = False
+            ptr = self._gen_expr(ptr_expr)
+            idx_val = self._gen_expr(idx_expr)
+            idx = idx_val.lo if isinstance(idx_val, LongValue) else idx_val
+            elem_sz = _pointed_size(ptr_expr.ctype)
+            if elem_sz > 1:
+                scaled = self._tmp()
+                self._emit(IBinOp(scaled, '*', idx, ImmInt(elem_sz), loc))
+                idx = scaled
+            t = self._tmp()
+            op = '-' if expr.op == '-' and ptr_first else '+'
+            self._emit(IBinOp(t, op, ptr, idx, loc))
+            return t
+
+        if isinstance(expr.left.ctype, CLong) or isinstance(expr.right.ctype, CLong):
+            if expr.op in ('==', '!=', '<', '>', '<=', '>='):
+                left = self._gen_long_expr(expr.left)
+                right = self._gen_long_expr(expr.right)
+                t = self._tmp()
+                unsigned = getattr(expr.left.ctype, 'unsigned', False) or getattr(expr.right.ctype, 'unsigned', False)
+                self._emit(ILongCompare(t, expr.op, left.lo, left.hi, right.lo, right.hi, unsigned, loc))
+                return t
+            lv = self._gen_long_binop(expr)
+            if isinstance(getattr(expr, 'ctype', None), CLong):
+                return lv
+            return lv.lo
 
         left  = self._gen_expr(expr.left)
         right = self._gen_expr(expr.right)
@@ -833,6 +1050,28 @@ class IRGen:
         self._emit(IBinOp(t, op, left, right, loc))
         return t
 
+    def _gen_long_binop(self, expr: BinOp) -> LongValue:
+        loc = self._loc(expr)
+        if expr.op in ('*', '/', '%'):
+            left = self._gen_long_expr(expr.left)
+            right = self._gen_long_expr(expr.right)
+            lo, hi = self._tmp(), self._tmp()
+            unsigned = getattr(expr.left.ctype, 'unsigned', False) or getattr(expr.right.ctype, 'unsigned', False)
+            if expr.op == '*':
+                helper = '__builtin_ulmul'
+            else:
+                helper = ('__builtin_uldiv' if expr.op == '/' else '__builtin_ulmod') if unsigned else \
+                         ('__builtin_sldiv' if expr.op == '/' else '__builtin_slmod')
+            self._emit(ILongCall(lo, hi, Global(helper), [left.lo, left.hi, right.lo, right.hi], loc))
+            return LongValue(lo, hi)
+        if expr.op not in ('+', '-'):
+            raise IRGenError(f"long operator {expr.op!r} not implemented")
+        left = self._gen_long_expr(expr.left)
+        right = self._gen_long_expr(expr.right)
+        lo, hi = self._tmp(), self._tmp()
+        self._emit(ILongBinOp(lo, hi, expr.op, left.lo, left.hi, right.lo, right.hi, loc))
+        return LongValue(lo, hi)
+
     def _gen_short_circuit(self, expr: BinOp, is_or: bool) -> Operand:
         loc     = self._loc(expr)
         end_lbl = self._new_label('sc_end')
@@ -848,7 +1087,7 @@ class IRGen:
         sc_val = 1 if is_or else 0
         self._emit(IConst(result, sc_val, loc))
 
-        left = self._gen_expr(expr.left)
+        left = self._bool_operand(self._gen_expr(expr.left), loc)
 
         if is_or:
             self._emit(IJumpIf(left, end_lbl, loc))
@@ -883,6 +1122,12 @@ class IRGen:
             return t
 
         if op == '!':
+            if isinstance(getattr(expr.operand, 'ctype', None), CLong):
+                src = self._gen_long_expr(expr.operand)
+                t = self._tmp()
+                self._emit(ILongCompare(t, '==', src.lo, src.hi, ImmInt(0), ImmInt(0),
+                                        getattr(expr.operand.ctype, 'unsigned', False), loc))
+                return t
             src = self._gen_expr(expr.operand)
             t   = self._tmp()
             self._emit(IBinOp(t, '==', src, ImmInt(0), loc))
@@ -948,7 +1193,21 @@ class IRGen:
                     dst_addr = t
                 self._copy_struct(expr.value, dst_addr, ctype, loc)
                 return dst_addr
+            if isinstance(getattr(expr, 'ctype', None), CLong):
+                val = self._gen_long_expr(expr.value)
+                self._gen_store_to(val, expr.target)
+                return val
             val = self._gen_expr(expr.value)
+            self._gen_store_to(val, expr.target)
+            return val
+
+        # compound: synthesize a BinOp and lower through _gen_binop
+        if isinstance(getattr(expr, 'ctype', None), CLong):
+            if expr.op not in ('+=', '-=', '*=', '/=', '%='):
+                raise IRGenError(f"long compound assignment {expr.op} not implemented")
+            synthetic = BinOp(expr.op[:-1], expr.target, expr.value)
+            synthetic.ctype = expr.ctype
+            val = self._gen_long_binop(synthetic)
             self._gen_store_to(val, expr.target)
             return val
 
@@ -1016,6 +1275,11 @@ class IRGen:
                 slot_addr = self._alloc_struct_slot(param_t, loc)
                 self._copy_struct(arg_expr, slot_addr, param_t, loc)
                 ir_args.append(slot_addr)
+            elif isinstance(param_t, CLong):
+                lv = self._gen_long_expr(arg_expr)
+                ir_args.extend([lv.lo, lv.hi])
+            elif isinstance(getattr(arg_expr, 'ctype', None), CLong):
+                ir_args.append(self._gen_long_expr(arg_expr).lo)
             else:
                 ir_args.append(self._gen_expr(arg_expr))
 
@@ -1025,6 +1289,10 @@ class IRGen:
             func_op = self._gen_expr(expr.func)
 
         is_void = isinstance(ret_type, CVoid)
+        if isinstance(ret_type, CLong):
+            lo, hi = self._tmp(), self._tmp()
+            self._emit(ILongCall(lo, hi, func_op, ir_args, loc))
+            return LongValue(lo, hi)
         dst = None if is_void else self._tmp()
         self._emit(ICall(dst, func_op, ir_args, loc))
 
@@ -1033,6 +1301,12 @@ class IRGen:
             return struct_ret_slot
 
         return dst if dst is not None else ImmInt(0)
+
+    def _gen_long_call(self, expr: Call) -> LongValue:
+        val = self._gen_call(expr)
+        if not isinstance(val, LongValue):
+            return self._as_long(val, self._loc(expr), signed=not getattr(expr.ctype, 'unsigned', False))
+        return val
 
     def _alloc_struct_slot(self, ctype, loc) -> Temp:
         """Allocate an anonymous local slot for a struct copy; return its address."""
@@ -1097,7 +1371,7 @@ class IRGen:
         end_lbl  = self._new_label('tern_end')
         result   = self._tmp()
 
-        cond = self._gen_expr(expr.cond)
+        cond = self._bool_operand(self._gen_expr(expr.cond), loc)
         self._emit(IJumpIfNot(cond, else_lbl, loc))
 
         then_val = self._gen_expr(expr.then)

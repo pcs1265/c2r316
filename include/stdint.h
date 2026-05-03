@@ -3,7 +3,7 @@
  *
  * R316 is a 16-bit word-addressed machine:
  *   int / unsigned int  — 16-bit (native word)
- *   long / unsigned long — 32-bit (two words; arithmetic not yet fully implemented)
+ *   long / unsigned long — 32-bit (two words; shifts/bitwise ops still limited)
  *
  * There is no native 8-bit type; int8_t / uint8_t alias int / unsigned int.
  */

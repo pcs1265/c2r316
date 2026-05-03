@@ -43,7 +43,7 @@ class Scope:
 def common_type(a: CType, b: CType) -> CType:
     """Return the common (wider) type of two types"""
     if isinstance(a, CLong) or isinstance(b, CLong):
-        return CLong()
+        return CLong(unsigned=getattr(a, 'unsigned', False) or getattr(b, 'unsigned', False))
     if isinstance(a, (CPointer, CArray)):
         return a
     if isinstance(b, (CPointer, CArray)):
