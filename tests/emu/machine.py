@@ -430,7 +430,12 @@ class Machine:
             self.wr(d, self.mem_read(addr))
             return
         if op == 'st':
-            val = self.operand_value(args[0])
+            # Manual lines 21, 56-58: memory cells are 32 bits wide; `st`
+            # writes the full 32-bit register value, not just the low 16.
+            # Using rd32 here (instead of operand_value/rd) lets a stored
+            # value's upper half round-trip through `ld`.
+            src = args[0]
+            val = self.rd32(src) if _is_reg(src) else self.operand_value(src)
             if len(args) == 2:
                 addr = self.operand_value(args[1])
             else:
@@ -658,7 +663,7 @@ class Machine:
         cell = self._fetch_cell(addr)
         if isinstance(cell, Insn):
             return 0   # code memory has no real opcode encoding
-        return cell & _MASK16
+        return cell & 0xFFFFFFFF
 
     def mem_write(self, addr: int, value: int) -> None:
         addr &= _MASK16
@@ -762,7 +767,7 @@ class Machine:
             return   # other terminal MMIO: ignore in emulator
         if not self._is_writable_internal_addr(addr):
             return   # read-only mirror / external mirror — write ignored
-        self.mem[self._map_internal_addr(addr)] = value & _MASK16
+        self.mem[self._map_internal_addr(addr)] = value & 0xFFFFFFFF
 
     def _r316_to_ansi(self, color: int) -> int:
         """Map R316 color index to ANSI 256-color palette."""

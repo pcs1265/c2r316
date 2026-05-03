@@ -604,6 +604,45 @@ def test_mul_forwards_p_upper_half():
               f'{op}: D upper = {upper:#06x}, expected 0xCAFE')
 
 
+def test_memory_round_trip_32bit():
+    """Manual lines 21, 56-58: memory cells are 32 bits wide. `st` writes
+    the full 32-bit register value; `ld` reads it back. The pre-fix emu
+    masked stores and reads to 16 bits, silently losing the upper half —
+    so any code that stuffs data into a register's upper 16 (via exh)
+    and round-trips through memory would diverge from real hardware."""
+    print('\n[bugfix: memory cells are 32-bit on store and load]')
+    from tests.emu.parser import parse_asm
+    from tests.emu.machine import Machine
+
+    # Build a register with a non-trivial upper half via exh, store the
+    # full 32 bits, load it back, and confirm the upper half survived.
+    # (We use `exh r1, r2, r3` to construct the value: low(r1) = high(r2),
+    # high(r1) = low(r3). With r2.high = 0xCAFE and r3.low = 0x1234, r1
+    # ends up as 0x1234_CAFE.)
+    asm = """_start:
+    mov r2, 0xCAFE
+    exh r2, r2, r0     ; r2.high = 0xCAFE, r2.low = 0
+    mov r3, 0x1234
+    exh r1, r2, r3     ; r1 = (low=r2.high=0xCAFE, high=r3.low=0x1234) = 0x1234CAFE
+    mov r5, 0x100
+    st  r1, r5
+    ld  r4, r5
+    hlt
+"""
+    prog = parse_asm(asm)
+    m = Machine(prog)
+    m.pc = prog.labels['_start']
+    m.run()
+    src = m.regs[1] & 0xFFFFFFFF
+    dst = m.regs[4] & 0xFFFFFFFF
+    check('st/ld preserves the full 32-bit value',
+          src == dst,
+          f'wrote {src:#010x} but loaded {dst:#010x}')
+    check('memory cell upper 16 bits not truncated on store',
+          (dst >> 16) & 0xFFFF == (src >> 16) & 0xFFFF,
+          f'load upper={dst>>16:#06x}, store upper={src>>16:#06x}')
+
+
 def test_print_long_via_printf():
     """End-to-end: printf("%ld", N) on the emulator must terminate and emit
     the correct decimal expansion.  The hello.c hang at commit 62854de was
@@ -1089,6 +1128,7 @@ if __name__ == '__main__':
     test_sub_imm_carry_inverted()
     test_nop_does_not_clobber_r16()
     test_mul_forwards_p_upper_half()
+    test_memory_round_trip_32bit()
     test_print_long_via_printf()
     test_examples_run()
     test_goto()
