@@ -535,6 +535,34 @@ int main() { return test(ga2, gb2); }
           body2[:500])
 
 
+def test_inline_asm_clobbers():
+    print('\n[inline asm clobbers]')
+
+    try:
+        asm = _compile_via_main(
+            'int main() { asm("mov r19, 1" :: "r19"); return 0; }'
+        )
+        check('asm callee-saved clobber saves r19',
+              'st r19, r30' in asm and 'ld r19, r30' in asm,
+              asm[:500])
+    except Exception as e:
+        check('asm callee-saved clobber saves r19', False, f'{type(e).__name__}: {e}')
+
+    try:
+        _compile_via_main('int main() { asm("test r1, r1" :: "cc", "memory"); return 0; }')
+        check('asm accepts cc and memory clobbers', True)
+    except Exception as e:
+        check('asm accepts cc and memory clobbers', False, f'{type(e).__name__}: {e}')
+
+    try:
+        _compile_via_main('int main() { asm("mov r30, 0" :: "r30"); return 0; }')
+        check('asm rejects sp clobber', False, 'expected compiler error')
+    except SystemExit as e:
+        check('asm rejects sp clobber', 'r30' in str(e), str(e))
+    except Exception as e:
+        check('asm rejects sp clobber', False, f'{type(e).__name__}: {e}')
+
+
 def test_goto():
     print('\n[parser: goto / labels]')
     src = """
@@ -824,6 +852,7 @@ if __name__ == '__main__':
     test_algebraic_identities()
     test_left_operand_preserved_across_binop()
     test_unsigned_comparison()
+    test_inline_asm_clobbers()
     test_execution_smoke()
     test_print_int_signed()
     test_examples_run()

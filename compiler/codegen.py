@@ -923,8 +923,13 @@ class Codegen:
         return max_slots
 
     def _detect_callee_saves(self, fn: IRFunction) -> List[str]:
-        """Return the callee-saved registers assigned by the register allocator."""
-        return list(self._regmap.callee_used) if self._regmap else []
+        """Return callee-saved registers used by allocation or asm clobbers."""
+        saves = set(self._regmap.callee_used) if self._regmap else set()
+        callee_saved = set(CALLEE_SAVED_REGS)
+        for instr in fn.instrs:
+            if isinstance(instr, IInlineAsm):
+                saves.update(instr.clobbers & callee_saved)
+        return sorted(saves, key=lambda reg: int(reg[1:]))
 
     # ── Compare-branch fusion ─────────────────────────────────────────────────
 

@@ -18,9 +18,9 @@ whose last use IS the event does not need to survive it):
 
   forbidden:    union of IInlineAsm.clobbers for every asm site within the
                 live range.  The Temp must not be assigned any register in
-                this set.  For a k-operand asm, clobbers = {r7..r7+k-1};
-                since r7–r9 are not allocatable, only r10–r16 matter in
-                practice.
+                this set.  For a k-operand asm, implicit clobbers include
+                {r7..r7+k-1}; explicit clobbers may add caller- or
+                callee-saved registers.
 
 Algorithm:
   1. Build live intervals [first_def, last_use] for each Temp.
@@ -119,8 +119,7 @@ def allocate(fn: IRFunction) -> RegMap:
         end   = last_use[tid]
         crosses_call = any(start < ci < end for ci in call_sites)
         # Union the clobbers of every asm instruction whose site is strictly
-        # within the live range.  Callee-saved regs (r19+) are never in any
-        # clobber set, so forbidden only ever restricts caller-saved choices.
+        # within the live range.
         forbidden: FrozenSet[str] = frozenset().union(*(
             instr.clobbers
             for ai, instr in asm_instrs

@@ -173,7 +173,7 @@ def _clone_instrs(
                 lambda m: _rl(m.group(1)),
                 instr.text,
             )
-            out.append(IInlineAsm(renamed_text, [_ro(s) for s in instr.srcs], instr.loc))
+            out.append(IInlineAsm(renamed_text, [_ro(s) for s in instr.srcs], instr.loc, instr.clobbers))
 
         elif isinstance(instr, IVaStart):
             out.append(IVaStart(Temp(instr.dst.id + temp_offset), instr.num_fixed, instr.loc))

@@ -383,8 +383,9 @@ class IJumpIfNot(Instr):
     def __str__(self): return f'  ifnot {self.cond} goto {self.target}{self._loc_str()}'
 
 
-# Physical registers used as inline-asm operand slots (%0..%9 → r7..r16).
-# Inline asm may clobber exactly the registers corresponding to its operands.
+# Physical registers used as inline-asm operand slots (%0..%9 -> r7..r16).
+# Explicit clobbers may name caller-saved or callee-saved registers; codegen
+# preserves ABI-required callee-saved registers around the containing function.
 ASM_REGS: List[str] = ['r7', 'r8', 'r9', 'r10', 'r11', 'r12',
                         'r13', 'r14', 'r15', 'r16']
 

@@ -23,6 +23,10 @@ from .ir import (
 class IRGenError(Exception):
     pass
 
+_FIXED_REG_CLOBBERS = frozenset({'r0', 'r30', 'r31'})
+_PSEUDO_CLOBBERS = frozenset({'cc', 'memory'})
+_VALID_REG_CLOBBERS = frozenset(f'r{i}' for i in range(0, 32))
+
 
 def _const_int_value(e) -> int | None:
     """Return the integer value of a constant integer expression, or None."""
@@ -612,12 +616,24 @@ class IRGen:
 
         elif isinstance(stmt, AsmStmt):
             srcs = [self._gen_expr(e) for e in stmt.inputs]
-            explicit = frozenset(c for c in stmt.clobbers if c in ASM_REGS)
+            explicit = self._validate_asm_clobbers(stmt.clobbers)
             self._emit(IInlineAsm(stmt.text, srcs, self._loc(stmt),
                                   clobbers=frozenset(ASM_REGS[:len(srcs)]) | explicit))
 
         else:
             raise IRGenError(f"Unhandled statement: {type(stmt)}")
+
+    def _validate_asm_clobbers(self, clobbers) -> frozenset:
+        explicit = set()
+        for clobber in clobbers:
+            if clobber in _PSEUDO_CLOBBERS:
+                continue
+            if clobber not in _VALID_REG_CLOBBERS:
+                raise IRGenError(f"asm: unknown clobber {clobber!r}")
+            if clobber in _FIXED_REG_CLOBBERS:
+                raise IRGenError(f"asm: cannot clobber ABI-fixed register {clobber}")
+            explicit.add(clobber)
+        return frozenset(explicit)
 
     def _gen_switch(self, stmt: SwitchStmt):
         loc = self._loc(stmt)
