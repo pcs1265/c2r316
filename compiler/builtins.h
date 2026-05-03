@@ -58,6 +58,23 @@ static unsigned int __builtin_umod(unsigned int dividend, unsigned int divisor) 
     return res;
 }
 
+static unsigned int __builtin_udivmod10(unsigned int dividend, unsigned int *quotient) {
+    unsigned int rem;
+    asm(
+        "mov r10, 0xcccd\n"
+        "mulh r11, %1, r10\n"
+        "shr r11, r11, 3\n"
+        "st r11, %2\n"
+        "mul r12, r11, 10\n"
+        "sub r12, %1, r12\n"
+        "add %0, r12, r0"
+        : "=r"(rem)
+        : "r"(dividend), "r"(quotient)
+        : "r10", "r11", "r12"
+    );
+    return rem;
+}
+
 static int __builtin_sdiv(int dividend, int divisor) {
     int neg;
     unsigned int udividend;

@@ -201,19 +201,21 @@ static void print_int(int n) {
     int digits[6];
     int count;
     int i;
+    unsigned int u;
 
     if (n & 0x8000) {
         term_putch('-');
-        n = 0 - n;
+        u = (unsigned int)(0 - n);
+    } else {
+        u = (unsigned int)n;
     }
-    if (n == 0) {
+    if (u == 0) {
         term_putch('0');
         return;
     }
     count = 0;
-    while (n != 0) {
-        digits[count] = n % 10;
-        n = n / 10;
+    while (u != 0) {
+        digits[count] = __builtin_udivmod10(u, &u);
         count++;
     }
     i = count - 1;
@@ -234,8 +236,7 @@ static void print_uint(unsigned int n) {
     }
     count = 0;
     while (n != 0) {
-        digits[count] = n % 10;
-        n = n / 10;
+        digits[count] = __builtin_udivmod10(n, &n);
         count++;
     }
     i = count - 1;
@@ -508,9 +509,9 @@ static int printf(const char *fmt, ...) {
                         }
                     } else {
                         while (v) {
-                            buf[blen] = '0' + v % 10;
+                            d = __builtin_udivmod10(v, &v);
+                            buf[blen] = '0' + d;
                             blen++;
-                            v = v / 10;
                         }
                     }
                     /* reverse digit string */
@@ -741,7 +742,7 @@ static int vsnprintf(char *buf, int size, const char *fmt, va_list ap) {
                     if (spec=='x') { while(v){d=v&0xF;ibuf[blen]=(d<10)?'0'+d:'a'+d-10;blen++;v=v>>4;} }
                     else if (spec=='X') { while(v){d=v&0xF;ibuf[blen]=(d<10)?'0'+d:'A'+d-10;blen++;v=v>>4;} }
                     else if (spec=='o') { while(v){ibuf[blen]='0'+(v&7);blen++;v=v>>3;} }
-                    else { while(v){ibuf[blen]='0'+v%10;blen++;v=v/10;} }
+                    else { while(v){d=__builtin_udivmod10(v,&v);ibuf[blen]='0'+d;blen++;} }
                     lo=0;hi=blen-1; while(lo<hi){tmp=ibuf[lo];ibuf[lo]=ibuf[hi];ibuf[hi]=tmp;lo++;hi--;}
                 }
                 plen=0;
