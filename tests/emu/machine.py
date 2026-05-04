@@ -270,9 +270,15 @@ class Machine:
                 'regs': self.get_registers(),
                 'flags': self.get_flags(),
             }
-        # Execute instruction
+        # Execute instruction. Manual line 248: ld and st each take 2
+        # cycles; everything else takes 1. Account for the extra cycle
+        # by inspecting the just-executed instruction.
+        ins_pre = self._fetch_cell(self.pc) if 0 <= self.pc <= _MASK16 else None
         self._execute_step()
-        self.cycles += 1
+        if isinstance(ins_pre, Insn) and ins_pre.op in ('ld', 'st'):
+            self.cycles += 2
+        else:
+            self.cycles += 1
         # Record state after for trace
         if self._trace_enabled:
             insn_info = None
