@@ -44,3 +44,11 @@
 
 - Lower more builtins directly in IR/codegen instead of via auto-prepended C helpers where it materially reduces call overhead.
 - Improve register allocation cost modeling for callee-saved registers in small functions.
+
+## Emulator Fidelity (deferred)
+
+The audit on 2026-05-03/04 closed every behavior-affecting discrepancy between `tests/emu/` and the R316 manual; remaining items affect timing or have no current consumer. Pick these up if you start writing cycle-counted code, adding peripherals, or building self-modifying-code features.
+
+- **Multiplication scheduling (M/F/S unit deferral)** — manual lines 50-55, 260-266, 381. The emu unconditionally executes `mul`/`mulh`/`muls`/`mulx` in one cycle regardless of unit type. Real R316 with spatial unrolling has F units defer to the next M unit, costing extra cycles when scheduling is unfavorable. Result values are unaffected.
+- **Bus wait cycles** — manual lines 144-156, 174. Real peripherals can hold the bus to inject wait states; execution units retry. The emu treats every MMIO access as zero-latency. Adding this needs a peripheral framework with retry semantics.
+- **`ld` of code memory returns 0** — manual lines 24, 212-223. On real HW, loading from a code address returns the encoded 32-bit instruction word. The emu returns 0 because it stores parsed `Insn` objects, not bit patterns. Implementing requires a full instruction encoder mirroring the manual's bit layout (op index, D/P/S fields, sub/sbb operand swap, jump condition encoding, physically-zero canonicalization at encode time).
