@@ -772,6 +772,18 @@ class Machine:
                 sys.stdout.write(f'\x1b[2;{self._term_rows + 1}r')
                 sys.stdout.flush()
             return
+        # Manual lines 627-646: the terminal block's scrollprint sub-range
+        # spans every 7-LSB offset 0x00..0x3F (so absolute 0x9F80..0x9FBF).
+        # Any write in that sub-range with the terminal-mode bit (bit 0 of
+        # the 7 LSB offset) set prints a character. The two hardcoded
+        # addresses above (0x9FB5, 0x9FB7) are the runtime's preferred
+        # configurations; anything else in the sub-range with bit 0 set
+        # falls through here so future runtime variants still produce
+        # observable output instead of silently disappearing.
+        if 0x9F80 <= addr <= 0x9FBF and (addr & 0x01):
+            ch = value & 0xFF
+            self.stdout.append(ch)
+            return
         if 0x9F80 <= addr <= 0x9FC6:
             return   # other terminal MMIO: ignore in emulator
         if not self._is_writable_internal_addr(addr):
